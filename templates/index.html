@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tally Stock Viewer</title>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <style>
+        :root {
+            --bg: #f3f6fb;
+            --panel: #ffffff;
+            --text: #132238;
+            --muted: #5d6b82;
+            --border: #d9e2ec;
+            --accent: #1f6feb;
+            --accent-dark: #1558c0;
+            --success-bg: #e8f5e9;
+            --success-text: #276749;
+            --error-bg: #fdecea;
+            --error-text: #b42318;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(31, 111, 235, 0.14), transparent 24%),
+                radial-gradient(circle at top right, rgba(20, 184, 166, 0.12), transparent 20%),
+                var(--bg);
+        }
+
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 32px 20px 40px;
+        }
+
+        .hero {
+            margin-bottom: 20px;
+        }
+
+        .hero h1 {
+            margin: 0 0 8px;
+            font-size: 34px;
+        }
+
+        .hero p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 14px 40px rgba(19, 34, 56, 0.08);
+            margin-bottom: 18px;
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        label {
+            font-weight: 700;
+        }
+
+        select, button {
+            padding: 11px 14px;
+            font-size: 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+
+        select {
+            min-width: 260px;
+            background: #fff;
+        }
+
+        .select2-container {
+            min-width: 260px;
+        }
+
+        .select2-container .select2-selection--single {
+            min-height: 42px;
+            border: 1px solid var(--border) !important;
+            border-radius: 10px !important;
+            padding: 6px 34px 6px 10px;
+            display: flex;
+            align-items: center;
+            background: #fff;
+        }
+
+        .select2-container .select2-selection__rendered {
+            padding-right: 28px !important;
+            color: var(--text) !important;
+            line-height: 1.4 !important;
+        }
+
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            display: block !important;
+            position: absolute;
+            top: 50%;
+            right: 10px;
+            width: 20px;
+            height: 20px;
+            transform: translateY(-50%);
+        }
+
+        .select2-container--default .select2-selection--single .select2-selection__arrow b {
+            border-color: #64748b transparent transparent transparent;
+            border-style: solid;
+            border-width: 6px 6px 0 6px;
+            height: 0;
+            left: 50%;
+            margin-left: -6px;
+            margin-top: -3px;
+            position: absolute;
+            top: 50%;
+            width: 0;
+        }
+
+        .select2-container--default.select2-container--open .select2-selection__arrow b {
+            border-color: transparent transparent #64748b transparent;
+            border-width: 0 6px 6px 6px;
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: 0;
+            cursor: pointer;
+            transition: transform 0.12s ease, background-color 0.12s ease;
+        }
+
+        button:hover {
+            background: var(--accent-dark);
+            transform: translateY(-1px);
+        }
+
+        button.secondary {
+            background: #e9eef6;
+            color: var(--text);
+        }
+
+        button.secondary:hover {
+            background: #dbe4f0;
+        }
+
+        .meta-row {
+            margin-top: 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .status-line {
+            margin-top: 8px;
+            font-size: 12px;
+        }
+
+        .notice {
+            padding: 10px 12px;
+            border-radius: 10px;
+            margin-bottom: 14px;
+            display: none;
+        }
+
+        .error {
+            color: var(--error-text);
+            background: var(--error-bg);
+        }
+
+        .success {
+            color: var(--success-text);
+            background: var(--success-bg);
+        }
+
+        .designs-container {
+            display: none;
+        }
+
+        .designs-container.show {
+            display: block;
+        }
+
+        .designs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+
+        #designsList {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 12px;
+        }
+
+        .design-item {
+            display: flex;
+            gap: 14px;
+            align-items: flex-start;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: linear-gradient(180deg, #fff, #fafcff);
+        }
+
+        .design-thumbnail {
+            width: 92px;
+            height: 92px;
+            border-radius: 12px;
+            object-fit: cover;
+            flex: 0 0 auto;
+            background: #eef2f7;
+            border: 1px solid var(--border);
+            cursor: zoom-in;
+        }
+
+        .thumbnail-button {
+            appearance: none;
+            border: 0;
+            background: transparent;
+            padding: 0;
+            line-height: 0;
+            flex: 0 0 auto;
+        }
+
+        .thumbnail-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .role-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #e8eef7;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .design-text {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .design-title {
+            font-weight: 700;
+            line-height: 1.35;
+            margin-bottom: 6px;
+            word-break: break-word;
+        }
+
+        .design-subtext {
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+
+        .design-price {
+            color: #0f766e;
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .fix-link {
+            display: inline-block;
+            text-decoration: none;
+            color: var(--accent-dark);
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 9px;
+            border-radius: 999px;
+            margin-bottom: 8px;
+        }
+
+        .badge.mapped {
+            color: #166534;
+            background: #dcfce7;
+        }
+
+        .badge.unmapped {
+            color: #92400e;
+            background: #fef3c7;
+        }
+
+        .empty-state {
+            padding: 20px;
+            text-align: center;
+            color: var(--muted);
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            z-index: 1000;
+        }
+
+        .modal.open {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.78);
+        }
+
+        .modal-panel {
+            position: relative;
+            z-index: 1;
+            width: min(94vw, 1200px);
+            max-height: 92vh;
+            background: #fff;
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.35);
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+        }
+
+        .modal-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-body {
+            background: #0f172a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+        }
+
+        .modal-body img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            background: #f8fafc;
+        }
+
+        .viewer-note {
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #f8fafc;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 640px) {
+            .page {
+                padding: 18px 12px 28px;
+            }
+
+            .hero h1 {
+                font-size: 28px;
+            }
+
+            select {
+                min-width: 100%;
+                width: 100%;
+            }
+
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="hero">
+        <div class="topbar">
+            <div class="role-badge">{{ current_role|default('customer')|title }} mode</div>
+            <a href="/logout" class="fix-link">Logout</a>
+        </div>
+        <h1>Tally Stock Viewer</h1>
+        <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and manage customer pricing.</p>
+    </div>
+
+    <div class="panel">
+        <div class="toolbar">
+            <label for="carSelect">Select Car Model:</label>
+            <select id="carSelect">
+                <option value="">Search for a car...</option>
+            </select>
+            <button onclick="loadDesigns()">Load Designs</button>
+            {% if is_admin %}
+            <button class="secondary" onclick="shareVisibleImages()">Share Visible Images</button>
+            <button id="updateStockBtn" class="secondary" onclick="updateStock()">Update Stock</button>
+            <button onclick="window.location.href='/train'">Train Matches</button>
+            <button class="secondary" onclick="window.location.href='/admin/pricing'">Manage Prices &amp; Customers</button>
+            {% endif %}
+        </div>
+
+        {% if auto_export_enabled %}
+        <p style="margin-top:10px; font-size:12px; color:#0f766e;">Auto-export enabled every {{ refresh_interval }} seconds.</p>
+        {% else %}
+        <p style="margin-top:10px; font-size:12px; color:#64748b;">Auto-export disabled. Use Update Stock to update manually.</p>
+        {% endif %}
+
+        {% if is_admin %}
+        <div class="meta-row">
+            <div id="lastUpdate">Last updated: loading...</div>
+            <div id="statusMessage" class="status-line"></div>
+        </div>
+        {% else %}
+        <div class="viewer-note" style="margin-top:14px;">Customer mode is read-only. You can browse designs and open image previews, but only admin can update stock or save matches.</div>
+        {% endif %}
+    </div>
+
+    <div id="errorMsg" class="notice error"></div>
+    <div id="infoMsg" class="notice success"></div>
+
+    <div id="designsContainer" class="panel designs-container">
+        <div class="designs-header">
+            <h2 style="margin:0;">Available Designs for <span id="selectedCarName"></span></h2>
+            <p id="designCount" style="margin:0; color: var(--muted);"></p>
+        </div>
+        <ul id="designsList"></ul>
+    </div>
+</div>
+
+<div class="modal" id="imageModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeImageModal()"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Full screen image preview">
+        <div class="modal-head">
+            <strong id="modalTitle">Image preview</strong>
+            <button class="secondary" onclick="closeImageModal()">Close</button>
+        </div>
+        <div class="modal-body">
+            <img id="modalImage" alt="Full screen preview">
+        </div>
+        <div class="modal-actions">
+            <button class="secondary" onclick="copyModalImage()">Copy Image</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const isAdmin = {{ is_admin|tojson }};
+const isCustomer = {{ is_customer|tojson }};
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function clearMessages() {
+    document.getElementById("errorMsg").style.display = "none";
+    document.getElementById("infoMsg").style.display = "none";
+}
+
+function showError(msg) {
+    const el = document.getElementById("errorMsg");
+    el.textContent = "❌ " + msg;
+    el.style.display = "block";
+}
+
+function showInfo(msg) {
+    const el = document.getElementById("infoMsg");
+    el.textContent = "✓ " + msg;
+    el.style.display = "block";
+}
+
+function getImageSource(src) {
+    return src || "/get_stock_image";
+}
+
+function openImageModal(src, label) {
+    const modal = document.getElementById("imageModal");
+    const modalImage = document.getElementById("modalImage");
+    document.getElementById("modalTitle").textContent = label || "Image preview";
+    modalImage.src = getImageSource(src);
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function closeImageModal() {
+    const modal = document.getElementById("imageModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+async function copyImageToClipboard(src) {
+    const response = await fetch(getImageSource(src));
+    if (!response.ok) {
+        throw new Error(`Copy failed (HTTP ${response.status})`);
+    }
+
+    const blob = await response.blob();
+    if (navigator.clipboard && window.ClipboardItem) {
+        try {
+            const pngBlob = await convertImageBlobToPng(blob);
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+            return;
+        } catch (error) {
+            console.warn("Clipboard image copy failed, falling back to download.", error);
+        }
+    }
+
+    const link = document.createElement("a");
+    link.href = getImageSource(src);
+    link.download = "image";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+}
+
+async function convertImageBlobToPng(blob) {
+    if (blob.type === "image/png") {
+        return blob;
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+        const image = new Image();
+        image.crossOrigin = "anonymous";
+        const loaded = new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = reject;
+        });
+        image.src = objectUrl;
+        await loaded;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth || image.width;
+        canvas.height = image.naturalHeight || image.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+
+        const pngBlob = await new Promise((resolve, reject) => {
+            canvas.toBlob(result => {
+                if (result) {
+                    resolve(result);
+                } else {
+                    reject(new Error("Could not convert image for clipboard."));
+                }
+            }, "image/png");
+        });
+
+        return pngBlob;
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
+}
+
+async function shareVisibleImages() {
+    try {
+        clearMessages();
+        if (!isAdmin) {
+            showError("Sharing is available for admin users only.");
+            return;
+        }
+
+        const visibleButtons = Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
+            .filter(button => {
+                const imageId = Number(button.dataset.imageId);
+                if (!Number.isFinite(imageId) || imageId <= 0) {
+                    return false;
+                }
+                if (button.offsetParent === null) {
+                    return false;
+                }
+                const style = window.getComputedStyle(button);
+                return style.display !== "none" && style.visibility !== "hidden";
+            });
+
+        const urls = Array.from(new Set(
+            visibleButtons
+                .map(button => button.dataset.src || "")
+                .filter(Boolean)
+        ));
+
+        if (!urls.length) {
+            showError("No linked images are visible to share.");
+            return;
+        }
+
+        const files = [];
+        for (let i = 0; i < urls.length; i += 1) {
+            const url = urls[i];
+            const response = await fetch(getImageSource(url));
+            if (!response.ok) {
+                throw new Error(`Image fetch failed (HTTP ${response.status})`);
+            }
+
+            const blob = await response.blob();
+            const mime = blob.type || "image/jpeg";
+            const extension = (mime.split("/")[1] || "jpg").toLowerCase();
+            files.push(new File([blob], `image_${i + 1}.${extension}`, { type: mime }));
+        }
+
+        if (
+            navigator.share &&
+            navigator.canShare &&
+            navigator.canShare({ files })
+        ) {
+            await navigator.share({ files, title: "Stock Images" });
+            showInfo(`Shared ${files.length} image${files.length === 1 ? "" : "s"}.`);
+            return;
+        }
+
+        for (let i = 0; i < urls.length; i += 1) {
+            const link = document.createElement("a");
+            link.href = getImageSource(urls[i]);
+            link.download = `image_${i + 1}`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+        showInfo(`Share not supported on this browser. Downloaded ${urls.length} image${urls.length === 1 ? "" : "s"} instead.`);
+    } catch (error) {
+        if (error && error.name === "AbortError") {
+            showInfo("Share canceled.");
+            return;
+        }
+        showError(error.message);
+    }
+}
+
+async function copyModalImage() {
+    try {
+        const modalImage = document.getElementById("modalImage");
+        await copyImageToClipboard(modalImage.src);
+        showInfo("Image copied");
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+function initializeCarSelect() {
+    const select = $("#carSelect");
+    select.select2({
+        ajax: {
+            url: "/api/search_cars",
+            dataType: "json",
+            delay: 150,
+            data: params => ({
+                q: params.term || "",
+                page: params.page || 1,
+            }),
+            processResults: data => ({
+                results: data.results || [],
+                pagination: { more: Boolean(data.pagination && data.pagination.more) },
+            }),
+            cache: true,
+        },
+        placeholder: "Type car model or click arrow to browse",
+        minimumInputLength: 0,
+        allowClear: true,
+        width: "260px",
+    });
+
+    select.on("select2:open", function () {
+        setTimeout(() => {
+            const search = document.querySelector(".select2-container--open .select2-search__field");
+            if (search) {
+                search.focus();
+            }
+        }, 0);
+    });
+}
+
+async function loadCars() {
+    try {
+        clearMessages();
+        initializeCarSelect();
+    } catch (error) {
+        showError(`Error preparing car search: ${error.message}`);
+    }
+
+    updateTimestamp();
+}
+
+function updateLastUpdateTime(timestamp) {
+    const lastUpdateEl = document.getElementById("lastUpdate");
+    if (!lastUpdateEl) {
+        return;
+    }
+
+    const parsed = timestamp ? new Date(timestamp) : new Date();
+    const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    const formatted = `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+
+    lastUpdateEl.textContent = `Last updated: ${formatted}`;
+}
+
+async function updateTimestamp() {
+    try {
+        const statusEl = document.getElementById("statusMessage");
+        if (!statusEl) {
+            return;
+        }
+
+        const res = await fetch("/last_update");
+        if (res.ok) {
+            const data = await res.json();
+            if (data.formatted) {
+                document.getElementById("lastUpdate").textContent = `Last updated: ${data.formatted}`;
+            } else if (data.timestamp) {
+                updateLastUpdateTime(data.timestamp);
+            } else if (data.last_update) {
+                document.getElementById("lastUpdate").textContent = `Last updated: ${data.last_update}`;
+            }
+        }
+    } catch (error) {
+        console.log("Could not fetch last update time", error);
+    }
+
+    try {
+        const statusRes = await fetch("/refresh_status");
+        if (statusRes.ok) {
+            const status = await statusRes.json();
+            if (status.success === false) {
+                statusEl.textContent = `Last error: ${status.message}`;
+                statusEl.style.color = "#b42318";
+            } else if (status.success === true) {
+                statusEl.textContent = `Last update: ${status.message}`;
+                statusEl.style.color = "#475569";
+            }
+        }
+    } catch (error) {
+        console.log("Could not fetch refresh status", error);
+    }
+}
+
+async function updateStockSilently() {
+    const res = await fetch("/update_stock", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || data.message || `Update failed (HTTP ${res.status})`);
+    }
+
+    if (data.timestamp) {
+        updateLastUpdateTime(data.timestamp);
+    }
+
+    await updateTimestamp();
+
+    const carSelect = document.getElementById("carSelect");
+    if (carSelect && carSelect.value) {
+        await loadDesigns();
+    }
+}
+
+async function updateStock() {
+    const button = document.getElementById("updateStockBtn");
+    if (button) {
+        button.disabled = true;
+        button.textContent = "⏳ Updating...";
+    }
+
+    try {
+        clearMessages();
+        await updateStockSilently();
+        showInfo("Stock updated successfully");
+    } catch (error) {
+        showError(`Error updating stock: ${error.message}`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = "Update Stock";
+        }
+    }
+}
+
+let autoRefreshInterval = null;
+
+function startAutoRefresh() {
+    if (!isAdmin) {
+        return;
+    }
+
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+
+    autoRefreshInterval = setInterval(() => {
+        updateStockSilently().catch(error => console.error("Auto-refresh failed:", error));
+    }, 180000);
+}
+
+function renderDesignItem(item) {
+    const stockItem = item.design || item.raw || "Unknown";
+    const mapped = Boolean(item.mapped);
+    const thumbnailUrl = item.thumbnail_url || `/get_stock_image?stock_item=${encodeURIComponent(stockItem)}`;
+    const fixUrl = item.fix_url || `/train?stock_item=${encodeURIComponent(stockItem)}`;
+    const confidence = typeof item.confidence === "number" ? Math.round(item.confidence * 100) : 0;
+    const priceText = item.price || "Contact Us";
+    const escapedTitle = escapeHtml(stockItem);
+    const safeThumbnail = escapeHtml(thumbnailUrl);
+    const imageId = mapped && item.image_id ? String(item.image_id) : "";
+    const detailText = isCustomer
+        ? `<div class="design-price">Price: ${escapeHtml(priceText)}</div>`
+        : `
+            <div class="design-subtext">Quantity: ${item.qty ?? 0}${mapped ? ` - Confidence: ${confidence}%` : ''}</div>
+            <div class="design-price">Price: ${escapeHtml(priceText)}</div>
+        `;
+
+    return `
+        <li>
+            <div class="design-item">
+                <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this.dataset.src, this.dataset.label)">
+                    <img src="${thumbnailUrl}" alt="${escapedTitle}" class="design-thumbnail">
+                </button>
+                <div class="design-text">
+                    <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? 'Linked' : 'Needs link'}</div>
+                    <div class="design-title">${escapeHtml(stockItem)}</div>
+                    ${detailText}
+                    ${mapped ? '' : `<a href="${fixUrl}" class="fix-link">Fix Link</a>`}
+                    <div class="thumbnail-actions">
+                        <button class="secondary" data-src="${safeThumbnail}" onclick="copyImageToClipboard(this.dataset.src)">Copy Image</button>
+                    </div>
+                </div>
+            </div>
+        </li>
+    `;
+}
+
+async function loadDesigns() {
+    const car = document.getElementById("carSelect").value;
+
+    if (!car) {
+        showError("Please select a car first");
+        return;
+    }
+
+    try {
+        clearMessages();
+        const res = await fetch(`/designs?car=${encodeURIComponent(car)}`);
+
+        if (!res.ok) {
+            showError(`Failed to load designs (HTTP ${res.status})`);
+            return;
+        }
+
+        const data = await res.json();
+        const list = document.getElementById("designsList");
+        const container = document.getElementById("designsContainer");
+        list.innerHTML = "";
+
+        if (Array.isArray(data) && data.length > 0) {
+            document.getElementById("selectedCarName").textContent = car;
+            list.innerHTML = data.map(renderDesignItem).join("");
+            document.getElementById("designCount").textContent = `Total: ${data.length} designs with stock`;
+            container.classList.add("show");
+            showInfo(`Showing ${data.length} designs for ${car}`);
+        } else {
+            list.innerHTML = '<li><div class="empty-state">No designs found for this car.</div></li>';
+            container.classList.add("show");
+            showInfo("No designs found");
+        }
+    } catch (error) {
+        showError(`Error loading designs: ${error.message}`);
+    }
+}
+
+async function reloadData() {
+    try {
+        return refreshStock();
+    } catch (error) {
+        showError(`Error reloading data: ${error.message}`);
+    }
+}
+
+async function refreshStock() {
+    try {
+        clearMessages();
+        const res = await fetch("/update_stock", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+            showError(`Stock refresh failed: ${data.error || res.status}`);
+            return;
+        }
+
+        if (data.tally_online === false) {
+            showError(data.warning || "Tally is down; using the last saved upload.");
+            return;
+        }
+
+        showInfo(data.message || "Stock exported and updated successfully");
+        loadCars();
+        updateTimestamp();
+    } catch (error) {
+        showError(`Error refreshing stock: ${error.message}`);
+    }
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    loadCars();
+    if (isAdmin) {
+        startAutoRefresh();
+        setInterval(() => {
+            updateTimestamp();
+        }, 30000);
+    }
+});
+
+document.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+        closeImageModal();
+    }
+});
+
+document.getElementById("imageModal").addEventListener("click", event => {
+    if (event.target.id === "imageModal") {
+        closeImageModal();
+    }
+});
+</script>
+</body>
+</html>
+
+

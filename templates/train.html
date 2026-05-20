@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Training Mode - Stock Matching</title>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <style>
+        :root {
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --text: #14213d;
+            --muted: #607086;
+            --border: #d6e0ea;
+            --accent: #0f766e;
+            --accent-2: #1d4ed8;
+            --warning: #b45309;
+            --danger: #b91c1c;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 26%),
+                radial-gradient(circle at top right, rgba(29, 78, 216, 0.12), transparent 22%),
+                var(--bg);
+            color: var(--text);
+        }
+
+        .page {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 28px 20px 40px;
+        }
+
+        .header {
+            margin-bottom: 18px;
+        }
+
+        .header h1 {
+            margin: 0 0 8px;
+            font-size: 34px;
+        }
+
+        .header p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1.1fr 0.9fr;
+            gap: 18px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: 0 14px 40px rgba(20, 33, 61, 0.08);
+            padding: 20px;
+        }
+
+        .progress-card {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .metric {
+            background: linear-gradient(180deg, #fff, #f8fbff);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 14px;
+        }
+
+        .metric .label {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+
+        .metric .value {
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .preview-wrap {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        .image-frame {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: #eef2f7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .image-frame img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: linear-gradient(180deg, #ffffff, #eef4fb);
+            cursor: zoom-in;
+        }
+
+        .image-overlay {
+            position: absolute;
+            inset: auto 12px 12px 12px;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            background: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(214, 224, 234, 0.8);
+            border-radius: 12px;
+            padding: 10px 12px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 6px 10px;
+            background: #edf2f7;
+            color: #334155;
+        }
+
+        .details {
+            display: grid;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .details strong {
+            color: var(--text);
+        }
+
+        .form-grid {
+            display: grid;
+            gap: 14px;
+        }
+
+        .field label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #fff;
+            font-size: 14px;
+        }
+
+        .select2-container {
+            width: 100% !important;
+        }
+
+        .select2-container .select2-selection--single {
+            min-height: 42px;
+            border: 1px solid var(--border) !important;
+            border-radius: 12px !important;
+            padding: 6px 36px 6px 10px;
+            display: flex;
+            align-items: center;
+            background: #fff;
+        }
+
+        .select2-container .select2-selection__rendered {
+            line-height: 1.4 !important;
+            padding-left: 0 !important;
+            padding-right: 28px !important;
+            color: var(--text) !important;
+        }
+
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            display: block !important;
+            position: absolute;
+            top: 50%;
+            right: 10px;
+            width: 20px;
+            height: 20px;
+            transform: translateY(-50%);
+        }
+
+        .select2-container--default .select2-selection--single .select2-selection__arrow b {
+            border-color: #64748b transparent transparent transparent;
+            border-style: solid;
+            border-width: 6px 6px 0 6px;
+            height: 0;
+            left: 50%;
+            margin-left: -6px;
+            margin-top: -3px;
+            position: absolute;
+            top: 50%;
+            width: 0;
+        }
+
+        .select2-container--default.select2-container--open .select2-selection__arrow b {
+            border-color: transparent transparent #64748b transparent;
+            border-width: 0 6px 6px 6px;
+        }
+
+        .suggestion-box {
+            border: 1px dashed var(--border);
+            border-radius: 14px;
+            padding: 14px;
+            background: #fbfdff;
+        }
+
+        .suggestion-box .title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 8px;
+        }
+
+        .suggestion-value {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .suggestion-meta {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        button, .link-button {
+            padding: 11px 14px;
+            border-radius: 12px;
+            border: 0;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        button.primary {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        button.secondary {
+            background: #e8eef7;
+            color: var(--text);
+        }
+
+        button.ghost {
+            background: #f3f4f6;
+            color: var(--text);
+        }
+
+        .link-button {
+            background: #f8fafc;
+            color: var(--accent-2);
+            border: 1px solid var(--border);
+        }
+
+        .notice {
+            display: none;
+            margin-top: 14px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+        }
+
+        .notice.success {
+            display: none;
+            background: #ecfdf3;
+            color: #166534;
+        }
+
+        .notice.error {
+            display: none;
+            background: #fef2f2;
+            color: var(--danger);
+        }
+
+        .footer-actions {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .role-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #e8eef7;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .viewer-note {
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            z-index: 1000;
+        }
+
+        .modal.open {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.78);
+        }
+
+        .modal-panel {
+            position: relative;
+            z-index: 1;
+            width: min(94vw, 1200px);
+            max-height: 92vh;
+            background: #fff;
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.35);
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+        }
+
+        .modal-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-body {
+            background: #0f172a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+        }
+
+        .modal-body img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            background: #f8fafc;
+        }
+
+        .thumbnail-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        @media (max-width: 980px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .progress-card {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .page {
+                padding: 18px 12px 28px;
+            }
+
+            .header h1 {
+                font-size: 28px;
+            }
+
+            .progress-card {
+                grid-template-columns: 1fr;
+            }
+
+            button, .link-button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="header">
+        <div class="topbar">
+            <div class="role-badge">{{ current_role|default('viewer')|title }} mode</div>
+            <a href="/logout" class="link-button">Logout</a>
+        </div>
+        <h1>Training Mode - Stock Matching</h1>
+        <p>Confirm which stock item belongs to each scanned image. Confirmed matches are saved directly to the local database.</p>
+    </div>
+
+    <div class="progress-card" id="progressCard">
+        <div class="metric">
+            <span class="label">Linked</span>
+            <span class="value" id="mappedCount">{{ mapping_stats.mapped_images }}</span>
+        </div>
+        <div class="metric">
+            <span class="label">Total Images</span>
+            <span class="value" id="totalCount">{{ mapping_stats.total_images }}</span>
+        </div>
+        <div class="metric">
+            <span class="label">Remaining</span>
+            <span class="value" id="remainingCount">{{ mapping_stats.unmapped_images }}</span>
+        </div>
+        <div class="metric">
+            <span class="label">Complete</span>
+            <span class="value" id="percentComplete">{{ mapping_stats.percent_complete }}%</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="panel preview-wrap">
+            <div class="field">
+                <label for="ssCarQueueSelect">SS Car Queue</label>
+                <div id="ssCarQueueContainer">
+                    <select id="ssCarQueueSelect"></select>
+                </div>
+            </div>
+
+            <div class="field">
+                <label for="imageSelect">Images in Selected Car</label>
+                <select id="imageSelect" onchange="handleImageSelection()"></select>
+            </div>
+
+            <div class="image-frame">
+                <img id="imagePreview" alt="Training preview" onclick="openFullscreenImage()">
+                <div class="image-overlay">
+                    <span class="pill" id="imageIdPill">Image #-</span>
+                    <span class="pill" id="imageStatusPill">Awaiting image</span>
+                </div>
+            </div>
+
+            <div class="details">
+                <div>Car Folder: <strong id="carFolderText">-</strong></div>
+                <div>Image Name: <strong id="imageNameText">-</strong></div>
+                <div>Scan Date: <strong id="scanDateText">-</strong></div>
+            </div>
+
+            <div class="footer-actions">
+                <a href="/" class="link-button">Back to Viewer</a>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="form-grid">
+                <div class="field">
+                    <label for="carModelFilter">Car Filter</label>
+                    <div id="carFilterContainer">
+                        <select id="carModelFilter"></select>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="stockItemSelect">Select Matching Stock Item</label>
+                    <select id="stockItemSelect"></select>
+                    <div class="muted" id="itemCount" style="margin-top:6px; font-size:12px;">Select a car to load stock items.</div>
+                </div>
+
+                {% if is_admin %}
+                <div class="actions">
+                    <button class="primary" onclick="confirmSelectedMatch()">Confirm Match</button>
+                    <button class="ghost" onclick="skipCurrentImage()">Skip Image</button>
+                    <button class="ghost" onclick="markUnmatchable()">Mark as Unmatchable</button>
+                </div>
+                {% else %}
+                <div class="viewer-note">
+                    Viewer mode is read-only. You can browse images and stock items, but only admin can save matches or refresh stock.
+                </div>
+                {% endif %}
+
+                <div class="notice success" id="successNotice"></div>
+                <div class="notice error" id="errorNotice"></div>
+
+                <div class="muted" style="font-size:12px; line-height:1.5;">
+                    Pick an SS image from the queue on the left, choose the matching stock item on the right, then confirm. Skipped and unmatchable images stay out of the queue.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="imageModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeFullscreenImage()"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Full screen image preview">
+        <div class="modal-head">
+            <strong id="modalTitle">Image preview</strong>
+            <button class="secondary" onclick="closeFullscreenImage()">Close</button>
+        </div>
+        <div class="modal-body">
+            <img id="modalImage" alt="Full screen preview">
+        </div>
+        <div class="modal-actions">
+            <button class="secondary" onclick="copyModalImage()">Copy Image</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const initialImage = {{ initial_image | tojson }};
+const targetStockItem = {{ target_stock_item | tojson }};
+const ssImageFolders = {{ ss_image_folders | tojson }};
+const isAdmin = {{ is_admin|tojson }};
+
+let imageQueue = [];
+let currentImage = null;
+let selectedQueueFolder = "";
+let currentCarFilter = "";
+let suppressQueueLoad = false;
+
+function normalize(value) {
+    return String(value || "").trim().toUpperCase();
+}
+
+function showNotice(type, message) {
+    const notice = document.getElementById(type === "error" ? "errorNotice" : "successNotice");
+    notice.textContent = message;
+    notice.style.display = "block";
+}
+
+function clearNotices() {
+    document.getElementById("successNotice").style.display = "none";
+    document.getElementById("errorNotice").style.display = "none";
+}
+
+function updateProgress(stats) {
+    if (!stats) return;
+    document.getElementById("mappedCount").textContent = stats.mapped_images;
+    document.getElementById("totalCount").textContent = stats.total_images;
+    document.getElementById("remainingCount").textContent = stats.unmapped_images;
+    document.getElementById("percentComplete").textContent = `${stats.percent_complete}%`;
+}
+
+function getPlaceholderImage() {
+    return "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMjAgMzIwJz48cmVjdCB3aWR0aD0nMzIwJyBoZWlnaHQ9JzMyMCcgcng9JzI0JyBmaWxsPScjZWVmMmY3Jy8+PHRleHQgeD0nMTYwJyB5PScxNjgnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZvbnQtZmFtaWx5PSdBcmlhbCcgc3R5bGU9J2ZvbnQtc2l6ZToxOHB4O2ZpbGw6IzU2Njk4MCc+Tm8gaW1hZ2U8L3RleHQ+PC9zdmc+";
+}
+
+function getCurrentImageSource() {
+    return currentImage ? `/get_image/${currentImage.id}` : getPlaceholderImage();
+}
+
+function openFullscreenImage() {
+    const modal = document.getElementById("imageModal");
+    const modalImage = document.getElementById("modalImage");
+    const modalTitle = document.getElementById("modalTitle");
+    modalImage.src = getCurrentImageSource();
+    modalTitle.textContent = currentImage ? `${currentImage.car_folder || "Image"} · ${currentImage.filename || "Preview"}` : "Image preview";
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function closeFullscreenImage() {
+    const modal = document.getElementById("imageModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+async function copyModalImage() {
+    if (!currentImage) {
+        return;
+    }
+
+    try {
+        const sourceUrl = getCurrentImageSource();
+        const response = await fetch(sourceUrl);
+        if (!response.ok) {
+            throw new Error(`Copy failed (HTTP ${response.status})`);
+        }
+
+        const blob = await response.blob();
+        let copied = false;
+        if (navigator.clipboard && window.ClipboardItem) {
+            try {
+                await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
+                copied = true;
+            } catch (error) {
+                console.warn("Clipboard image copy failed, falling back to download.", error);
+            }
+        }
+
+        if (!copied) {
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = objectUrl;
+            link.download = currentImage?.filename || "image";
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(objectUrl);
+        }
+
+        showNotice("success", "Image copied.");
+    } catch (error) {
+        showNotice("error", error.message);
+    }
+}
+
+function setSelect2Value(selector, value) {
+    const select = $(selector);
+    const nextValue = String(value || "").trim();
+    if (!nextValue) {
+        select.val(null).trigger("change");
+        return;
+    }
+
+    if (select.find(`option[value="${CSS.escape(nextValue)}"]`).length === 0) {
+        select.append(new Option(nextValue, nextValue, true, true));
+    }
+    select.val(nextValue).trigger("change");
+}
+
+function initializeCarFilter() {
+    const select = $("#carModelFilter");
+    select.select2({
+        ajax: {
+            url: "/api/search_car_folders",
+            dataType: "json",
+            delay: 150,
+            data: params => ({
+                q: params.term || "",
+                page: params.page || 1,
+            }),
+            processResults: data => ({
+                results: data.results || [],
+                pagination: { more: Boolean(data.pagination && data.pagination.more) },
+            }),
+            cache: true,
+        },
+        placeholder: "Type car name or click arrow to browse",
+        minimumInputLength: 0,
+        allowClear: true,
+        dropdownParent: $("#carFilterContainer"),
+        width: "100%",
+    });
+
+    select.on("select2:open", function () {
+        setTimeout(() => {
+            const search = document.querySelector(".select2-container--open .select2-search__field");
+            if (search) {
+                search.focus();
+            }
+        }, 0);
+    });
+
+    select.on("change", function () {
+        const selectedCar = this.value || "";
+        currentCarFilter = selectedCar;
+        loadStockItemsForCar(selectedCar).catch(error => {
+            showNotice("error", error.message);
+        });
+    });
+}
+
+function initializeQueueFilter(initialFolder = "") {
+    const select = $("#ssCarQueueSelect");
+    select.select2({
+        ajax: {
+            url: "/api/search_car_folders",
+            dataType: "json",
+            delay: 150,
+            data: params => ({
+                q: params.term || "",
+                page: params.page || 1,
+            }),
+            processResults: data => ({
+                results: data.results || [],
+                pagination: { more: Boolean(data.pagination && data.pagination.more) },
+            }),
+            cache: true,
+        },
+        placeholder: "Search SS car folders or click arrow",
+        minimumInputLength: 0,
+        allowClear: true,
+        dropdownParent: $("#ssCarQueueContainer"),
+        width: "100%",
+    });
+
+    select.on("select2:open", function () {
+        setTimeout(() => {
+            const search = document.querySelector(".select2-container--open .select2-search__field");
+            if (search) {
+                search.focus();
+            }
+        }, 0);
+    });
+
+    select.on("change", function () {
+        if (suppressQueueLoad) {
+            return;
+        }
+        loadImageQueue(this.value || "").catch(error => {
+            showNotice("error", error.message);
+        });
+    });
+
+    if (initialFolder) {
+        suppressQueueLoad = true;
+        setSelect2Value("#ssCarQueueSelect", initialFolder);
+        suppressQueueLoad = false;
+    }
+}
+
+function populateQueueFolders(selectedFolder = "") {
+    if (!ssImageFolders.length) {
+        return "";
+    }
+    if (selectedFolder && ssImageFolders.includes(selectedFolder)) {
+        return selectedFolder;
+    }
+    return ssImageFolders[0] || "";
+}
+
+function updateItemCount(count, baseCar = "") {
+    const itemCount = document.getElementById("itemCount");
+    if (!itemCount) {
+        return;
+    }
+
+    if (!count) {
+        itemCount.textContent = baseCar ? `No stock items found for ${baseCar}.` : "Select a car to load stock items.";
+        return;
+    }
+
+    itemCount.textContent = `${count} stock items available${baseCar ? ` for ${baseCar}` : ""}.`;
+}
+
+function selectPreferredStockItem(preferredStockItem = "") {
+    const select = document.getElementById("stockItemSelect");
+    const normalizedPreferred = normalize(preferredStockItem || targetStockItem);
+    if (!normalizedPreferred || !select.options.length) {
+        return;
+    }
+
+    const match = Array.from(select.options).find(option => normalize(option.value) === normalizedPreferred);
+    if (match) {
+        select.value = match.value;
+    }
+}
+
+async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
+    const select = document.getElementById("stockItemSelect");
+    select.innerHTML = "";
+
+    if (!carFullName) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Select a car first";
+        select.appendChild(option);
+        updateItemCount(0, "");
+        return;
+    }
+
+    const response = await fetch(`/api/get_stock_items_for_car?car=${encodeURIComponent(carFullName)}`);
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error || `Failed to load stock items (HTTP ${response.status})`);
+    }
+
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (items.length === 0) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No stock items available";
+        select.appendChild(option);
+        updateItemCount(0, data.base_car || carFullName);
+        return;
+    }
+
+    items.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item.stock_item_name;
+        option.textContent = `${item.stock_item_name} ${item.qty ? `(${item.qty})` : ""}`.trim();
+        select.appendChild(option);
+    });
+
+    updateItemCount(items.length, data.base_car || carFullName);
+    selectPreferredStockItem(preferredStockItem);
+}
+
+function populateImageDropdown(selectedId = "") {
+    const select = document.getElementById("imageSelect");
+    select.innerHTML = "";
+
+    // Deduplicate queue by id (preserve order)
+    const seen = new Set();
+    const uniqueQueue = [];
+    for (const img of imageQueue) {
+        if (!img || !img.id) continue;
+        if (seen.has(String(img.id))) continue;
+        seen.add(String(img.id));
+        uniqueQueue.push(img);
+    }
+
+    imageQueue = uniqueQueue;
+
+    if (!uniqueQueue.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No SS images available in this folder";
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+    }
+
+    select.disabled = false;
+
+    uniqueQueue.forEach((image, index) => {
+        const option = document.createElement("option");
+        option.value = String(image.id);
+        const statusLabel = image.mapped ? "Linked" : "Pending";
+        option.textContent = `${String(index + 1).padStart(4, "0")} | ${image.filename || "Unnamed"} | ${statusLabel}`;
+        select.appendChild(option);
+    });
+
+    // If a requested selectedId exists in the options, choose it; otherwise default to first.
+    if (selectedId && Array.from(select.options).some(o => o.value === String(selectedId))) {
+        select.value = String(selectedId);
+    } else if (select.options.length > 0) {
+        select.selectedIndex = 0;
+    }
+}
+
+function updateImageView(imageRecord) {
+    currentImage = imageRecord;
+    if (!imageRecord) {
+        document.getElementById("imagePreview").src = getPlaceholderImage();
+        document.getElementById("imageIdPill").textContent = "Queue empty";
+        document.getElementById("imageStatusPill").textContent = "No images remain";
+        document.getElementById("carFolderText").textContent = "-";
+        document.getElementById("imageNameText").textContent = "-";
+        document.getElementById("scanDateText").textContent = "-";
+        return;
+    }
+
+    document.getElementById("imagePreview").src = `/get_image/${imageRecord.id}`;
+    document.getElementById("imageIdPill").textContent = `Image #${imageRecord.id}`;
+    document.getElementById("imageStatusPill").textContent = "Ready for review";
+    document.getElementById("carFolderText").textContent = imageRecord.car_folder || "-";
+    document.getElementById("imageNameText").textContent = imageRecord.filename || "-";
+    document.getElementById("scanDateText").textContent = imageRecord.scan_date || "-";
+}
+
+function maybeSyncCarFilter(imageRecord) {
+    if (!imageRecord || !imageRecord.car_folder) {
+        return;
+    }
+
+    if (currentCarFilter && normalize(currentCarFilter) === normalize(imageRecord.car_folder)) {
+        return;
+    }
+
+    currentCarFilter = imageRecord.car_folder;
+    setSelect2Value("#carModelFilter", imageRecord.car_folder);
+}
+
+async function openImage(imageRecord, pushHistory = true) {
+    if (!imageRecord) {
+        updateImageView(null);
+        return;
+    }
+
+    updateImageView(imageRecord);
+    maybeSyncCarFilter(imageRecord);
+
+    if (pushHistory) {
+        const select = document.getElementById("imageSelect");
+        select.value = String(imageRecord.id);
+    }
+}
+
+function handleImageSelection() {
+    clearNotices();
+    const select = document.getElementById("imageSelect");
+    const raw = select.value || "";
+    const imageId = Number(raw);
+    if (!raw || !Number.isFinite(imageId)) {
+        showNotice("error", "Selected image is not available in the queue.");
+        return;
+    }
+
+    const imageRecord = imageQueue.find(image => Number(image.id) === imageId);
+    if (!imageRecord) {
+        // If not found in current array (race), try reloading the queue once
+        loadImageQueue(selectedQueueFolder).catch(() => {});
+        showNotice("error", "Selected image not found in current queue; reloading.");
+        return;
+    }
+
+    openImage(imageRecord, false);
+}
+
+async function submitMapping(stockItemName, confidence, confirmedBy) {
+    if (!isAdmin) {
+        showNotice("error", "Viewer mode is read-only.");
+        return;
+    }
+
+    if (!currentImage || !currentImage.id) {
+        showNotice("error", "No current image loaded.");
+        return;
+    }
+
+    const response = await fetch("/confirm_mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            image_id: currentImage.id,
+            stock_item_name: stockItemName || "",
+            confidence: confidence,
+            confirmed_by: confirmedBy,
+            car_model: document.getElementById("carModelFilter").value || currentImage.car_folder || ""
+        })
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+        throw new Error(payload.error || `Save failed (HTTP ${response.status})`);
+    }
+
+    updateProgress(payload.stats || null);
+    showNotice("success", "Match saved.");
+
+    const queueFolder = document.getElementById("ssCarQueueSelect").value || "";
+    const showingFolderQueue = Boolean(queueFolder);
+    const currentIndex = imageQueue.findIndex(image => image.id === currentImage.id);
+    const nextImage = imageQueue[currentIndex + 1] || imageQueue[currentIndex - 1] || null;
+
+    if (!showingFolderQueue) {
+        imageQueue = imageQueue.filter(image => image.id !== currentImage.id);
+        populateImageDropdown(nextImage ? nextImage.id : "");
+    } else {
+        // In folder mode we show all images, so refresh and keep browsing.
+        await loadImageQueue(queueFolder);
+    }
+
+    if (nextImage) {
+        await openImage(nextImage, true);
+        return;
+    }
+
+    updateImageView(null);
+}
+
+async function confirmSelectedMatch() {
+    try {
+        const stockItem = document.getElementById("stockItemSelect").value;
+        if (!stockItem) {
+            showNotice("error", "Select a stock item first.");
+            return;
+        }
+        await submitMapping(stockItem, 1.0, "human");
+    } catch (error) {
+        showNotice("error", error.message);
+    }
+}
+
+async function skipCurrentImage() {
+    try {
+        await submitMapping("", 0.0, "skipped");
+    } catch (error) {
+        showNotice("error", error.message);
+    }
+}
+
+async function markUnmatchable() {
+    try {
+        await submitMapping("__UNMATCHABLE__", 0.0, "unmatchable");
+    } catch (error) {
+        showNotice("error", error.message);
+    }
+}
+
+async function loadImageQueue(folderName = "") {
+    // Only request images for the selected SS car folder to avoid loading the full queue.
+    const queueFolder = folderName || document.getElementById("ssCarQueueSelect").value || "";
+    selectedQueueFolder = queueFolder;
+    const url = queueFolder ? `/train_images?folder=${encodeURIComponent(queueFolder)}` : `/train_images?limit=200`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Could not load image queue (HTTP ${response.status})`);
+    }
+
+    const payload = await response.json();
+    imageQueue = payload.images || [];
+    updateProgress(payload.stats || null);
+
+    const preferredId = initialImage && initialImage.id ? initialImage.id : (imageQueue[0] && imageQueue[0].id) || "";
+    populateImageDropdown(preferredId);
+
+    if (initialImage && initialImage.id) {
+        const initialMatch = imageQueue.find(image => image.id === initialImage.id);
+        if (initialMatch) {
+            await openImage(initialMatch, true);
+            return;
+        }
+    }
+
+    if (imageQueue.length > 0) {
+        await openImage(imageQueue[0], true);
+        return;
+    }
+
+    updateImageView(null);
+}
+
+async function initializePage() {
+    const initialFolder = initialImage && initialImage.car_folder ? initialImage.car_folder : "";
+    const selectedFolder = populateQueueFolders(initialFolder);
+    initializeCarFilter();
+    initializeQueueFilter(selectedFolder);
+    updateItemCount(0, "");
+    await loadImageQueue(selectedFolder);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    initializePage().catch(error => {
+        showNotice("error", error.message);
+    });
+
+    document.getElementById("imageModal").addEventListener("click", event => {
+        if (event.target.id === "imageModal") {
+            closeFullscreenImage();
+        }
+    });
+
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape") {
+            closeFullscreenImage();
+        }
+    });
+});
+</script>
+</body>
+</html>

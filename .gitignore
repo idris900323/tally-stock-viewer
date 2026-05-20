@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+archived_unneeded/
+data/*.bak
+data/*.dedupe.bak
+logs/
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/item stock list.auto*.xlsx

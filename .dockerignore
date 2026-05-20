@@ -1,0 +1,20 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__/
+*.pyc
+logs/
+archived_unneeded/
+
+# Runtime/generated SQLite files
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+data/*.bak
+data/*.dedupe.bak
+data/item stock list.auto*.xlsx
+
+# Large local image archives should be mounted as volumes in production.
+data/S.S IMAGE/
+data/7'D MAT/
