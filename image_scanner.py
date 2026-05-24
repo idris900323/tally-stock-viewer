@@ -23,6 +23,16 @@ def _car_folder_from_root(base_path, root):
     return relative_root.split(os.sep, 1)[0]
 
 
+def _relative_image_path(base_path, full_path):
+    relative_path = os.path.relpath(full_path, base_path).replace("\\", "/")
+    normalized = os.path.normpath(relative_path).replace("\\", "/")
+    if normalized in (".", ""):
+        return os.path.basename(full_path)
+    if normalized == ".." or normalized.startswith("../"):
+        raise ValueError(f"unsafe relative path outside image root: {full_path}")
+    return normalized.lstrip("/")
+
+
 def scan_ss_image_folder(base_path="data/S.S IMAGE"):
     init_database()
     resolved_base_path = _resolve_base_path(base_path)
@@ -59,8 +69,14 @@ def scan_ss_image_folder(base_path="data/S.S IMAGE"):
                 logger.warning("Skipping inaccessible image file: %s", full_path)
                 continue
 
-            image_name = os.path.splitext(filename)[0]
-            batch_records.append((car_folder, image_name, full_path))
+            image_name = filename
+            try:
+                relative_path = _relative_image_path(resolved_base_path, full_path)
+            except ValueError:
+                logger.warning("Skipping unsafe image path outside root: %s", full_path)
+                continue
+
+            batch_records.append((car_folder, image_name, relative_path))
             if len(batch_records) >= IMAGE_SCAN_BATCH_SIZE:
                 total_images += add_images_batch(batch_records)
                 batch_records.clear()

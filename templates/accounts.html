@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Accounts Admin - Tally Stock Viewer</title>
+    <style>
+        :root {
+            --bg: #f3f6fb;
+            --panel: #ffffff;
+            --text: #132238;
+            --muted: #5d6b82;
+            --border: #d9e2ec;
+            --accent: #1f6feb;
+            --success-bg: #e8f5e9;
+            --success-text: #276749;
+            --error-bg: #fdecea;
+            --error-text: #b42318;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(31, 111, 235, 0.14), transparent 24%),
+                radial-gradient(circle at top right, rgba(20, 184, 166, 0.12), transparent 20%),
+                var(--bg);
+        }
+
+        .page {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 28px 20px 40px;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 18px;
+            box-shadow: 0 14px 40px rgba(19, 34, 56, 0.08);
+            margin-bottom: 16px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .role-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #e8eef7;
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 16px;
+        }
+
+        label {
+            font-weight: 700;
+            color: var(--muted);
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        input, button {
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            font-size: 14px;
+        }
+
+        input {
+            background: #fff;
+            width: 100%;
+        }
+
+        button {
+            background: var(--accent);
+            color: #fff;
+            border: 0;
+            cursor: pointer;
+        }
+
+        button.secondary {
+            background: #e8eef7;
+            color: var(--text);
+        }
+
+        .notice {
+            display: none;
+            padding: 10px 12px;
+            border-radius: 10px;
+            margin-bottom: 14px;
+            font-size: 13px;
+        }
+
+        .notice.success {
+            color: var(--success-text);
+            background: var(--success-bg);
+        }
+
+        .notice.error {
+            color: var(--error-text);
+            background: var(--error-bg);
+        }
+
+        .field-row {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 780px;
+        }
+
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+            text-align: left;
+        }
+
+        th {
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .status-active {
+            color: #166534;
+            font-weight: 700;
+        }
+
+        .status-paused {
+            color: #b91c1c;
+            font-weight: 700;
+        }
+
+        .btn-delete {
+            background: #dc2626;
+            color: #fff;
+        }
+
+        .btn-toggle {
+            background: #f59e0b;
+            color: #111827;
+        }
+
+        .btn-toggle.paused {
+            background: #16a34a;
+            color: #fff;
+        }
+
+        .bulk-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+
+        @media (max-width: 980px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="topbar">
+        <div class="role-badge">{{ current_role|default('admin')|title }} mode</div>
+        <div class="toolbar">
+            <button class="secondary" onclick="window.location.href='/'">Back to Viewer</button>
+            <button class="secondary" onclick="window.location.href='/train'">Train Matches</button>
+            <button class="secondary" onclick="window.location.href='/admin/pricing'">Manage Pricing</button>
+            <button class="secondary" onclick="window.location.href='/logout'">Logout</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h1 style="margin:0 0 10px;">Account Management</h1>
+        <p class="muted" style="margin:0;">Create, delete, pause, and resume customer accounts from this page.</p>
+    </div>
+
+    <div id="successMsg" class="notice success"></div>
+    <div id="errorMsg" class="notice error"></div>
+
+    <div class="grid">
+        <div class="panel">
+            <h2 style="margin:0 0 12px;">Create New Customer Account</h2>
+            <form id="createCustomerForm">
+                <div class="field-row">
+                    <label for="new_username">Username</label>
+                    <input id="new_username" name="username" type="text" required>
+                </div>
+                <div class="field-row">
+                    <label for="new_access_code">Access Code</label>
+                    <input id="new_access_code" name="access_code" type="text" required>
+                </div>
+                <button id="createUserBtn" type="submit">Create Account</button>
+            </form>
+        </div>
+
+        <div class="panel table-wrap">
+            <h2 style="margin:0 0 10px;">Manage Customer Accounts</h2>
+            <div class="bulk-actions">
+                <button type="button" class="secondary" onclick="pauseAllCustomers()">Pause All Customers</button>
+                <button type="button" class="secondary" onclick="resumeAllCustomers()">Resume All Customers</button>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:220px;">Username</th>
+                        <th style="width:180px;">Access Code</th>
+                        <th style="width:130px;">Status</th>
+                        <th style="width:200px;">Created</th>
+                        <th style="width:220px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="accountsTableBody"></tbody>
+            </table>
+            <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No customer accounts found.</div>
+        </div>
+    </div>
+</div>
+
+<script>
+const initialStatus = {{ status_message|tojson }};
+const initialError = {{ error_message|tojson }};
+let customerAccounts = [];
+
+function showSuccess(message) {
+    const el = document.getElementById("successMsg");
+    el.textContent = message;
+    el.style.display = "block";
+    document.getElementById("errorMsg").style.display = "none";
+}
+
+function showError(message) {
+    const el = document.getElementById("errorMsg");
+    el.textContent = message;
+    el.style.display = "block";
+    document.getElementById("successMsg").style.display = "none";
+}
+
+function formatDateLabel(value) {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) {
+        return "-";
+    }
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
+function escapeHtml(value) {
+    return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+async function createUserAccount() {
+    const usernameInput = document.getElementById("new_username");
+    const accessInput = document.getElementById("new_access_code");
+    const btn = document.getElementById("createUserBtn");
+
+    const username = String(usernameInput?.value || "").trim();
+    const accessCode = String(accessInput?.value || "").trim();
+
+    if (!username || !accessCode) {
+        showError("Please enter both username and access code.");
+        return;
+    }
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Creating...";
+
+    try {
+        const response = await fetch("/admin/create_user", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, access_code: accessCode }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Create failed (HTTP ${response.status})`);
+        }
+
+        usernameInput.value = "";
+        accessInput.value = "";
+        showSuccess(result.message || "Account created successfully");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
+function renderAccountsTable(customers) {
+    const body = document.getElementById("accountsTableBody");
+    const empty = document.getElementById("accountsEmptyState");
+
+    if (!Array.isArray(customers) || customers.length === 0) {
+        body.innerHTML = "";
+        empty.style.display = "block";
+        return;
+    }
+
+    empty.style.display = "none";
+    body.innerHTML = customers.map(customer => {
+        const paused = Boolean(customer.force_contact_us);
+        const statusText = paused ? "Paused" : "Active";
+        const statusClass = paused ? "status-paused" : "status-active";
+        const toggleText = paused ? "Resume" : "Pause";
+        const createdLabel = formatDateLabel(customer.created_at);
+        return `
+            <tr>
+                <td>${escapeHtml(customer.username || "")}</td>
+                <td>${escapeHtml(customer.access_code || "")}</td>
+                <td><span class="${statusClass}">${statusText}</span></td>
+                <td>${escapeHtml(createdLabel)}</td>
+                <td>
+                    <button type="button" class="btn-toggle ${paused ? "paused" : ""}" onclick="toggleAccountStatus(${Number(customer.id)}, ${paused})">${toggleText}</button>
+                    <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>
+                </td>
+            </tr>
+        `;
+    }).join("");
+}
+
+function deleteAccountFromButton(button) {
+    const userId = Number(button?.dataset?.userId || 0);
+    const username = String(button?.dataset?.username || "");
+    return deleteAccount(userId, username);
+}
+
+async function loadCustomerAccounts() {
+    try {
+        const response = await fetch("/admin/get_all_customers");
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || `Failed to load customers (HTTP ${response.status})`);
+        }
+        customerAccounts = Array.isArray(result) ? result : [];
+        renderAccountsTable(customerAccounts);
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+async function deleteAccount(userId, username) {
+    const normalizedName = String(username || "");
+    const confirmed = window.confirm(`Delete account "${normalizedName}"? This cannot be undone.`);
+    if (!confirmed) {
+        return;
+    }
+
+    const typed = window.prompt(`Type ${normalizedName} to confirm deletion:`);
+    if (typed !== normalizedName) {
+        showError("Username does not match. Deletion cancelled.");
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/delete_user/${encodeURIComponent(userId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Delete failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Account deleted");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+async function toggleAccountStatus(userId, currentlyPaused) {
+    const nextPause = !Boolean(currentlyPaused);
+    const confirmed = window.confirm(nextPause ? "Pause this customer account?" : "Resume this customer account?");
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/admin/toggle_user_status/${encodeURIComponent(userId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pause: nextPause }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Status update failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Status updated");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+async function setAllCustomersStatus(pause) {
+    const confirmed = window.confirm(
+        pause
+            ? "Pause ALL customers? They will see Contact Us for all prices."
+            : "Resume ALL customers?"
+    );
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/admin/set_all_customer_status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pause }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Bulk update failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Customer access updated");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+    }
+}
+
+function pauseAllCustomers() {
+    return setAllCustomersStatus(true);
+}
+
+function resumeAllCustomers() {
+    return setAllCustomersStatus(false);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    const form = document.getElementById("createCustomerForm");
+    if (form) {
+        form.addEventListener("submit", event => {
+            event.preventDefault();
+            createUserAccount();
+        });
+    }
+
+    if (initialStatus) {
+        showSuccess(initialStatus);
+    }
+    if (initialError) {
+        showError(initialError);
+    }
+    loadCustomerAccounts();
+});
+</script>
+</body>
+</html>

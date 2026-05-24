@@ -433,7 +433,7 @@
             <a href="/logout" class="fix-link">Logout</a>
         </div>
         <h1>Tally Stock Viewer</h1>
-        <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and manage customer pricing.</p>
+        <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, manage pricing, and control customer accounts.</p>
     </div>
 
     <div class="panel">
@@ -447,7 +447,8 @@
             <button class="secondary" onclick="shareVisibleImages()">Share Visible Images</button>
             <button id="updateStockBtn" class="secondary" onclick="updateStock()">Update Stock</button>
             <button onclick="window.location.href='/train'">Train Matches</button>
-            <button class="secondary" onclick="window.location.href='/admin/pricing'">Manage Prices &amp; Customers</button>
+            <button class="secondary" onclick="window.location.href='/admin/pricing'">Manage Pricing</button>
+            <button class="secondary" onclick="window.location.href='/admin/accounts'">Manage Accounts</button>
             {% endif %}
         </div>
 
@@ -781,7 +782,8 @@ async function updateTimestamp() {
         if (statusRes.ok) {
             const status = await statusRes.json();
             if (status.success === false) {
-                statusEl.textContent = `Last error: ${status.message}`;
+                const details = status.error_code ? ` [${status.error_code}]` : "";
+                statusEl.textContent = `Last error: ${status.message}${details}`;
                 statusEl.style.color = "#b42318";
             } else if (status.success === true) {
                 statusEl.textContent = `Last update: ${status.message}`;
@@ -821,8 +823,7 @@ async function updateStock() {
 
     try {
         clearMessages();
-        await updateStockSilently();
-        showInfo("Stock updated successfully");
+        await refreshStock();
     } catch (error) {
         showError(`Error updating stock: ${error.message}`);
     } finally {
@@ -937,17 +938,33 @@ async function refreshStock() {
         clearMessages();
         const res = await fetch("/update_stock", { method: "POST" });
         const data = await res.json();
+        const errorCode = data.error_code ? ` [${data.error_code}]` : "";
+        const statusEl = document.getElementById("statusMessage");
+
         if (!res.ok) {
-            showError(`Stock refresh failed: ${data.error || res.status}`);
+            showError(`Stock refresh failed: ${data.error || data.message || res.status}${errorCode}`);
+            if (statusEl) {
+                statusEl.textContent = `Last error: ${data.message || data.error || res.status}${errorCode}`;
+                statusEl.style.color = "#b42318";
+            }
             return;
         }
 
         if (data.tally_online === false) {
-            showError(data.warning || "Tally is down; using the last saved upload.");
+            const message = data.warning || data.message || "Tally is down; using the last saved upload.";
+            showError(message + errorCode);
+            if (statusEl) {
+                statusEl.textContent = `Last error: ${message}${errorCode}`;
+                statusEl.style.color = "#b42318";
+            }
             return;
         }
 
         showInfo(data.message || "Stock exported and updated successfully");
+        if (statusEl) {
+            statusEl.textContent = `Last update: ${data.message || "Stock exported and updated successfully"}`;
+            statusEl.style.color = "#475569";
+        }
         loadCars();
         updateTimestamp();
     } catch (error) {

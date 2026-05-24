@@ -463,7 +463,14 @@
     <div class="header">
         <div class="topbar">
             <div class="role-badge">{{ current_role|default('viewer')|title }} mode</div>
-            <a href="/logout" class="link-button">Logout</a>
+            <div class="actions">
+                <a href="/" class="link-button">Back to Viewer</a>
+                {% if is_admin %}
+                <a href="/admin/pricing" class="link-button">Manage Pricing</a>
+                <a href="/admin/accounts" class="link-button">Manage Accounts</a>
+                {% endif %}
+                <a href="/logout" class="link-button">Logout</a>
+            </div>
         </div>
         <h1>Training Mode - Stock Matching</h1>
         <p>Confirm which stock item belongs to each scanned image. Confirmed matches are saved directly to the local database.</p>
@@ -539,8 +546,7 @@
                 {% if is_admin %}
                 <div class="actions">
                     <button class="primary" onclick="confirmSelectedMatch()">Confirm Match</button>
-                    <button class="ghost" onclick="skipCurrentImage()">Skip Image</button>
-                    <button class="ghost" onclick="markUnmatchable()">Mark as Unmatchable</button>
+                    <button class="ghost" onclick="removeCurrentMatch()">Remove Match</button>
                 </div>
                 {% else %}
                 <div class="viewer-note">
@@ -552,7 +558,7 @@
                 <div class="notice error" id="errorNotice"></div>
 
                 <div class="muted" style="font-size:12px; line-height:1.5;">
-                    Pick an SS image from the queue on the left, choose the matching stock item on the right, then confirm. Skipped and unmatchable images stay out of the queue.
+                    Pick an SS image from the queue on the left, choose the matching stock item on the right, then confirm. Use Remove Match if you want to undo and remap an image later.
                 </div>
             </div>
         </div>
@@ -682,7 +688,15 @@ function setSelect2Value(selector, value) {
         return;
     }
 
-    if (select.find(`option[value="${CSS.escape(nextValue)}"]`).length === 0) {
+    // Find option by value without relying on CSS.escape (not available in all browsers).
+    let found = false;
+    select.find('option').each(function () {
+        if (String(this.value) === nextValue) {
+            found = true;
+            return false;
+        }
+    });
+    if (!found) {
         select.append(new Option(nextValue, nextValue, true, true));
     }
     select.val(nextValue).trigger("change");
@@ -692,7 +706,7 @@ function initializeCarFilter() {
     const select = $("#carModelFilter");
     select.select2({
         ajax: {
-            url: "/api/search_car_folders",
+            url: "/api/search_cars",
             dataType: "json",
             delay: 150,
             data: params => ({
@@ -705,7 +719,7 @@ function initializeCarFilter() {
             }),
             cache: true,
         },
-        placeholder: "Type car name or click arrow to browse",
+        placeholder: "Type car master name or click arrow to browse",
         minimumInputLength: 0,
         allowClear: true,
         dropdownParent: $("#carFilterContainer"),
@@ -829,30 +843,85 @@ async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
         return;
     }
 
-    const response = await fetch(`/api/get_stock_items_for_car?car=${encodeURIComponent(carFullName)}`);
-    const data = await response.json();
+    // Use the same designs endpoint as the main viewer so results and ranking
+    // match what users see on the index page.
+    const response = await fetch(`/designs?car=${encodeURIComponent(carFullName)}`);
     if (!response.ok) {
-        throw new Error(data.error || `Failed to load stock items (HTTP ${response.status})`);
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to load designs (HTTP ${response.status})`);
     }
 
-    const items = Array.isArray(data.items) ? data.items : [];
+    const designs = await response.json();
+    const items = Array.isArray(designs) ? designs : [];
     if (items.length === 0) {
         const option = document.createElement("option");
         option.value = "";
         option.textContent = "No stock items available";
         select.appendChild(option);
-        updateItemCount(0, data.base_car || carFullName);
+        updateItemCount(0, carFullName);
         return;
     }
 
-    items.forEach(item => {
+    // The designs payload uses `design` or `raw` as the stock item label.
+    const seenStock = new Set();
+    let uniqueCount = 0;
+    for (const item of items) {
+        const stockName = item.design || item.raw || item.stock_item_name || "Unknown";
+        const key = normalize(stockName);
+        if (seenStock.has(key)) {
+            continue;
+        }
+        seenStock.add(key);
+        uniqueCount += 1;
         const option = document.createElement("option");
-        option.value = item.stock_item_name;
-        option.textContent = `${item.stock_item_name} ${item.qty ? `(${item.qty})` : ""}`.trim();
+        option.value = stockName;
+        option.textContent = `${stockName} ${item.qty ? `(${item.qty})` : ""}`.trim();
         select.appendChild(option);
-    });
+    }
 
-    updateItemCount(items.length, data.base_car || carFullName);
+    updateItemCount(uniqueCount, carFullName);
+
+    // If a preferred stock item was provided, select it.
+    if (preferredStockItem) {
+        selectPreferredStockItem(preferredStockItem);
+        return;
+    }
+
+    // If there's a current image, try to auto-select the best matching stock item
+    // based on the image filename or car folder.
+    if (currentImage && currentImage.filename) {
+        const filenameNorm = normalize(currentImage.filename);
+        const options = Array.from(select.options || []);
+        // Try exact-ish match where option value contains filename tokens
+        let picked = null;
+        for (const opt of options) {
+            const optNorm = normalize(opt.value || opt.text || "");
+            if (filenameNorm && (optNorm.includes(filenameNorm) || filenameNorm.includes(optNorm))) {
+                picked = opt;
+                break;
+            }
+        }
+        if (!picked && currentImage.car_folder) {
+            const folderNorm = normalize(currentImage.car_folder);
+            for (const opt of options) {
+                const optNorm = normalize(opt.value || opt.text || "");
+                if (folderNorm && (optNorm.includes(folderNorm) || folderNorm.includes(optNorm))) {
+                    picked = opt;
+                    break;
+                }
+            }
+        }
+
+        if (picked) {
+            select.value = picked.value;
+        } else {
+            // fallback to previously-targeted stock item if provided by URL
+            selectPreferredStockItem(preferredStockItem);
+        }
+        return;
+    }
+
+    // No current image or no match; try selecting preferredStockItem if available
     selectPreferredStockItem(preferredStockItem);
 }
 
@@ -913,23 +982,10 @@ function updateImageView(imageRecord) {
 
     document.getElementById("imagePreview").src = `/get_image/${imageRecord.id}`;
     document.getElementById("imageIdPill").textContent = `Image #${imageRecord.id}`;
-    document.getElementById("imageStatusPill").textContent = "Ready for review";
+    document.getElementById("imageStatusPill").textContent = imageRecord.mapped ? "Matched" : "Ready for review";
     document.getElementById("carFolderText").textContent = imageRecord.car_folder || "-";
     document.getElementById("imageNameText").textContent = imageRecord.filename || "-";
     document.getElementById("scanDateText").textContent = imageRecord.scan_date || "-";
-}
-
-function maybeSyncCarFilter(imageRecord) {
-    if (!imageRecord || !imageRecord.car_folder) {
-        return;
-    }
-
-    if (currentCarFilter && normalize(currentCarFilter) === normalize(imageRecord.car_folder)) {
-        return;
-    }
-
-    currentCarFilter = imageRecord.car_folder;
-    setSelect2Value("#carModelFilter", imageRecord.car_folder);
 }
 
 async function openImage(imageRecord, pushHistory = true) {
@@ -939,7 +995,9 @@ async function openImage(imageRecord, pushHistory = true) {
     }
 
     updateImageView(imageRecord);
-    maybeSyncCarFilter(imageRecord);
+    if (imageRecord && imageRecord.stock_item_name) {
+        selectPreferredStockItem(imageRecord.stock_item_name);
+    }
 
     if (pushHistory) {
         const select = document.getElementById("imageSelect");
@@ -1033,17 +1091,39 @@ async function confirmSelectedMatch() {
     }
 }
 
-async function skipCurrentImage() {
-    try {
-        await submitMapping("", 0.0, "skipped");
-    } catch (error) {
-        showNotice("error", error.message);
+async function removeCurrentMatch() {
+    if (!isAdmin) {
+        showNotice("error", "Viewer mode is read-only.");
+        return;
     }
-}
+    if (!currentImage || !currentImage.id) {
+        showNotice("error", "No current image loaded.");
+        return;
+    }
 
-async function markUnmatchable() {
     try {
-        await submitMapping("__UNMATCHABLE__", 0.0, "unmatchable");
+        const removedImageId = Number(currentImage.id);
+        const response = await fetch("/remove_mapping", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                image_id: removedImageId,
+            }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error || `Remove failed (HTTP ${response.status})`);
+        }
+
+        updateProgress(payload.stats || null);
+        showNotice("success", payload.removed ? "Match removed." : "No match found for this image.");
+        await loadImageQueue(selectedQueueFolder || "");
+
+        const reopened = imageQueue.find(image => Number(image.id) === removedImageId);
+        if (reopened) {
+            await openImage(reopened, true);
+        }
     } catch (error) {
         showNotice("error", error.message);
     }

@@ -9,6 +9,7 @@ from config import Config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = Config.DB_PATH if os.path.isabs(Config.DB_PATH) else os.path.join(BASE_DIR, Config.DB_PATH)
+IMAGE_ROOT = os.path.join(BASE_DIR, "data", "S.S IMAGE")
 logger = logging.getLogger(__name__)
 
 
@@ -16,10 +17,12 @@ def _canonicalize_filepath(filepath):
     value = str(filepath or "").strip()
     if not value:
         return value
-    normalized = os.path.normpath(os.path.abspath(value))
-    if os.name == "nt":
-        normalized = os.path.normcase(normalized)
-    return normalized
+    if os.path.isabs(value):
+        normalized = os.path.normpath(os.path.abspath(value))
+        if os.name == "nt":
+            normalized = os.path.normcase(normalized)
+        return normalized
+    return value.replace("\\", "/")
 
 
 def _validate_stock_item_name(stock_item_name):
@@ -38,26 +41,76 @@ def _validate_confidence(confidence):
     return value
 
 
+def _resolve_filepath_candidate(value):
+    if os.path.isabs(value):
+        return value
+    return os.path.normpath(os.path.join(IMAGE_ROOT, value))
+
+
 def _validate_filepath(filepath):
     value = _canonicalize_filepath(filepath)
     if not value:
         raise ValueError("filepath is required")
     if "\x00" in value:
         raise ValueError("filepath contains null byte")
-    if not os.path.exists(value):
-        raise ValueError(f"filepath does not exist: {value}")
-    if not os.access(value, os.R_OK):
-        raise ValueError(f"filepath is not readable: {value}")
-    if os.path.getsize(value) > Config.MAX_IMAGE_SIZE:
-        raise ValueError(f"filepath exceeds max image size: {value}")
-    return value
+
+    candidate = _resolve_filepath_candidate(value)
+    if not os.path.exists(candidate):
+        raise ValueError(f"filepath does not exist: {candidate}")
+    if not os.access(candidate, os.R_OK):
+        raise ValueError(f"filepath is not readable: {candidate}")
+    if os.path.getsize(candidate) > Config.MAX_IMAGE_SIZE:
+        raise ValueError(f"filepath exceeds max image size: {candidate}")
+
+    if os.path.isabs(value):
+        image_root_norm = os.path.normcase(os.path.normpath(IMAGE_ROOT)) if os.name == "nt" else os.path.normpath(IMAGE_ROOT)
+        candidate_norm = os.path.normcase(os.path.normpath(candidate)) if os.name == "nt" else os.path.normpath(candidate)
+        if candidate_norm.startswith(image_root_norm + os.sep) or candidate_norm == image_root_norm:
+            relative_path = os.path.relpath(candidate, IMAGE_ROOT).replace("\\", "/")
+            return relative_path
+        raise ValueError("absolute filepath outside IMAGE_ROOT is not allowed")
+
+    normalized_value = os.path.normpath(value)
+    if normalized_value == os.pardir or normalized_value.startswith(os.pardir + os.sep):
+        raise ValueError("filepath contains unsafe relative traversal")
+
+    return value.replace("\\", "/")
+
+
+def _normalize_legacy_absolute_image_paths(conn):
+    """Convert legacy absolute image paths under IMAGE_ROOT to portable relative paths."""
+    rows = conn.execute("SELECT id, filepath FROM images").fetchall()
+    updates = []
+    image_root_norm = os.path.normcase(os.path.normpath(IMAGE_ROOT)) if os.name == "nt" else os.path.normpath(IMAGE_ROOT)
+
+    for row in rows:
+        raw_value = str(row["filepath"] or "").strip()
+        if not raw_value:
+            continue
+        if not os.path.isabs(raw_value):
+            continue
+
+        abs_value = os.path.normpath(os.path.abspath(raw_value))
+        abs_norm = os.path.normcase(abs_value) if os.name == "nt" else abs_value
+        if not (abs_norm == image_root_norm or abs_norm.startswith(image_root_norm + os.sep)):
+            continue
+
+        relative_path = os.path.relpath(abs_value, IMAGE_ROOT).replace("\\", "/")
+        if not relative_path or relative_path == ".":
+            continue
+        updates.append((relative_path, int(row["id"])))
+
+    if updates:
+        conn.executemany(
+            "UPDATE images SET filepath = ? WHERE id = ?",
+            updates,
+        )
+    return len(updates)
 
 
 def _connect():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=Config.DB_TIMEOUT)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute(f"PRAGMA cache_size = {-max(512, int(Config.SQLITE_CACHE_KB))}")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -74,7 +127,9 @@ def get_connection():
 
 
 def init_database():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with _connect() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS images (
@@ -168,6 +223,12 @@ def init_database():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_account_logs_timestamp ON account_logs(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_customer_prices_user_stock ON customer_prices(user_id, stock_item_name)")
         seed_default_data(conn)
+        try:
+            normalized_count = _normalize_legacy_absolute_image_paths(conn)
+            if normalized_count:
+                logger.info("Normalized %s legacy absolute image paths to relative paths", normalized_count)
+        except Exception:
+            logger.exception("Failed to normalize legacy image paths")
 
 
 def _ensure_users_schema(conn):
@@ -303,6 +364,19 @@ def add_mapping(image_id, stock_item_name, car_model, confidence, confirmed_by="
             )
     except Exception:
         logger.exception("add_mapping failed for image_id=%s", image_id)
+        raise
+
+
+def remove_mapping_by_image_id(image_id):
+    try:
+        with _connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM mappings WHERE image_id = ?",
+                (image_id,),
+            )
+        return cursor.rowcount > 0
+    except Exception:
+        logger.exception("remove_mapping_by_image_id failed for image_id=%s", image_id)
         raise
 
 

@@ -30,6 +30,21 @@
             display: grid;
             place-items: center;
             padding: 24px;
+            position: relative;
+        }
+
+        .top-link {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            text-decoration: none;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #fff;
+            color: var(--text);
+            padding: 10px 12px;
+            font-size: 13px;
+            font-weight: 700;
         }
 
         .panel {
@@ -135,6 +150,7 @@
 </head>
 <body>
 <div class="page">
+    <a class="top-link" href="/">Back to Viewer</a>
     <form class="panel" method="post" action="/login">
         <h1>Sign in</h1>
         <p>Use your assigned username and access code.</p>

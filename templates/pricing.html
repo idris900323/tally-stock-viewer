@@ -17,6 +17,7 @@
             --success-text: #276749;
             --error-bg: #fdecea;
             --error-text: #b42318;
+            --search-hit: #fff8db;
         }
 
         * { box-sizing: border-box; }
@@ -76,8 +77,15 @@
 
         .grid {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 1fr;
             gap: 16px;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 320px 1fr auto;
+            gap: 10px;
+            align-items: end;
         }
 
         label {
@@ -86,6 +94,8 @@
             font-size: 13px;
             text-transform: uppercase;
             letter-spacing: 0.04em;
+            display: block;
+            margin-bottom: 6px;
         }
 
         select, input, button {
@@ -97,6 +107,7 @@
 
         select, input {
             background: #fff;
+            width: 100%;
         }
 
         button {
@@ -149,6 +160,10 @@
             letter-spacing: 0.04em;
         }
 
+        tr.search-hit {
+            background: var(--search-hit);
+        }
+
         .table-wrap {
             overflow-x: auto;
         }
@@ -158,57 +173,12 @@
             font-size: 13px;
         }
 
-        .field-row {
-            display: grid;
-            gap: 8px;
-            margin-bottom: 12px;
-        }
-
-        .inline {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .account-management-section {
-            margin-top: 14px;
-        }
-
-        .status-active {
-            color: #166534;
-            font-weight: 700;
-        }
-
-        .status-paused {
-            color: #b91c1c;
-            font-weight: 700;
-        }
-
-        .btn-delete {
-            background: #dc2626;
-            color: #fff;
-        }
-
-        .btn-toggle {
-            background: #f59e0b;
-            color: #111827;
-        }
-
-        .btn-toggle.paused {
-            background: #16a34a;
-            color: #fff;
-        }
-
-        .bulk-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 8px;
-            margin-bottom: 8px;
+        .hidden-row {
+            display: none;
         }
 
         @media (max-width: 980px) {
-            .grid {
+            .controls-grid {
                 grid-template-columns: 1fr;
             }
         }
@@ -221,41 +191,38 @@
         <div class="toolbar">
             <button class="secondary" onclick="window.location.href='/'">Back to Viewer</button>
             <button class="secondary" onclick="window.location.href='/train'">Train Matches</button>
+            <button class="secondary" onclick="window.location.href='/admin/accounts'">Manage Accounts</button>
             <button class="secondary" onclick="window.location.href='/logout'">Logout</button>
         </div>
     </div>
 
     <div class="grid">
         <div class="panel">
-            <h1 style="margin:0 0 10px;">Manage Prices &amp; Customers</h1>
+            <h1 style="margin:0 0 10px;">Manage Pricing</h1>
             <p class="muted" style="margin:0 0 16px;">Use Global mode to set base prices. Switch to a customer to set customer-specific prices.</p>
 
-            <div class="toolbar" style="margin-bottom:10px;">
-                <label for="customerSelect">Pricing Mode</label>
-                <select id="customerSelect">
-                    <option value="global" {% if selected_mode == 'global' %}selected{% endif %}>Global (Base Prices)</option>
-                </select>
+            <div class="controls-grid">
+                <div>
+                    <label for="customerSelect">Pricing Mode</label>
+                    <select id="customerSelect">
+                        <option value="global" {% if selected_mode == 'global' %}selected{% endif %}>Global (Base Prices)</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label for="stockSearchSelect">Global Search</label>
+                    <select id="stockSearchSelect"></select>
+                </div>
+
+                <div>
+                    <button type="button" class="secondary" onclick="clearStockSearch()">Clear Search</button>
+                </div>
             </div>
 
-            <div id="customerToggleRow" class="toolbar" {% if selected_mode != 'customer' %}style="display:none;"{% endif %}>
+            <div id="customerToggleRow" class="toolbar" style="margin-top:10px; {% if selected_mode != 'customer' %}display:none;{% endif %}">
                 <button id="toggleContactBtn" type="button" onclick="toggleContactUs()">Toggle Contact Us</button>
                 <span class="muted" id="contactState"></span>
             </div>
-        </div>
-
-        <div class="panel">
-            <h2 style="margin:0 0 12px;">Create New Customer Account</h2>
-            <form id="createCustomerForm">
-                <div class="field-row">
-                    <label for="new_username">Username</label>
-                    <input id="new_username" name="username" type="text" required>
-                </div>
-                <div class="field-row">
-                    <label for="new_access_code">Access Code</label>
-                    <input id="new_access_code" name="access_code" type="text" required>
-                </div>
-                <button id="createUserBtn" type="submit">Create Account</button>
-            </form>
         </div>
     </div>
 
@@ -269,27 +236,6 @@
         </table>
         <div id="emptyState" class="muted" style="display:none; margin-top:10px;">No stock items found.</div>
     </div>
-
-    <div class="panel account-management-section table-wrap">
-        <h2 style="margin:0 0 10px;">Manage Customer Accounts</h2>
-        <div class="bulk-actions">
-            <button type="button" class="secondary" onclick="pauseAllCustomers()">Pause All Customers</button>
-            <button type="button" class="secondary" onclick="resumeAllCustomers()">Resume All Customers</button>
-        </div>
-        <table>
-            <thead>
-                <tr>
-                    <th style="width:220px;">Username</th>
-                    <th style="width:180px;">Access Code</th>
-                    <th style="width:130px;">Status</th>
-                    <th style="width:200px;">Created</th>
-                    <th style="width:220px;">Actions</th>
-                </tr>
-            </thead>
-            <tbody id="accountsTableBody"></tbody>
-        </table>
-        <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No customer accounts found.</div>
-    </div>
 </div>
 
 <script>
@@ -300,8 +246,11 @@ const initialStatus = {{ status_message|tojson }};
 const initialError = {{ error_message|tojson }};
 let currentCustomer = null;
 let currentRows = [];
-let customerAccounts = [];
 let suppressCustomerSwitch = false;
+
+function normalizeKey(value) {
+    return String(value || "").trim().toLowerCase();
+}
 
 function showSuccess(message) {
     const el = document.getElementById("successMsg");
@@ -317,29 +266,10 @@ function showError(message) {
     document.getElementById("successMsg").style.display = "none";
 }
 
-function showSuccessMessage(message) {
-    showSuccess(message);
-    const toast = document.createElement("div");
-    toast.textContent = `✓ ${message}`;
-    toast.style.position = "fixed";
-    toast.style.top = "18px";
-    toast.style.right = "18px";
-    toast.style.background = "#166534";
-    toast.style.color = "#fff";
-    toast.style.padding = "10px 14px";
-    toast.style.borderRadius = "8px";
-    toast.style.zIndex = "10000";
-    toast.style.boxShadow = "0 8px 24px rgba(2, 6, 23, 0.25)";
-    document.body.appendChild(toast);
-    setTimeout(() => {
-        toast.remove();
-    }, 2500);
-}
-
 function switchCustomer(customerId) {
-    const value = (customerId || "global").trim();
+    const value = String(customerId || "global").trim();
     const params = new URLSearchParams(window.location.search);
-    const current = (params.get("customer_id") || "global").trim();
+    const current = String(params.get("customer_id") || "global").trim();
     if (current === value) {
         return;
     }
@@ -363,7 +293,7 @@ function initializeCustomerSelect() {
             }),
             cache: true,
         },
-        placeholder: "🔍 Search customer...",
+        placeholder: "Search customer",
         minimumInputLength: 0,
         allowClear: true,
         width: "100%",
@@ -376,280 +306,111 @@ function initializeCustomerSelect() {
         switchCustomer(this.value || "global");
     });
 
-    if (selectedMode === 'customer' && selectedCustomer && selectedCustomer.id) {
+    if (selectedMode === "customer" && selectedCustomer && selectedCustomer.id) {
         suppressCustomerSwitch = true;
-        const option = new Option(selectedCustomer.username || 'Customer', String(selectedCustomer.id), true, true);
-        select.append(option).trigger('change');
+        const option = new Option(selectedCustomer.username || "Customer", String(selectedCustomer.id), true, true);
+        select.append(option).trigger("change");
         suppressCustomerSwitch = false;
     }
 }
 
-function setCustomerSelection(customerId, label) {
-    const select = $("#customerSelect");
-    const value = String(customerId || "").trim();
-    if (!value || value === "global") {
-        suppressCustomerSwitch = true;
-        select.val("global").trigger("change");
-        suppressCustomerSwitch = false;
-        return;
-    }
-    if (select.find(`option[value="${CSS.escape(value)}"]`).length === 0) {
-        select.append(new Option(label || value, value, true, true));
-    }
-    suppressCustomerSwitch = true;
-    select.val(value).trigger("change");
-    suppressCustomerSwitch = false;
+function escapeHtml(value) {
+    return String(value || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
 }
 
-function formatDateLabel(value) {
-    const date = value ? new Date(value) : null;
-    if (!date || Number.isNaN(date.getTime())) {
-        return "-";
-    }
-    const day = String(date.getDate()).padStart(2, "0");
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const year = date.getFullYear();
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const seconds = String(date.getSeconds()).padStart(2, "0");
-    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
-}
-
-async function createUserAccount() {
-    const usernameInput = document.getElementById("new_username");
-    const accessInput = document.getElementById("new_access_code");
-    const btn = document.getElementById("createUserBtn");
-
-    const username = String(usernameInput?.value || "").trim();
-    const accessCode = String(accessInput?.value || "").trim();
-
-    if (!username || !accessCode) {
-        showError("Please enter both username and access code.");
-        return;
+function setupStockSearch(rows) {
+    const select = $("#stockSearchSelect");
+    if (select.hasClass("select2-hidden-accessible")) {
+        select.select2("destroy");
     }
 
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = "Creating...";
+    select.empty();
+    select.append(new Option("", "", false, false));
 
-    try {
-        const response = await fetch("/admin/create_user", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, access_code: accessCode }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || `Create failed (HTTP ${response.status})`);
+    const seen = new Set();
+    for (const row of rows || []) {
+        const stockName = String(row && row.stock_item_name ? row.stock_item_name : "").trim();
+        if (!stockName) {
+            continue;
         }
+        const key = normalizeKey(stockName);
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        select.append(new Option(stockName, key, false, false));
+    }
 
-        if (usernameInput) usernameInput.value = "";
-        if (accessInput) accessInput.value = "";
+    select.select2({
+        placeholder: "Global search stock item (with dropdown)",
+        allowClear: true,
+        width: "100%",
+    });
 
-        const newUser = result.user || {};
-        const statusLabel = newUser.status === "paused" ? "Paused" : "Active";
-        setCustomerSelection(newUser.id, `${newUser.username} (${statusLabel})`);
-        showSuccessMessage(result.message || "Account created successfully");
+    select.off("change.stocksearch").on("change.stocksearch", function () {
+        applyStockSearch(this.value || "");
+    });
+}
 
-        await Promise.all([loadCustomerAccounts(), loadPricingData()]);
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
+function applyStockSearch(stockKey) {
+    const normalized = normalizeKey(stockKey);
+    const rows = Array.from(document.querySelectorAll("#pricingBody tr[data-stock-key]"));
+    let visible = 0;
+    let firstHit = null;
+
+    for (const row of rows) {
+        const key = normalizeKey(row.dataset.stockKey || "");
+        const isMatch = !normalized || key === normalized;
+        row.classList.remove("hidden-row", "search-hit");
+        if (!isMatch) {
+            row.classList.add("hidden-row");
+            continue;
+        }
+        visible += 1;
+        if (normalized) {
+            row.classList.add("search-hit");
+            if (!firstHit) {
+                firstHit = row;
+            }
+        }
+    }
+
+    const empty = document.getElementById("emptyState");
+    if (empty) {
+        empty.style.display = visible === 0 ? "block" : "none";
+    }
+
+    if (firstHit) {
+        firstHit.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 }
 
-function renderAccountsTable(customers) {
-    const body = document.getElementById("accountsTableBody");
-    const empty = document.getElementById("accountsEmptyState");
+function clearStockSearch() {
+    const select = $("#stockSearchSelect");
+    select.val(null).trigger("change");
+    applyStockSearch("");
+}
 
-    if (!Array.isArray(customers) || customers.length === 0) {
+function renderPricingTable(mode, rows) {
+    const head = document.getElementById("pricingHead");
+    const body = document.getElementById("pricingBody");
+    const empty = document.getElementById("emptyState");
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+        head.innerHTML = "";
         body.innerHTML = "";
         empty.style.display = "block";
         return;
     }
 
     empty.style.display = "none";
-    body.innerHTML = customers.map(customer => {
-        const paused = Boolean(customer.force_contact_us);
-        const statusText = paused ? "Paused" : "Active";
-        const statusClass = paused ? "status-paused" : "status-active";
-        const toggleText = paused ? "Resume" : "Pause";
-        const createdLabel = formatDateLabel(customer.created_at);
-        return `
-            <tr>
-                <td>${escapeHtml(customer.username || "")}</td>
-                <td>${escapeHtml(customer.access_code || "")}</td>
-                <td><span class="${statusClass}">${statusText}</span></td>
-                <td>${escapeHtml(createdLabel)}</td>
-                <td>
-                    <button type="button" class="btn-toggle ${paused ? "paused" : ""}" onclick="toggleAccountStatus(${Number(customer.id)}, ${paused})">${toggleText}</button>
-                    <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>
-                </td>
-            </tr>
-        `;
-    }).join("");
-}
 
-function deleteAccountFromButton(button) {
-    const userId = Number(button?.dataset?.userId || 0);
-    const username = String(button?.dataset?.username || "");
-    return deleteAccount(userId, username);
-}
-
-async function loadCustomerAccounts() {
-    try {
-        const response = await fetch("/admin/get_all_customers");
-        const result = await response.json();
-        if (!response.ok) {
-            throw new Error(result.error || `Failed to load customers (HTTP ${response.status})`);
-        }
-        customerAccounts = Array.isArray(result) ? result : [];
-        renderAccountsTable(customerAccounts);
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-async function deleteAccount(userId, username) {
-    const normalizedName = String(username || "");
-    const confirmed = window.confirm(`Delete account \"${normalizedName}\"? This cannot be undone.`);
-    if (!confirmed) {
-        return;
-    }
-
-    const typed = window.prompt(`Type ${normalizedName} to confirm deletion:`);
-    if (typed !== normalizedName) {
-        showError("Username does not match. Deletion cancelled.");
-        return;
-    }
-
-    try {
-        const response = await fetch(`/admin/delete_user/${encodeURIComponent(userId)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || `Delete failed (HTTP ${response.status})`);
-        }
-
-        showSuccessMessage(result.message || "Account deleted");
-        await Promise.all([loadCustomerAccounts(), loadPricingData()]);
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-async function toggleAccountStatus(userId, currentlyPaused) {
-    const nextPause = !Boolean(currentlyPaused);
-    const confirmed = window.confirm(nextPause ? "Pause this customer account?" : "Resume this customer account?");
-    if (!confirmed) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/admin/toggle_user_status/${encodeURIComponent(userId)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pause: nextPause }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || `Status update failed (HTTP ${response.status})`);
-        }
-
-        showSuccessMessage(result.message || "Status updated");
-        await Promise.all([loadCustomerAccounts(), loadPricingData()]);
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-async function setAllCustomersStatus(pause) {
-    const confirmed = window.confirm(
-        pause
-            ? 'Pause ALL customers? They will see Contact Us for all prices.'
-            : 'Resume ALL customers?'
-    );
-    if (!confirmed) {
-        return;
-    }
-
-    try {
-        const response = await fetch('/admin/set_all_customer_status', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pause }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || `Bulk update failed (HTTP ${response.status})`);
-        }
-
-        showSuccessMessage(result.message || 'Customer access updated');
-        await Promise.all([loadCustomerAccounts(), loadPricingData()]);
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-function pauseAllCustomers() {
-    return setAllCustomersStatus(true);
-}
-
-function resumeAllCustomers() {
-    return setAllCustomersStatus(false);
-}
-
-async function toggleContactUs() {
-    if (selectedMode !== "customer" || !selectedCustomerId) {
-        return;
-    }
-
-    try {
-        const response = await fetch('/admin/toggle_contact_us', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customer_id: selectedCustomerId })
-        });
-
-        const payload = await response.json();
-        if (!response.ok) {
-            throw new Error(payload.error || `Toggle failed (HTTP ${response.status})`);
-        }
-
-        showSuccess('Contact Us mode updated.');
-        const forceEnabled = Boolean(payload.force_contact_us);
-        const button = document.getElementById('toggleContactBtn');
-        const state = document.getElementById('contactState');
-        if (button) {
-            button.textContent = forceEnabled ? 'Disable Contact Us' : 'Enable Contact Us';
-        }
-        if (state) {
-            state.textContent = `Current: ${forceEnabled ? 'Contact Us ON' : 'Contact Us OFF'}`;
-        }
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-function renderPricingTable(mode, rows) {
-    const head = document.getElementById('pricingHead');
-    const body = document.getElementById('pricingBody');
-    const empty = document.getElementById('emptyState');
-
-    if (!Array.isArray(rows) || rows.length === 0) {
-        head.innerHTML = '';
-        body.innerHTML = '';
-        empty.style.display = 'block';
-        return;
-    }
-
-    empty.style.display = 'none';
-
-    if (mode === 'global') {
+    if (mode === "global") {
         head.innerHTML = `
             <tr>
                 <th style="width:120px;">Car Model</th>
@@ -660,17 +421,17 @@ function renderPricingTable(mode, rows) {
         `;
 
         body.innerHTML = rows.map(row => `
-            <tr data-stock-item="${escapeHtml(row.stock_item_name)}">
-                <td>${escapeHtml(row.car_model || '')}</td>
-                <td>${escapeHtml(row.stock_item_name || '')}</td>
-                <td><input type="text" class="base-price" value="${escapeHtml(row.base_price || '')}" placeholder="e.g. Rs 1500"></td>
+            <tr data-stock-item="${escapeHtml(row.stock_item_name)}" data-stock-key="${escapeHtml(normalizeKey(row.stock_item_name))}">
+                <td>${escapeHtml(row.car_model || "")}</td>
+                <td>${escapeHtml(row.stock_item_name || "")}</td>
+                <td><input type="text" class="base-price" value="${escapeHtml(row.base_price || "")}" placeholder="e.g. Rs 1500"></td>
                 <td><button type="button" class="secondary" onclick="saveRow(this)">Save</button></td>
             </tr>
-        `).join('');
+        `).join("");
         return;
     }
 
-    const customerLabel = currentCustomer && currentCustomer.username ? currentCustomer.username : 'Customer';
+    const customerLabel = currentCustomer && currentCustomer.username ? currentCustomer.username : "Customer";
     head.innerHTML = `
         <tr>
             <th style="width:120px;">Car Model</th>
@@ -682,31 +443,54 @@ function renderPricingTable(mode, rows) {
     `;
 
     body.innerHTML = rows.map(row => {
-        const defaultText = row.default_display || 'Contact Us';
+        const defaultText = row.default_display || "Contact Us";
         return `
-            <tr data-stock-item="${escapeHtml(row.stock_item_name)}">
-                <td>${escapeHtml(row.car_model || '')}</td>
-                <td>${escapeHtml(row.stock_item_name || '')}</td>
-                <td><input type="text" class="custom-price" value="${escapeHtml(row.custom_price || '')}" placeholder="Leave blank to use default"></td>
+            <tr data-stock-item="${escapeHtml(row.stock_item_name)}" data-stock-key="${escapeHtml(normalizeKey(row.stock_item_name))}">
+                <td>${escapeHtml(row.car_model || "")}</td>
+                <td>${escapeHtml(row.stock_item_name || "")}</td>
+                <td><input type="text" class="custom-price" value="${escapeHtml(row.custom_price || "")}" placeholder="Leave blank to use default"></td>
                 <td><span class="muted">Default: ${escapeHtml(defaultText)}</span></td>
                 <td><button type="button" class="secondary" onclick="saveRow(this)">Save</button></td>
             </tr>
         `;
-    }).join('');
+    }).join("");
 }
 
-function escapeHtml(value) {
-    return String(value || '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
+async function toggleContactUs() {
+    if (selectedMode !== "customer" || !selectedCustomerId) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/admin/toggle_contact_us", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ customer_id: selectedCustomerId }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error || `Toggle failed (HTTP ${response.status})`);
+        }
+
+        showSuccess("Contact Us mode updated.");
+        const forceEnabled = Boolean(payload.force_contact_us);
+        const button = document.getElementById("toggleContactBtn");
+        const state = document.getElementById("contactState");
+        if (button) {
+            button.textContent = forceEnabled ? "Disable Contact Us" : "Enable Contact Us";
+        }
+        if (state) {
+            state.textContent = `Current: ${forceEnabled ? "Contact Us ON" : "Contact Us OFF"}`;
+        }
+    } catch (error) {
+        showError(error.message);
+    }
 }
 
 async function loadPricingData() {
     try {
-        const customerParam = selectedMode === 'customer' && selectedCustomerId ? String(selectedCustomerId) : 'global';
+        const customerParam = selectedMode === "customer" && selectedCustomerId ? String(selectedCustomerId) : "global";
         const response = await fetch(`/admin/pricing_data?customer_id=${encodeURIComponent(customerParam)}`);
         const payload = await response.json();
 
@@ -717,37 +501,39 @@ async function loadPricingData() {
         currentCustomer = payload.selected_customer || null;
         currentRows = Array.isArray(payload.rows) ? payload.rows : [];
 
-        const toggleRow = document.getElementById('customerToggleRow');
-        const toggleBtn = document.getElementById('toggleContactBtn');
-        const contactState = document.getElementById('contactState');
-        if (payload.mode === 'customer' && currentCustomer && toggleRow) {
-            toggleRow.style.display = '';
+        const toggleRow = document.getElementById("customerToggleRow");
+        const toggleBtn = document.getElementById("toggleContactBtn");
+        const contactState = document.getElementById("contactState");
+        if (payload.mode === "customer" && currentCustomer && toggleRow) {
+            toggleRow.style.display = "";
             const forceEnabled = Boolean(currentCustomer.force_contact_us);
             if (toggleBtn) {
-                toggleBtn.textContent = forceEnabled ? 'Disable Contact Us' : 'Enable Contact Us';
+                toggleBtn.textContent = forceEnabled ? "Disable Contact Us" : "Enable Contact Us";
             }
             if (contactState) {
-                contactState.textContent = `Current: ${forceEnabled ? 'Contact Us ON' : 'Contact Us OFF'}`;
+                contactState.textContent = `Current: ${forceEnabled ? "Contact Us ON" : "Contact Us OFF"}`;
             }
         } else if (toggleRow) {
-            toggleRow.style.display = 'none';
+            toggleRow.style.display = "none";
         }
 
-        renderPricingTable(payload.mode || 'global', currentRows);
+        renderPricingTable(payload.mode || "global", currentRows);
+        setupStockSearch(currentRows);
+        applyStockSearch($("#stockSearchSelect").val() || "");
     } catch (error) {
         showError(error.message);
     }
 }
 
 async function saveRow(button) {
-    const row = button.closest('tr');
+    const row = button.closest("tr");
     if (!row) {
         return;
     }
 
-    const stockItem = row.dataset.stockItem || '';
+    const stockItem = row.dataset.stockItem || "";
     if (!stockItem) {
-        showError('Missing stock item name.');
+        showError("Missing stock item name.");
         return;
     }
 
@@ -757,19 +543,19 @@ async function saveRow(button) {
             stock_item_name: stockItem,
         };
 
-        if (selectedMode === 'global') {
-            payload.base_price = row.querySelector('.base-price')?.value || '';
-            payload.custom_price = '';
+        if (selectedMode === "global") {
+            payload.base_price = row.querySelector(".base-price")?.value || "";
+            payload.custom_price = "";
         } else {
             payload.customer_id = selectedCustomerId;
-            payload.base_price = '';
-            payload.custom_price = row.querySelector('.custom-price')?.value || '';
+            payload.base_price = "";
+            payload.custom_price = row.querySelector(".custom-price")?.value || "";
         }
 
-        const response = await fetch('/admin/save_price', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+        const response = await fetch("/admin/save_price", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
         });
 
         const result = await response.json();
@@ -784,16 +570,9 @@ async function saveRow(button) {
     }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-    const form = document.getElementById('createCustomerForm');
-    if (form) {
-        form.addEventListener('submit', event => {
-            event.preventDefault();
-            createUserAccount();
-        });
-    }
-
+window.addEventListener("DOMContentLoaded", () => {
     initializeCustomerSelect();
+    setupStockSearch([]);
     if (initialStatus) {
         showSuccess(initialStatus);
     }
@@ -801,7 +580,6 @@ window.addEventListener('DOMContentLoaded', () => {
         showError(initialError);
     }
     loadPricingData();
-    loadCustomerAccounts();
 });
 </script>
 </body>

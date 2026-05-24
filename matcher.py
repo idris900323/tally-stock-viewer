@@ -1,7 +1,11 @@
 import re
+import time
 from difflib import SequenceMatcher
 
 from database import get_confirmed_mappings, get_folder_car_model
+
+_MAPPING_CACHE = {"data": [], "ts": 0.0}
+_MAPPING_TTL = 60.0
 
 
 CODE_PATTERN = re.compile(r"(?<!\d)(\d{3,5}-\d{3,5}(?:-\d{3,5})?)(?!\d)")
@@ -93,14 +97,24 @@ def _match_by_car_folder(image_record, stock_items):
     return best_item, best_score
 
 
+def _get_cached_mappings():
+    now = time.monotonic()
+    if now - _MAPPING_CACHE["ts"] > _MAPPING_TTL:
+        _MAPPING_CACHE["data"] = get_confirmed_mappings()
+        _MAPPING_CACHE["ts"] = now
+    return _MAPPING_CACHE["data"]
+
+
 def _match_by_learned_patterns(image_record, stock_items):
-    confirmed_mappings = get_confirmed_mappings()
+    confirmed_mappings = _get_cached_mappings()
     if not confirmed_mappings:
         return None, 0.0
 
     current_filename = normalize_text(image_record.get("filename", ""))
     if not current_filename:
         current_filename = normalize_text(_image_text(image_record))
+    if not current_filename:
+        return None, 0.0
 
     best_item = None
     best_score = 0.0

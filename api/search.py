@@ -36,6 +36,14 @@ def search_cars():
     page = request.args.get("page", 1, type=int)
     per_page = min(max(request.args.get("per_page", 30, type=int), 1), 50)
     query = request.args.get("q", "")
+
+    ensure_loaded = _dependencies.get("ensure_data_loaded")
+    if ensure_loaded is not None:
+        try:
+            ensure_loaded()
+        except Exception:
+            pass
+
     car_models = _get_dependency("get_car_models")()
     matches, has_more = _paginate_matches(car_models, query, page, per_page)
     return jsonify({

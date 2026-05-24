@@ -1,6 +1,5 @@
 from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for
 import json
-import pandas as pd
 import os
 import requests
 import xml.etree.ElementTree as ET
@@ -9,7 +8,10 @@ import threading
 import time
 import glob
 import logging
+import pandas as pd
+from collections import defaultdict
 from io import BytesIO
+import openpyxl
 from datetime import datetime
 from functools import wraps
 from logging.handlers import RotatingFileHandler
@@ -22,6 +24,7 @@ import matcher
 from api.search import search_bp, set_search_dependencies
 from config import Config
 from tally.sync import fetch_from_tally_with_retry
+from utils.excel_helpers import load_excel_column, load_excel_rows
 from utils.normalize import extract_car_base_name, normalize_text
 
 app = Flask(__name__)
@@ -47,12 +50,14 @@ logger = logging.getLogger(__name__)
 
 TALLY_HTTP_SESSION = requests.Session()
 EXPORT_LOCK = threading.Lock()
+_ETAG_LOCK = threading.Lock()
 LAST_TALLY_ETAG = {"hash": None, "result": None}
 LOGIN_ATTEMPTS = {}
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_IMAGE_ROOT = os.path.join(app.root_path, "data", "S.S IMAGE")
 IMAGE_SCAN_ROOT = os.path.abspath(
-    os.environ.get("IMAGE_SCAN_ROOT", os.path.join(PROJECT_ROOT, "data", "S.S IMAGE"))
+    os.environ.get("IMAGE_SCAN_ROOT", PROJECT_IMAGE_ROOT)
 )
 PLACEHOLDER_SVG = b"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320' role='img' aria-label='No image available'>
 <rect width='320' height='320' rx='24' fill='#eef2f7'/>
@@ -161,7 +166,9 @@ def inject_session_context():
 
 
 def _normalize_text(text):
-    return normalize_text(text)
+    if text is None:
+        return ""
+    return normalize_text(str(text)).strip()
 
 
 def _normalize_lookup_key(text):
@@ -398,7 +405,10 @@ def _check_login_rate_limit(username):
     attempts = LOGIN_ATTEMPTS.get(key, [])
     attempts = [ts for ts in attempts if now - ts < window_seconds]
     if len(attempts) >= max_attempts:
-        LOGIN_ATTEMPTS[key] = attempts
+        if not attempts:
+            LOGIN_ATTEMPTS.pop(key, None)
+        else:
+            LOGIN_ATTEMPTS[key] = attempts
         return False
     attempts.append(now)
     LOGIN_ATTEMPTS[key] = attempts
@@ -407,8 +417,9 @@ def _check_login_rate_limit(username):
 
 def _post_tally_with_retry(xml_req):
     request_hash = hash(xml_req)
-    if LAST_TALLY_ETAG["hash"] == request_hash and LAST_TALLY_ETAG["result"]:
-        return LAST_TALLY_ETAG["result"]
+    with _ETAG_LOCK:
+        if LAST_TALLY_ETAG["hash"] == request_hash and LAST_TALLY_ETAG["result"]:
+            return LAST_TALLY_ETAG["result"]
 
     response = fetch_from_tally_with_retry(
         TALLY_HTTP_SESSION,
@@ -419,9 +430,19 @@ def _post_tally_with_retry(xml_req):
         logger=logger,
     )
     text = response.text
-    LAST_TALLY_ETAG["hash"] = request_hash
-    LAST_TALLY_ETAG["result"] = text
+    with _ETAG_LOCK:
+        LAST_TALLY_ETAG["hash"] = request_hash
+        LAST_TALLY_ETAG["result"] = text
     return text
+
+
+def _classify_tally_exception(exc):
+    message = str(exc or "").lower()
+    if isinstance(exc, requests.Timeout) or "timed out" in message:
+        return "TALLY_TIMEOUT"
+    if isinstance(exc, requests.ConnectionError) or "connection refused" in message or "failed to establish a new connection" in message or "max retries exceeded" in message:
+        return "TALLY_UNREACHABLE"
+    return "TALLY_ERROR"
 
 
 def get_main_file_path():
@@ -464,6 +485,37 @@ def _scan_images_if_database_empty():
         print("warning: initial image scan skipped:", exc)
 
 
+STARTUP_TASKS_STARTED = False
+
+def start_background_startup_tasks():
+    global STARTUP_TASKS_STARTED
+    if STARTUP_TASKS_STARTED:
+        return
+    STARTUP_TASKS_STARTED = True
+
+    def _startup_routine():
+        try:
+            main_file = get_main_file_path()
+            if os.path.exists(main_file):
+                print("Starting background data load...")
+                load_data(refresh_first=False)
+            else:
+                logger.warning("Skipping background data load because main hierarchy file is missing")
+        except Exception:
+            logger.exception("Background data load failed")
+
+        try:
+            _scan_images_if_database_empty()
+        except Exception:
+            logger.exception("Background image scan failed")
+
+        if item_export_enabled:
+            schedule_item_export(initial_delay=10)
+
+    thread = threading.Thread(target=_startup_routine, daemon=True)
+    thread.start()
+
+
 def _refresh_stock_data():
     global last_refresh_status
     try:
@@ -472,12 +524,13 @@ def _refresh_stock_data():
         msg = "Stock updated successfully"
         if export_result and export_result.get("warning"):
             msg = f"{msg} ({export_result.get('warning')})"
+        now = datetime.now()
         last_refresh_status = {
             "success": True,
             "message": msg,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now.isoformat(),
         }
-        timestamp_iso = datetime.now().isoformat()
+        timestamp_iso = now.isoformat()
         return {
             "ok": True,
             "tally_online": True,
@@ -486,36 +539,41 @@ def _refresh_stock_data():
             "file": export_result.get("file") if export_result else None,
             "warning": export_result.get("warning") if export_result else None,
             "timestamp": timestamp_iso,
-            "formatted": datetime.fromisoformat(timestamp_iso).strftime("%d/%m/%Y %H:%M:%S"),
+            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
         }
     except Exception as exc:
-        fallback_message = f"Tally is down; using the last saved upload. ({exc})"
+        raw_error = str(exc)
+        error_code = _classify_tally_exception(exc)
+        if error_code == "TALLY_UNREACHABLE":
+            fallback_message = f"Tally unreachable at {TALLY_URL}; using the last saved upload. ({raw_error})"
+        elif error_code == "TALLY_TIMEOUT":
+            fallback_message = f"Tally request timed out; using the last saved upload. ({raw_error})"
+        else:
+            fallback_message = f"Tally error; using the last saved upload. ({raw_error})"
+
+        now = datetime.now()
         last_refresh_status = {
             "success": False,
             "message": fallback_message,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": now.isoformat(),
+            "error_code": error_code,
+            "raw_error": raw_error,
         }
-        timestamp_iso = datetime.now().isoformat()
+        timestamp_iso = now.isoformat()
         return {
             "ok": True,
             "tally_online": False,
             "status": "using_last_saved_upload",
             "message": fallback_message,
+            "error_code": error_code,
+            "raw_error": raw_error,
             "file": get_latest_stock_file_path(),
             "warning": fallback_message,
             "timestamp": timestamp_iso,
-            "formatted": datetime.fromisoformat(timestamp_iso).strftime("%d/%m/%Y %H:%M:%S"),
-        }
+            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+                }
 
 # ---------- Tally export logic ----------
-
-def fetch_item_stock_from_tally():
-    """Backward-compatible wrapper: export flat item stock only.
-
-    Intentionally does NOT touch the main hierarchy file or `car master list.xls`.
-    """
-    return fetch_item_stock_flat()
-
 
 def fetch_item_stock_flat():
     """Export item stock from Tally Stock Summary and save as clean Excel.
@@ -606,18 +664,18 @@ def fetch_item_stock_flat():
         main_file = get_main_file_path()
         if not os.path.exists(main_file):
             return set()
+
         try:
-            df = pd.read_excel(main_file)
-            if df.empty:
-                return set()
-            names = set()
-            for raw in df.iloc[:, 0].dropna().astype(str).tolist():
-                normalized = _norm(raw)
-                if normalized and normalized not in {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY"}:
-                    names.add(normalized)
-            return names
+            values = load_excel_column(main_file, col_index=0, min_row=1)
         except Exception:
             return set()
+
+        names = set()
+        for raw in values:
+            normalized = _norm(raw)
+            if normalized and normalized not in {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY"}:
+                names.add(normalized)
+        return names
 
     print("requesting flat item stock list from Tally...")
     try:
@@ -650,17 +708,24 @@ def fetch_item_stock_flat():
         if not rows:
             raise Exception("No stock rows parsed from Tally Stock Summary")
 
-        stock_df = pd.DataFrame(rows)
-        stock_df = stock_df.drop_duplicates(subset=["item_name"], keep="last")
+        seen = {}
+        for r in rows:
+            seen[r["item_name"]] = r
+        deduped = list(seen.values())
 
         temp_file = ITEM_STOCK_FILE_AUTO + ".tmp.xlsx"
         out_file = ITEM_STOCK_FILE_AUTO
         warning = None
 
-        stock_df.to_excel(temp_file, index=False)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["item_name", "qty"])
+        for r in deduped:
+            ws.append([r["item_name"], r["qty"]])
+        wb.save(temp_file)
         try:
             with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as handle:
-                json.dump(stock_df.to_dict(orient="records"), handle, ensure_ascii=False)
+                json.dump(deduped, handle, ensure_ascii=False)
         except Exception:
             pass
 
@@ -682,12 +747,22 @@ def fetch_item_stock_flat():
         if not replaced:
             warning = "auto file locked; wrote to alternate file"
             try:
-                stock_df.to_excel(ITEM_STOCK_FILE_XLSX, index=False)
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.append(["item_name", "qty"])
+                for r in deduped:
+                    ws.append([r["item_name"], r["qty"]])
+                wb.save(ITEM_STOCK_FILE_XLSX)
                 out_file = ITEM_STOCK_FILE_XLSX
             except Exception:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 out_file = f"data/item stock list.auto.{timestamp}.xlsx"
-                stock_df.to_excel(out_file, index=False)
+                wb = openpyxl.Workbook()
+                ws = wb.active
+                ws.append(["item_name", "qty"])
+                for r in deduped:
+                    ws.append([r["item_name"], r["qty"]])
+                wb.save(out_file)
 
         try:
             if os.path.exists(temp_file):
@@ -695,51 +770,63 @@ def fetch_item_stock_flat():
         except Exception:
             pass
 
-        print(f"exported item stock list to {out_file} ({len(stock_df)} rows)")
+        print(f"exported item stock list to {out_file} ({len(deduped)} rows)")
         if warning:
             print(warning)
-        return {"rows": len(stock_df), "file": out_file, "warning": warning}
+        return {"rows": len(deduped), "file": out_file, "warning": warning}
     except Exception as exc:
         print(f"item stock export failed: {str(exc)}")
         raise
 
 
-def schedule_item_export():
+def schedule_item_export(initial_delay: int = 0):
     global item_export_timer, last_refresh_status
-    if not EXPORT_LOCK.acquire(blocking=False):
-        logger.warning("Skipping scheduled export because previous export is still running")
+
+    def _export_job():
+        global item_export_timer
+
+        if not EXPORT_LOCK.acquire(blocking=False):
+            logger.warning("Skipping scheduled export because previous export is still running")
+            item_export_timer = threading.Timer(ITEM_EXPORT_INTERVAL, schedule_item_export)
+            item_export_timer.daemon = True
+            item_export_timer.start()
+            return
+
+        try:
+            export_result = fetch_item_stock_flat()
+            try:
+                load_data()
+            except Exception:
+                pass
+            msg = "Stock updated successfully"
+            if export_result and export_result.get("warning"):
+                msg = f"{msg} ({export_result.get('warning')})"
+            last_refresh_status = {
+                "success": True,
+                "message": msg,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as exc:
+            logger.exception("scheduled item stock export failed")
+            last_refresh_status = {
+                "success": False,
+                "message": str(exc),
+                "timestamp": datetime.now().isoformat()
+            }
+        finally:
+            EXPORT_LOCK.release()
+
         item_export_timer = threading.Timer(ITEM_EXPORT_INTERVAL, schedule_item_export)
+        item_export_timer.daemon = True
+        item_export_timer.start()
+
+    if initial_delay and initial_delay > 0:
+        item_export_timer = threading.Timer(initial_delay, _export_job)
         item_export_timer.daemon = True
         item_export_timer.start()
         return
 
-    try:
-        export_result = fetch_item_stock_flat()
-        try:
-            load_data()
-        except Exception:
-            pass
-        msg = "Stock updated successfully"
-        if export_result and export_result.get("warning"):
-            msg = f"{msg} ({export_result.get('warning')})"
-        last_refresh_status = {
-            "success": True,
-            "message": msg,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as exc:
-        logger.exception("scheduled item stock export failed")
-        last_refresh_status = {
-            "success": False,
-            "message": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    finally:
-        EXPORT_LOCK.release()
-
-    item_export_timer = threading.Timer(ITEM_EXPORT_INTERVAL, schedule_item_export)
-    item_export_timer.daemon = True
-    item_export_timer.start()
+    _export_job()
 
 
 # refresh status (auto + manual item stock export)
@@ -759,38 +846,31 @@ def parse_flat_tally(file_path):
     Returns:
         list: [{"design": str, "raw": str, "qty": int}, ...]
     """
-    df = pd.read_excel(file_path)
-    
     designs = []
     ignored_labels = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
-    
-    print(f"Reading {len(df)} rows from {file_path}")
-    
-    for row in df.itertuples(index=False):
-        col0 = str(row[0]).strip() if len(row) > 0 and pd.notna(row[0]) else ""
-        col1_val = row[1] if len(row) > 1 else None
-        
-        # Skip headers and empty rows
+
+    print(f"Reading Tally rows from {file_path}")
+    rows = load_excel_rows(file_path, usecols=[0, 1], min_row=2)
+    for raw0, col1_val in rows:
+        col0 = str(raw0).strip() if raw0 not in (None, "") else ""
         if not col0 or _normalize_text(col0) in ignored_labels:
             continue
-        
-        # Parse quantity
+
         qty = None
-        if pd.notna(col1_val):
+        if col1_val not in (None, ""):
             try:
                 qty = int(float(col1_val))
             except (ValueError, TypeError):
                 pass
-        
-        # Only include rows with valid quantities
+
         if qty is not None and qty > 0:
             designs.append({
                 "raw": col0,
-                "design": col0,  # Clean version, may get simplified later
-                "qty": qty
+                "design": col0,
+                "qty": qty,
             })
-    
-    print(f"Loaded {len(designs)} valid designs\n")
+
+    print(f"Loaded {len(designs)} valid designs")
     return designs
 
 
@@ -819,21 +899,21 @@ def load_data(refresh_first: bool = False):
     # optionally pull a fresh export from Tally
     if refresh_first:
         try:
-            fetch_item_stock_from_tally()
+            fetch_item_stock_flat()
         except Exception as exc:
             print("warning: could not refresh stock from Tally:", exc)
 
     # ---- Load car groups from car master list ----
     try:
-        car_df = pd.read_excel(CAR_FILE)
-        car_groups = (
-            car_df.iloc[:, 0]
-            .dropna()
-            .astype(str)
-            .str.strip()
-            .tolist()
-        )
+        car_groups = []
         
+        # Try pandas first for .xls/.xlsx
+        try:
+            values = load_excel_column(CAR_FILE, col_index=0, min_row=1)
+            car_groups = [str(value).strip() for value in values if str(value).strip()]
+        except Exception as exc:
+            raise Exception(f"Failed to load car master list: {exc}")
+
         # Filter to relevant range
         start_marker = "ACCESSORIES (NECK REST)"
         end_marker = "ZS - EV FOOT MAT"
@@ -844,11 +924,10 @@ def load_data(refresh_first: bool = False):
                 car_groups = car_groups[start_idx : end_idx + 1]
             else:
                 car_groups = car_groups[end_idx : start_idx + 1]
-        
+
         CAR_GROUPS = car_groups
-        PARENT_NAME_SET = {_normalize_text(name) for name in CAR_GROUPS if str(name).strip()}
+        PARENT_NAME_SET = {normalize_text(name) for name in CAR_GROUPS if str(name).strip()}
         print(f"[OK] Loaded {len(CAR_GROUPS)} car models from dropdown")
-    
     except Exception as exc:
         print(f"[ERROR] Error loading car master list: {exc}")
         return
@@ -863,19 +942,21 @@ def load_data(refresh_first: bool = False):
         
         # Load all designs from Tally as a flat list
         all_designs = parse_flat_tally(main_file)
-        # build mapping for quicker lookup later (silent)
-        # primary matching logic is a plain substring search on the normalized base car name
+        design_index = defaultdict(list)
+        for design_item in all_designs:
+            for token in normalize_text(design_item["raw"]).split():
+                if len(token) > 2:
+                    design_index[token].append(design_item)
+
         for car in CAR_GROUPS:
-            matching_designs = []
-            base_car = extract_car_base_name(car) or car
-            base_car_upper = _normalize_text(base_car)
-            for design_item in all_designs:
-                design_upper = _normalize_text(design_item["raw"])
-                if base_car_upper and (base_car_upper in design_upper or design_upper in base_car_upper):
-                    matching_designs.append(design_item)
-            if matching_designs:
-                CAR_DESIGN_MAP[car] = matching_designs
-        # summary log
+            base = normalize_text(extract_car_base_name(car) or car)
+            candidates = set()
+            for token in base.split():
+                if len(token) > 2:
+                    for design_item in design_index.get(token, []):
+                        candidates.add(id(design_item))
+            CAR_DESIGN_MAP[car] = [d for d in all_designs if id(d) in candidates]
+
         total_designs = sum(len(v) for v in CAR_DESIGN_MAP.values())
         print(f"Matched {len(CAR_DESIGN_MAP)} cars to {total_designs} designs")
     
@@ -1007,7 +1088,7 @@ def _find_children_by_qty(car_name: str):
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
     def _to_int(value):
-        if pd.isna(value):
+        if value is None:
             return 0
         match = re.search(r"-?\d+", str(value))
         return int(match.group()) if match else 0
@@ -1022,24 +1103,24 @@ def _find_children_by_qty(car_name: str):
             if MAIN_ROWS_CACHE["fingerprint"] == fingerprint:
                 return MAIN_ROWS_CACHE["rows"], MAIN_ROWS_CACHE["exact_index"]
 
-        try:
-            df = pd.read_excel(main_file)
-        except Exception:
-            return [], {}
-
         rows = []
         exact_index = {}
         ignore = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
-        for idx, row in enumerate(df.itertuples(index=False)):
-            name = str(row[0]).strip() if len(row) > 0 and pd.notna(row[0]) else ""
-            if not name:
-                continue
-            name_upper = _norm(name)
-            if name_upper in ignore:
-                continue
-            qty = _to_int(row[1] if len(row) > 1 else None)
-            rows.append((name, name_upper, qty))
-            exact_index.setdefault(name_upper, len(rows) - 1)
+        
+        try:
+            rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
+            for row in rows_data:
+                name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
+                if not name:
+                    continue
+                name_upper = _norm(name)
+                if name_upper in ignore:
+                    continue
+                qty = _to_int(row[1] if len(row) > 1 else None)
+                rows.append((name, name_upper, qty))
+                exact_index.setdefault(name_upper, len(rows) - 1)
+        except Exception:
+            return [], {}
 
         with DATA_CACHE_LOCK:
             MAIN_ROWS_CACHE["fingerprint"] = fingerprint
@@ -1081,11 +1162,11 @@ def _find_children_by_qty(car_name: str):
 
         qty_map = {}
         try:
-            stock_df = pd.read_excel(stock_file)
-            for row in stock_df.itertuples(index=False):
-                item_name = str(row[0]).strip() if len(row) > 0 and pd.notna(row[0]) else ""
+            rows = load_excel_rows(stock_file, usecols=[0, 1], min_row=2)
+            for row in rows:
+                item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
                 qty_val = row[1] if len(row) > 1 else None
-                if not item_name or pd.isna(qty_val):
+                if not item_name or qty_val in (None, ""):
                     continue
                 try:
                     qty = int(float(qty_val))
@@ -1140,7 +1221,7 @@ def _find_children_by_qty(car_name: str):
             break
 
         # never return parent labels as designs
-        if upper_name in PARENT_NAME_SET or upper_name == matched_parent_upper:
+        if upper_name == matched_parent_upper:
             continue
 
         # Lookup quantity from item stock list
@@ -1154,18 +1235,16 @@ def _find_children_by_qty(car_name: str):
     return children
 
 
-def _coerce_limit(limit_value, default_value=None):
-    if limit_value is None:
-        limit_value = default_value
-    if limit_value is None:
-        return None
+def _coerce_limit(value, default=None, default_value=None):
+    # Accept both `default` and legacy `default_value` keyword to remain
+    # compatible with older call sites.
+    if default_value is not None and default is None:
+        default = default_value
     try:
-        limit = int(limit_value)
+        v = int(value) if value is not None else default
+        return max(1, min(v, MAX_IMAGE_RESPONSE_LIMIT)) if v is not None else None
     except (TypeError, ValueError):
-        limit = default_value if default_value is not None else MAX_IMAGE_RESPONSE_LIMIT
-    if limit is None:
-        return None
-    return max(1, min(limit, MAX_IMAGE_RESPONSE_LIMIT))
+        return max(1, min(default, MAX_IMAGE_RESPONSE_LIMIT)) if default is not None else None
 
 
 def _parse_bool(value):
@@ -1195,6 +1274,16 @@ def designs():
     return jsonify([])
 
 
+@app.route("/api/resolve_car_from_folder")
+def resolve_car_from_folder():
+    folder = (request.args.get("folder") or "").strip()
+    if not folder:
+        return jsonify({"car": None})
+    # reuse internal hinting logic to map folder names to car models
+    hint = _resolve_car_model_hint({"car_folder": folder})
+    return jsonify({"car": hint})
+
+
 @app.route("/admin/pricing")
 @admin_required
 def admin_pricing():
@@ -1210,12 +1299,11 @@ def admin_pricing():
         except (TypeError, ValueError):
             candidate_id = None
         if candidate_id is not None:
-            for customer in customers:
-                if customer["id"] == candidate_id:
-                    selected_mode = "customer"
-                    selected_customer_id = candidate_id
-                    selected_customer = customer
-                    break
+            customer_index = {c["id"]: c for c in customers}
+            selected_customer = customer_index.get(candidate_id)
+            if selected_customer:
+                selected_mode = "customer"
+                selected_customer_id = candidate_id
 
     status_message = (request.args.get("status") or "").strip()
     error_message = (request.args.get("error") or "").strip()
@@ -1225,6 +1313,18 @@ def admin_pricing():
         selected_customer=selected_customer,
         selected_customer_id=selected_customer_id,
         selected_mode=selected_mode,
+        status_message=status_message,
+        error_message=error_message,
+    )
+
+
+@app.route("/admin/accounts")
+@admin_required
+def admin_accounts():
+    status_message = (request.args.get("status") or "").strip()
+    error_message = (request.args.get("error") or "").strip()
+    return render_template(
+        "accounts.html",
         status_message=status_message,
         error_message=error_message,
     )
@@ -1249,12 +1349,11 @@ def admin_pricing_data():
         except (TypeError, ValueError):
             candidate_id = None
         if candidate_id is not None:
-            for customer in customers:
-                if customer["id"] == candidate_id:
-                    selected_mode = "customer"
-                    selected_customer_id = candidate_id
-                    selected_customer = customer
-                    break
+            customer_index = {c["id"]: c for c in customers}
+            selected_customer = customer_index.get(candidate_id)
+            if selected_customer:
+                selected_mode = "customer"
+                selected_customer_id = candidate_id
 
     stock_items = _stock_items_for_train_page()
     stock_item_names = [item.get("stock_item_name", "") for item in stock_items]
@@ -1563,8 +1662,8 @@ def export_images():
             if not image_record:
                 continue
 
-            file_path = image_record.get("filepath")
-            if not file_path or not os.path.exists(file_path):
+            file_path = _resolve_stored_image_path(image_record.get("filepath"))
+            if not file_path:
                 continue
 
             car_folder = re.sub(r"[^A-Za-z0-9._ -]+", "_", str(image_record.get("car_folder") or "images")).strip() or "images"
@@ -1584,6 +1683,32 @@ def export_images():
         as_attachment=True,
         download_name="ss-images.zip",
     )
+
+
+@app.route("/remove_mapping", methods=["POST"])
+@admin_required
+def remove_mapping():
+    payload = request.get_json(silent=True) or request.form or {}
+    image_id = None
+    try:
+        image_id = int(payload.get("image_id"))
+    except (TypeError, ValueError):
+        image_id = None
+
+    if not image_id:
+        return jsonify({"error": "image_id is required"}), 400
+
+    image_record = db.get_image_by_id(image_id)
+    if not image_record:
+        return jsonify({"error": "image not found"}), 404
+
+    removed = db.remove_mapping_by_image_id(image_id)
+    return jsonify({
+        "status": "removed" if removed else "no_mapping",
+        "removed": bool(removed),
+        "image_id": image_id,
+        "stats": db.get_mapping_stats(),
+    })
 
 
 @app.route("/confirm_mapping", methods=["POST"])
@@ -1626,14 +1751,61 @@ def confirm_mapping():
     })
 
 
+def _resolve_stored_image_path(stored_path):
+    if not stored_path:
+        return None
+
+    value = str(stored_path).strip().replace("\\", "/")
+    if not value:
+        return None
+
+    # Preferred portable root: always resolve from app root.
+    portable_root = os.path.join(app.root_path, "data", "S.S IMAGE")
+    fallback_root = IMAGE_SCAN_ROOT
+
+    def _safe_join(root_dir, relative_path):
+        candidate = os.path.normpath(os.path.join(root_dir, relative_path))
+        root_norm = os.path.normcase(os.path.normpath(root_dir)) if os.name == "nt" else os.path.normpath(root_dir)
+        candidate_norm = os.path.normcase(candidate) if os.name == "nt" else candidate
+        if candidate_norm == root_norm or candidate_norm.startswith(root_norm + os.sep):
+            return candidate
+        return None
+
+    # Handle legacy absolute rows from older scans.
+    if os.path.isabs(value):
+        if os.path.exists(value):
+            return value
+        # Salvage by using just the relative suffix from ".../S.S IMAGE/" onward.
+        marker = "s.s image/"
+        lowered = value.lower().replace("\\", "/")
+        marker_index = lowered.find(marker)
+        if marker_index != -1:
+            value = value[marker_index + len(marker):].replace("\\", "/")
+        else:
+            value = os.path.basename(value)
+
+    # Strip optional root prefix if present in stored relative value.
+    normalized = value.replace("\\", "/").lstrip("/")
+    if normalized.lower().startswith("s.s image/"):
+        normalized = normalized.split("/", 1)[1] if "/" in normalized else ""
+    if not normalized:
+        return None
+
+    for root_dir in (portable_root, fallback_root):
+        candidate = _safe_join(root_dir, normalized)
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
 @app.route("/get_image/<int:image_id>")
 def get_image(image_id):
     image_record = db.get_image_by_id(image_id)
     if not image_record:
         return _placeholder_response()
 
-    file_path = image_record.get("filepath")
-    if file_path and os.path.exists(file_path):
+    file_path = _resolve_stored_image_path(image_record.get("filepath"))
+    if file_path:
         return send_file(file_path, conditional=True)
 
     return _placeholder_response()
@@ -1647,8 +1819,8 @@ def get_stock_image():
 
     mapping = db.get_mapping_for_stock_item(stock_item_name)
     if mapping:
-        file_path = mapping.get("filepath")
-        if file_path and os.path.exists(file_path):
+        file_path = _resolve_stored_image_path(mapping.get("filepath"))
+        if file_path:
             return send_file(file_path, conditional=True)
 
     return _placeholder_response()
@@ -1686,7 +1858,7 @@ def reload_data():
 @app.route("/update_stock", methods=["POST"])
 @admin_required
 def update_stock():
-    return jsonify(_refresh_stock_data()), 200
+    return refresh_stock()
 
 @app.route("/refresh_item_stock", methods=["POST"])
 @admin_required
@@ -1765,22 +1937,10 @@ if __name__ == "__main__":
         print("Please manually export hierarchy once and save as data/main.xlsx")
     else:
         print(f"Using main hierarchy file: {main_file}")
-        # Try to load data without refresh (use existing file)
-        load_data(refresh_first=False)
+        print("Starting background data load and image scan...")
 
-    _scan_images_if_database_empty()
+    start_background_startup_tasks()
     
-    # auto-export for item stock list only
-    if item_export_enabled:
-        print("AUTO_EXPORT_ITEM is enabled; scheduling periodic item stock exports")
-        print("Only data/item stock list.xlsx will be overwritten")
-        try:
-            schedule_item_export()
-        except Exception as exc:
-            print("initial item stock export failed:", exc)
-    else:
-        print("AUTO_EXPORT_ITEM disabled; use /refresh_item_stock to trigger manually")
-
     print("\nStarting Flask server on http://localhost:5000")
     print("Press Ctrl+C to stop\n")
     app.run(debug=app.config["DEBUG"])
