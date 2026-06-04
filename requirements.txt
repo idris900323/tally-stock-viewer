@@ -1,0 +1,6 @@
+Flask
+waitress
+requests
+Pillow
+psutil
+pystray

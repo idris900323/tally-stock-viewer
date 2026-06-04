@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document details how the application integrates with Tally ERP for stock management, processes Excel files, and filters items using a two-dropdown system to show available stock.
+This document reflects the current integration path: Tally export retries live in `tally/sync.py`, the Flask app collects stock data in `fetch_item_stock_flat()`, and the UI falls back to the last saved export when live refresh fails.
 
 ---
 
@@ -28,10 +28,11 @@ This document details how the application integrates with Tally ERP for stock ma
                        │ XML Response
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│    Parse Stock Items & Generate Excel Files                 │
+│    Parse Stock Items & Generate Cache Files                 │
 │  • fetch_item_stock_flat()                                  │
-│  • Parse response into stock items list                     │
+│  • Shared Excel loading via utils/excel_helpers.py          │
 │  • Generate item stock list.auto.xlsx                       │
+│  • Write item stock list.auto.json                          │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -39,272 +40,25 @@ This document details how the application integrates with Tally ERP for stock ma
 │    Cache & Runtime Storage                                  │
 │  • item stock list.auto.json (JSON cache)                   │
 │  • In-memory STOCK_QTY_CACHE                                │
-│  • Update every X seconds (configurable)                    │
+│  • Refresh status endpoint with error_code/raw_error        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Tally Connection with Retry Logic
+## Current Integration Notes
 
-**File:** `tally/sync.py`
+- The live app uses `refresh_stock`, `refresh_item_stock`, and `refresh_status` for operational monitoring.
+- `refresh_status` exposes the latest failure classification so the UI can distinguish timeout, unreachable server, and generic Tally errors.
+- `utils/excel_helpers.py` owns the repeated Excel loading logic so callers no longer parse spreadsheets independently.
+- `item stock list.auto.xlsx` and `item stock list.auto.json` are runtime cache artifacts and should stay local to the deployment machine.
 
-```python
-def fetch_from_tally_with_retry(session, url, xml_request, timeout=120, max_retries=3, logger=None):
-    """Post XML to Tally with retries and exponential backoff."""
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            if logger:
-                logger.info("[Tally] Attempt %s/%s", attempt + 1, max_retries)
-            response = session.post(url, data=xml_request, timeout=timeout)
-            response.raise_for_status()
-            if logger:
-                logger.info("[Tally] Success on attempt %s", attempt + 1)
-            return response
-        except requests.Timeout as exc:
-            last_error = exc
-            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-            if logger:
-                logger.warning("[Tally] Timeout on attempt %s; retrying in %ss", attempt + 1, wait_time)
-            time.sleep(wait_time)
-        except requests.RequestException as exc:
-            last_error = exc
-            wait_time = 2 ** attempt
-            if logger:
-                logger.warning("[Tally] Request error on attempt %s; retrying in %ss: %s", attempt + 1, wait_time, exc)
-            time.sleep(wait_time)
+## Historical Note
 
-    if last_error is not None:
-        raise last_error
-    raise requests.RequestException("Tally request failed")
-```
+Older `tallyv2/smart_sync.py`-style documentation is retained elsewhere only as archive material. It does not describe the current Flask app flow.
+# Tally Sync & Integration
 
-**Features:**
-- **Exponential Backoff:** Retries at 1s, 2s, 4s intervals to avoid overwhelming Tally
-- **Timeout Handling:** 120 seconds default timeout for long-running exports
-- **Graceful Degradation:** Falls back to last cached data if Tally is unavailable
+Integration and sync documentation has been moved to the consolidated master guide.
 
-### 1.3 Item Stock Export from Tally
-
-**File:** `app.py` - `fetch_item_stock_flat()` function
-
-```python
-def fetch_item_stock_flat():
-    """Export stock items and quantities from Tally.
-    
-    Process:
-    1. Fetch Stock Item master names (all items in Tally)
-    2. Fetch Stock Summary (grouped/parent quantities)
-    3. Fetch detailed rows with quantities
-    4. Filter: keep only items in Stock Item master
-    5. Filter: remove obvious group names
-    6. Optional: align with main hierarchy if available
-    7. Export to Excel and JSON cache
-    """
-    
-    def _norm(text: str) -> str:
-        """Normalize text: uppercase, no special chars"""
-        return re.sub(r"[^A-Z0-9]+", " ", str(text or "").upper()).strip()
-    
-    def _fetch_stock_item_master_names():
-        """Get all Stock Items defined in Tally."""
-        # Sends XML request to Tally for complete item list
-        # Returns set of normalized item names
-        
-    def _fetch_rows(detailed=False):
-        """Fetch stock quantities from Tally.
-        
-        Args:
-            detailed: If True, fetch all item quantities. 
-                     If False, fetch only group summaries.
-        Returns:
-            list: [{"item_name": str, "qty": int, "upper_name": str}, ...]
-        """
-    
-    # 1. Get master names from Tally
-    master_name_set = _fetch_stock_item_master_names()
-    main_name_set = _load_main_name_set()
-    summary_rows = _fetch_rows(detailed=False)  # Group totals
-    detailed_rows = _fetch_rows(detailed=True)   # All items
-    
-    # 2. Primary filter: keep only Stock Item master items
-    rows = [
-        {"item_name": r["item_name"], "qty": r["qty"]}
-        for r in detailed_rows
-        if r["upper_name"] in master_name_set
-    ]
-    
-    # 3. Secondary filter: remove group names
-    group_name_set = {r["upper_name"] for r in summary_rows}
-    rows = [r for r in rows if _norm(r["item_name"]) not in group_name_set]
-    
-    # 4. Optional strict alignment with main.xlsx hierarchy
-    if main_name_set:
-        aligned_rows = [r for r in rows if _norm(r["item_name"]) in main_name_set]
-        if aligned_rows:
-            rows = aligned_rows
-    
-    # 5. Create DataFrame and export
-    stock_df = pd.DataFrame(rows)
-    stock_df = stock_df.drop_duplicates(subset=["item_name"], keep="last")
-    
-    # 6. Write to Excel
-    stock_df.to_excel(ITEM_STOCK_FILE_AUTO, index=False)
-    
-    # 7. Cache as JSON for faster lookups
-    with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as f:
-        json.dump(stock_df.to_dict(orient="records"), f)
-    
-    return {"rows": len(stock_df), "file": ITEM_STOCK_FILE_AUTO}
-```
-
-### 1.4 Automatic Polling Schedule
-
-```python
-def schedule_item_export():
-    """Automatically export from Tally every X seconds.
-    
-    Configured via: TALLY_EXPORT_INTERVAL (default: 300s = 5 minutes)
-    """
-    global item_export_timer, last_refresh_status
-    
-    if not EXPORT_LOCK.acquire(blocking=False):
-        # Skip if previous export still running
-        logger.warning("Skipping scheduled export; previous export still running")
-        item_export_timer = threading.Timer(ITEM_EXPORT_INTERVAL, schedule_item_export)
-        item_export_timer.daemon = True
-        item_export_timer.start()
-        return
-    
-    try:
-        export_result = fetch_item_stock_flat()
-        load_data()  # Reload in-memory caches
-        last_refresh_status = {
-            "success": True,
-            "message": "Stock updated successfully",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as exc:
-        logger.exception("scheduled item stock export failed")
-        last_refresh_status = {
-            "success": False,
-            "message": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    finally:
-        EXPORT_LOCK.release()
-    
-    # Schedule next export
-    item_export_timer = threading.Timer(ITEM_EXPORT_INTERVAL, schedule_item_export)
-    item_export_timer.daemon = True
-    item_export_timer.start()
-```
-
----
-
-## 2. Excel Files in Data Folder
-
-### 2.1 File Overview
-
-| File | Purpose | Source | Frequency | Usage |
-|------|---------|--------|-----------|-------|
-| `car master list.xls` | Dropdown list of car models | Manual upload | Static | Populate first dropdown (car selection) |
-| `main.xlsx` / `main.xls` | Parent-child hierarchy | Manual export from Tally | Static | Define item relationships, used for hierarchy parsing |
-| `item stock list.xls` | Stock quantities (manual) | Manual export from Tally | Manual | Backup stock data (rarely used now) |
-| `item stock list.auto.xlsx` | Auto-exported stock items | Automatic Tally export | Every 5 min | Latest quantities from Tally |
-| `item stock list.auto.json` | JSON cache of stock | Auto-generated | Every 5 min | Fast in-memory lookups |
-
-### 2.2 Car Master List (`car master list.xls`)
-
-**Purpose:** Provides dropdown options for car model selection.
-
-**Format:** Single column, one car model per row.
-
----
-
-## Implementation Notes — Tallyv2 `smart_sync.py`
-
-- The `tallyv2/smart_sync.py` script implements the documented two-step export pattern to avoid broken collection XML and to reliably filter group/category rows.
-
-- Export pattern used:
-    1. `List of Stock Items` — parsed to build `master_name_set` (all STOCKITEM master names)
-    2. `Stock Summary` — parsed to build `group_name_set` and extract item rows with quantities
-
-- Parsing rules:
-    - Normalize names by uppercasing and removing non-alphanumerics (see `normalize_name()`)
-    - Keep only rows whose normalized name exists in `master_name_set`
-    - Exclude rows whose normalized name exists in `group_name_set` to avoid categories
-    - Deduplicate by normalized item name
-
-- Configuration & runtime:
-    - `config.yaml` controls `tally_url`, `cloud_webhook`, `webhook_secret`, and `sync_interval`.
-    - Run one cycle for testing: `python tallyv2/smart_sync.py --test`
-    - Run as silent daemon on Windows: `pyw.exe C:\tally_sync\smart_sync.py --daemon` or use `Start_Tally_Sync.bat` which calls `pyw.exe`.
-
-- Webhook format and signing:
-    - JSON payload contains `timestamp`, `items` (list of `{item_name, qty}`), and `count`.
-    - Header `X-Webhook-Signature` = HMAC-SHA256(payload_json, webhook_secret).
-
-- Notes on scheduler and reliability:
-    - The script uses `threading.Timer` and `EXPORT_LOCK` to avoid overlapping runs.
-    - `sync_interval` from `config.yaml` is used to schedule the next run.
-    - `fetch_from_tally_with_retry()` implements exponential backoff and proper exception propagation.
-
-If you want, I can produce a small test harness that mocks Tally HTTP responses and validates the parser against sample XML files.
-
-**Example:**
-```
-ACCESSORIES (NECK REST)
-A-STAR (1 PCS)
-A-STAR (2 PCS)
-ALTO K-10 (2014)&ALTO (800)LXI
-ALTIS
-BALENO (2015)(2PCS)
-BOLERO (7) 2012
-BOLERO NEO ARM PLUS
-...
-ZS - EV FOOT MAT
-```
-
-**Loading in app.py:**
-```python
-def load_data(refresh_first: bool = False):
-    """Load car models from car master list."""
-    global CAR_GROUPS, CAR_DESIGN_MAP
-    
-    try:
-        car_df = pd.read_excel(CAR_FILE)  # CAR_FILE = "data/car master list.xls"
-        car_groups = (
-            car_df.iloc[:, 0]  # First column only
-            .dropna()
-            .astype(str)
-            .str.strip()
-            .tolist()
-        )
-        
-        # Filter to relevant range (optional)
-        start_marker = "ACCESSORIES (NECK REST)"
-        end_marker = "ZS - EV FOOT MAT"
-        if start_marker in car_groups and end_marker in car_groups:
-            start_idx = car_groups.index(start_marker)
-            end_idx = car_groups.index(end_marker)
-            car_groups = car_groups[start_idx : end_idx + 1]
-        
-        CAR_GROUPS = car_groups
-        print(f"[OK] Loaded {len(CAR_GROUPS)} car models from dropdown")
-    
-    except Exception as exc:
-        print(f"[ERROR] Error loading car master list: {exc}")
-```
-
-### 2.3 Main Hierarchy File (`main.xlsx` or `main.xls`)
-
-**Purpose:** Defines parent-child relationships for stock items.
-
-**Format:** Two columns
-- Column A: Item name (parent or child)
-- Column B: Quantity (total for parent, individual for children)
-
-**Example:**
+See [MASTER_SETUP.md](MASTER_SETUP.md) for the full integration flow, Tally retry patterns, Excel cache handling, scheduler configuration, and troubleshooting tips.
 ```
 Item Name                           | Qty
 ------------------------------------|-----

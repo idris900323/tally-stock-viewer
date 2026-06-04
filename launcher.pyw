@@ -7,6 +7,13 @@ LOG_FILE = r"C:\tally_stock\logs\app.log"
 ICON_FILE = r"C:\tally_stock\icon.png"
 APP_URL = "http://localhost:5000"
 APP_PORT = 5000
+SERVE_SCRIPT = r"C:\tally_stock\serve.py"
+
+# cloudflared tunnel constants
+CLOUDFLARED_EXE = r"C:\tally_stock\cloudflared.exe"
+TUNNEL_NAME = "tally-stock"
+TUNNEL_PID_FILE = r"C:\tally_stock\tunnel.pid"
+# NOTE: evaluate existence at runtime to avoid referencing os before imports
 
 import os
 import sys
@@ -67,6 +74,69 @@ def _is_process_alive(pid: int) -> bool:
         return False
 
 
+def _read_tunnel_pid() -> int | None:
+    try:
+        return int(Path(TUNNEL_PID_FILE).read_text())
+    except Exception:
+        return None
+
+
+def _write_tunnel_pid(pid: int):
+    try:
+        Path(TUNNEL_PID_FILE).write_text(str(pid))
+    except Exception as exc:
+        _write_log(f"Failed to write tunnel PID file: {exc}")
+
+
+def _remove_tunnel_pid_file():
+    try:
+        p = Path(TUNNEL_PID_FILE)
+        if p.exists():
+            p.unlink()
+    except Exception:
+        pass
+
+
+def _start_tunnel():
+    try:
+        if not Path(CLOUDFLARED_EXE).exists():
+            _write_log("cloudflared not present; skipping tunnel start")
+            return None
+
+        existing = _read_tunnel_pid()
+        if existing is not None and _is_process_alive(existing):
+            _write_log(f"Tunnel already running pid={existing}")
+            return existing
+
+        proc = subprocess.Popen(
+            [CLOUDFLARED_EXE, "tunnel", "--url", f"http://localhost:{APP_PORT}", "--name", TUNNEL_NAME],
+            cwd=APP_DIR,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        _write_tunnel_pid(proc.pid)
+        _write_log(f"Started cloudflared tunnel pid={proc.pid}")
+        return proc.pid
+    except Exception as exc:
+        _write_log(f"Failed to start cloudflared tunnel: {exc}")
+        return None
+
+
+def _stop_tunnel():
+    pid = _read_tunnel_pid()
+    if pid is None:
+        return
+
+    try:
+        proc = psutil.Process(pid)
+        proc.terminate()
+        proc.wait(timeout=10)
+        _write_log(f"Stopped cloudflared tunnel pid={pid}")
+    except Exception as exc:
+        _write_log(f"Failed to stop cloudflared tunnel pid={pid}: {exc}")
+    finally:
+        _remove_tunnel_pid_file()
+
+
 def _launch_server():
     if _is_port_open():
         _write_log("Port already open, skipping launch.")
@@ -74,12 +144,17 @@ def _launch_server():
 
     try:
         proc = subprocess.Popen(
-            [PYTHONW_EXE, APP_ENTRY],
+            [PYTHONW_EXE, SERVE_SCRIPT],
             cwd=APP_DIR,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         _write_pid(proc.pid)
         _write_log(f"Launched server process pid={proc.pid}")
+        # start cloudflared tunnel (best-effort)
+        try:
+            _start_tunnel()
+        except Exception:
+            pass
         return proc.pid
     except Exception as exc:
         _write_log(f"Failed to launch server: {exc}")
@@ -117,6 +192,10 @@ def _stop_server():
         _write_log(f"Failed to stop server pid={pid}: {exc}")
     finally:
         _remove_pid_file()
+        try:
+            _stop_tunnel()
+        except Exception:
+            pass
 
 
 def _restart_server():
