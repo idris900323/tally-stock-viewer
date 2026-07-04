@@ -873,7 +873,7 @@ def get_all_customers_with_details():
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, access_code, role, force_contact_us, created_at
+            SELECT id, username, role, force_contact_us, created_at
             FROM users
             WHERE role = 'customer'
             ORDER BY datetime(COALESCE(created_at, '1970-01-01T00:00:00')) DESC, id DESC

@@ -1,6 +1,9 @@
-Flask
-waitress
-requests
-Pillow
-psutil
-pystray
+Flask>=3.0,<4.0
+waitress>=3.0,<4.0
+requests>=2.31
+Pillow>=9.5
+psutil>=5.9
+pystray>=0.19
+pandas>=2.0
+openpyxl>=3.1
+xlrd>=2.0

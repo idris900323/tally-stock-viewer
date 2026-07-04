@@ -249,7 +249,6 @@
                 <thead>
                     <tr>
                         <th style="width:220px;">Username</th>
-                        <th style="width:180px;">Access Code</th>
                         <th style="width:130px;">Status</th>
                         <th style="width:200px;">Created</th>
                         <th style="width:220px;">Actions</th>
@@ -364,7 +363,6 @@ function renderAccountsTable(customers) {
         return `
             <tr>
                 <td>${escapeHtml(customer.username || "")}</td>
-                <td>${escapeHtml(customer.access_code || "")}</td>
                 <td><span class="${statusClass}">${statusText}</span></td>
                 <td>${escapeHtml(createdLabel)}</td>
                 <td>

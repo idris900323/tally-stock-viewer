@@ -1,18 +1,18 @@
-APP_DIR = r"C:\tally_stock"
-APP_ENTRY = r"C:\tally_stock\app.py"
-PYTHON_EXE = r"C:\tally_stock\.venv\Scripts\python.exe"
-PYTHONW_EXE = r"C:\tally_stock\.venv\Scripts\pythonw.exe"
-PID_FILE = r"C:\tally_stock\app.pid"
-LOG_FILE = r"C:\tally_stock\logs\app.log"
-ICON_FILE = r"C:\tally_stock\icon.png"
+APP_DIR = str(Path(__file__).resolve().parent)
+APP_ENTRY = str(Path(APP_DIR) / "app.py")
+PYTHON_EXE = str(Path(APP_DIR) / ".venv" / "Scripts" / "python.exe")
+PYTHONW_EXE = str(Path(APP_DIR) / ".venv" / "Scripts" / "pythonw.exe")
+PID_FILE = str(Path(APP_DIR) / "app.pid")
+LOG_FILE = str(Path(APP_DIR) / "logs" / "app.log")
+ICON_FILE = str(Path(APP_DIR) / "icon.png")
 APP_URL = "http://localhost:5000"
 APP_PORT = 5000
-SERVE_SCRIPT = r"C:\tally_stock\serve.py"
+SERVE_SCRIPT = str(Path(APP_DIR) / "serve.py")
 
 # cloudflared tunnel constants
-CLOUDFLARED_EXE = r"C:\tally_stock\cloudflared.exe"
+CLOUDFLARED_EXE = str(Path(APP_DIR) / "cloudflared.exe")
 TUNNEL_NAME = "tally-stock"
-TUNNEL_PID_FILE = r"C:\tally_stock\tunnel.pid"
+TUNNEL_PID_FILE = str(Path(APP_DIR) / "tunnel.pid")
 # NOTE: evaluate existence at runtime to avoid referencing os before imports
 
 import os
@@ -234,7 +234,9 @@ def _create_icon_image() -> Image.Image:
     except Exception:
         font = ImageFont.load_default()
     text = "S"
-    w, h = draw.textsize(text, font=font)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
     draw.text(((64 - w) / 2, (64 - h) / 2), text, fill="white", font=font)
     return image
 

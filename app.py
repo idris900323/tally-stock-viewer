@@ -32,15 +32,23 @@ app.config.from_object(Config)
 app.secret_key = app.config["SECRET_KEY"]
 app.register_blueprint(search_bp)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def _configure_logging():
-    os.makedirs(app.config["LOG_DIR"], exist_ok=True)
+    log_dir = app.config["LOG_DIR"]
+    if not os.path.isabs(log_dir):
+        log_dir = os.path.join(BASE_DIR, log_dir)
+    os.makedirs(log_dir, exist_ok=True)
     formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, app.config["LOG_LEVEL"], logging.INFO))
     if not any(isinstance(h, RotatingFileHandler) for h in root.handlers):
-        file_handler = RotatingFileHandler(app.config["LOG_FILE"], maxBytes=2 * 1024 * 1024, backupCount=5)
+        log_file = app.config["LOG_FILE"]
+        if not os.path.isabs(log_file):
+            log_file = os.path.join(BASE_DIR, log_file)
+        file_handler = RotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=5)
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
 
@@ -50,12 +58,17 @@ logger = logging.getLogger(__name__)
 
 TALLY_HTTP_SESSION = requests.Session()
 EXPORT_LOCK = threading.Lock()
-_ETAG_LOCK = threading.Lock()
-LAST_TALLY_ETAG = {"hash": None, "result": None}
+FULL_REFRESH_LOCK = threading.Lock()
+full_refresh_status = {
+    "running": False,
+    "stage": None,
+    "error": None,
+    "timestamp": None,
+}
 LOGIN_ATTEMPTS = {}
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-PROJECT_IMAGE_ROOT = os.path.join(app.root_path, "data", "S.S IMAGE")
+PROJECT_ROOT = BASE_DIR
+PROJECT_IMAGE_ROOT = os.path.join(BASE_DIR, "data", "S.S IMAGE")
 IMAGE_SCAN_ROOT = os.path.abspath(
     os.environ.get("IMAGE_SCAN_ROOT", PROJECT_IMAGE_ROOT)
 )
@@ -69,17 +82,19 @@ PLACEHOLDER_SVG = b"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 3
 
 # file locations and polling configuration
 
-CAR_FILE = "data/car master list.xls"  # dropdown list
+CAR_FILE = os.path.join(BASE_DIR, "data", "car master list.xls")  # dropdown list
+CAR_MASTER_CACHE_JSON = "data/car_master.json"
 MAIN_FILE_CANDIDATES = [
-    "data/main.xlsx",
-    "data/main.xls",
-    "main.xlsx",
-    "main.xls",
+    os.path.join(BASE_DIR, "data", "main.xlsx"),
+    os.path.join(BASE_DIR, "data", "main.xls"),
+    os.path.join(BASE_DIR, "main.xlsx"),
+    os.path.join(BASE_DIR, "main.xls"),
 ]  # parent-child hierarchy (never overwritten)
-ITEM_STOCK_FILE = "data/item stock list.xls"  # flat stock item export (quantities only)
-ITEM_STOCK_FILE_XLSX = "data/item stock list.xlsx"  # preferred auto-export target
-ITEM_STOCK_FILE_AUTO = "data/item stock list.auto.xlsx"  # runtime auto-export target
-ITEM_STOCK_CACHE_JSON = "data/item stock list.auto.json"
+MAIN_HIERARCHY_CACHE_JSON = "data/main_hierarchy.json"
+ITEM_STOCK_FILE = os.path.join(BASE_DIR, "data", "item stock list.xls")  # flat stock item export (quantities only)
+ITEM_STOCK_FILE_XLSX = os.path.join(BASE_DIR, "data", "item stock list.xlsx")  # preferred auto-export target
+ITEM_STOCK_FILE_AUTO = os.path.join(BASE_DIR, "data", "item stock list.auto.xlsx")  # runtime auto-export target
+ITEM_STOCK_CACHE_JSON = os.path.join(BASE_DIR, "data", "item stock list.auto.json")
 ITEM_EXPORT_INTERVAL = app.config["TALLY_EXPORT_INTERVAL"]
 item_export_timer = None
 item_export_enabled = os.environ.get("AUTO_EXPORT_ITEM", "1").strip().lower() not in ("0", "false")
@@ -91,7 +106,7 @@ TALLY_TIMEOUT = max(120, int(app.config["TALLY_TIMEOUT"]))
 TALLY_RETRY_ATTEMPTS = app.config["TALLY_RETRY_ATTEMPTS"]
 MAX_RETRY_ATTEMPTS = 3
 VALID_ROLES = {"admin", "customer"}
-PUBLIC_ENDPOINTS = {"login", "logout", "static"}
+PUBLIC_ENDPOINTS = {"login", "logout", "static", "full_refresh_status_route"}
 
 db.init_database()
 
@@ -110,9 +125,18 @@ def _current_user_id():
 
 
 def _safe_next_url(raw_next):
-    if raw_next and isinstance(raw_next, str) and raw_next.startswith("/") and not raw_next.startswith("//"):
-        return raw_next
-    return url_for("home")
+    from urllib.parse import urlparse
+
+    if not raw_next or not isinstance(raw_next, str):
+        return url_for("home")
+
+    parsed = urlparse(raw_next)
+    if parsed.netloc or parsed.scheme:
+        return url_for("home")
+    if not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return url_for("home")
+
+    return raw_next
 
 
 def _admin_denied():
@@ -402,13 +426,19 @@ def _check_login_rate_limit(username):
     key = str(username or "").strip().lower()
     window_seconds = 300
     max_attempts = 10
+    if len(LOGIN_ATTEMPTS) > 500:
+        for existing_key in list(LOGIN_ATTEMPTS.keys()):
+            existing_attempts = [ts for ts in LOGIN_ATTEMPTS.get(existing_key, []) if now - ts < window_seconds]
+            LOGIN_ATTEMPTS[existing_key] = existing_attempts
+            if not existing_attempts:
+                del LOGIN_ATTEMPTS[existing_key]
+
     attempts = LOGIN_ATTEMPTS.get(key, [])
     attempts = [ts for ts in attempts if now - ts < window_seconds]
+    LOGIN_ATTEMPTS[key] = attempts
+    if not attempts:
+        del LOGIN_ATTEMPTS[key]
     if len(attempts) >= max_attempts:
-        if not attempts:
-            LOGIN_ATTEMPTS.pop(key, None)
-        else:
-            LOGIN_ATTEMPTS[key] = attempts
         return False
     attempts.append(now)
     LOGIN_ATTEMPTS[key] = attempts
@@ -416,11 +446,6 @@ def _check_login_rate_limit(username):
 
 
 def _post_tally_with_retry(xml_req):
-    request_hash = hash(xml_req)
-    with _ETAG_LOCK:
-        if LAST_TALLY_ETAG["hash"] == request_hash and LAST_TALLY_ETAG["result"]:
-            return LAST_TALLY_ETAG["result"]
-
     response = fetch_from_tally_with_retry(
         TALLY_HTTP_SESSION,
         TALLY_URL,
@@ -429,11 +454,7 @@ def _post_tally_with_retry(xml_req):
         max_retries=TALLY_RETRY_ATTEMPTS,
         logger=logger,
     )
-    text = response.text
-    with _ETAG_LOCK:
-        LAST_TALLY_ETAG["hash"] = request_hash
-        LAST_TALLY_ETAG["result"] = text
-    return text
+    return response.text
 
 
 def _classify_tally_exception(exc):
@@ -458,7 +479,7 @@ def get_latest_stock_file_path():
         ITEM_STOCK_FILE_XLSX,
         ITEM_STOCK_FILE,
     ]
-    candidates.extend(glob.glob("data/item stock list.auto.*.xlsx"))
+    candidates.extend(glob.glob(os.path.join(BASE_DIR, "data", "item stock list.auto.*.xlsx")))
     existing = [
         path for path in candidates
         if os.path.exists(path)
@@ -518,6 +539,17 @@ def start_background_startup_tasks():
 
 def _refresh_stock_data():
     global last_refresh_status
+    if FULL_REFRESH_LOCK.locked():
+        now = datetime.now()
+        return {
+            "ok": False,
+            "busy": True,
+            "tally_online": None,
+            "status": "full_refresh_in_progress",
+            "message": "Full refresh is in progress. Please wait.",
+            "timestamp": now.isoformat(),
+            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+        }
     try:
         export_result = fetch_item_stock_flat()
         load_data()
@@ -713,6 +745,224 @@ def fetch_item_stock_flat():
             seen[r["item_name"]] = r
         deduped = list(seen.values())
 
+        try:
+            with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as handle:
+                json.dump(deduped, handle, ensure_ascii=False)
+        except Exception:
+            pass
+
+        threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
+        return {"rows": len(deduped), "file": ITEM_STOCK_FILE_AUTO, "warning": None}
+    except Exception as exc:
+        print(f"item stock export failed: {str(exc)}")
+        raise
+
+
+def fetch_car_master_from_tally():
+    def _norm(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "").strip()).upper()
+
+    xml_req = '''<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export Data</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>List of Stock Groups</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+    </DESC>
+  </BODY>
+</ENVELOPE>'''.strip()
+
+    text = _post_tally_with_retry(xml_req)
+    if "<LINEERROR>" in text or "Unknown Request" in text:
+        raise Exception(f"Tally returned error for stock group collection: {text[:300]}")
+
+    root = ET.fromstring(text)
+    car_names = set()
+    for item_node in root.findall('.//COLLECTION/STOCKGROUP'):
+        raw_name = item_node.attrib.get('NAME', '')
+        if not raw_name:
+            name_node = item_node.find('.//NAME')
+            raw_name = name_node.text if (name_node is not None and name_node.text) else ''
+        norm_name = _norm(raw_name)
+        if norm_name:
+            car_names.add(norm_name)
+
+    return sorted(car_names)
+
+
+def _load_car_groups_from_cache_or_excel():
+    car_groups = []
+
+    if os.path.exists(CAR_MASTER_CACHE_JSON):
+        try:
+            with open(CAR_MASTER_CACHE_JSON, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            if isinstance(payload, list):
+                car_groups = [str(value).strip() for value in payload if str(value).strip()]
+        except Exception:
+            car_groups = []
+
+    if not car_groups:
+        try:
+            values = load_excel_column(CAR_FILE, col_index=0, min_row=1)
+            car_groups = [str(value).strip() for value in values if str(value).strip()]
+        except Exception as exc:
+            raise Exception(f"Failed to load car master list: {exc}")
+
+    # ============================================================
+    # !! CRITICAL - CAR MODEL RANGE FILTER - READ THIS FIRST !!
+    # ============================================================
+    # The list of car models loaded from Tally is trimmed to only
+    # the range between start_marker and end_marker below.
+    #
+    # start_marker = "ACCESSORIES (NECK REST)"
+    # end_marker   = "ZS - EV FOOT MAT"
+    #
+    # IF THE CAR DROPDOWN IS MISSING MODELS OR SHOWING WRONG CARS:
+    #   1. Open Tally Prime
+    #   2. Check the Stock Groups list
+    #   3. Confirm these two group names still exist exactly as written
+    #   4. If either name changed, update start_marker and end_marker here
+    #   5. Then run a Full Refresh from the admin UI
+    #
+    # IF THIS FILTER IS REMOVED, ALL TALLY STOCK GROUPS WILL APPEAR
+    # IN THE DROPDOWN INCLUDING INTERNAL/ACCOUNTING GROUPS.
+    # ============================================================
+    start_marker = "ACCESSORIES (NECK REST)"
+    end_marker = "ZS - EV FOOT MAT"
+    if start_marker in car_groups and end_marker in car_groups:
+        start_idx = car_groups.index(start_marker)
+        end_idx = car_groups.index(end_marker)
+        if start_idx <= end_idx:
+            car_groups = car_groups[start_idx : end_idx + 1]
+        else:
+            car_groups = car_groups[end_idx : start_idx + 1]
+
+    return car_groups
+
+
+def save_car_master_to_file(car_names):
+    temp_file = CAR_FILE + ".tmp.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for car_name in car_names:
+        ws.append([car_name])
+    wb.save(temp_file)
+    os.replace(temp_file, CAR_FILE)
+    with open(CAR_MASTER_CACHE_JSON, "w", encoding="utf-8") as handle:
+        json.dump(car_names, handle, ensure_ascii=False)
+    print(f"wrote {len(car_names)} car names to {CAR_FILE}")
+
+
+def fetch_main_hierarchy_from_tally():
+    xml_req = '''<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Stock Summary</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                <SVSTOCKGROUP>Primary</SVSTOCKGROUP>
+                <ISDETAILED>Yes</ISDETAILED>
+                <EXPLODEFLAG>Yes</EXPLODEFLAG>
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>'''.strip()
+
+    text = _post_tally_with_retry(xml_req)
+    if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
+        raise Exception(f"Tally returned error: {text[:300]}")
+
+    root = ET.fromstring(text)
+    names = root.findall(".//DSPACCNAME")
+    stocks = root.findall(".//DSPSTKINFO")
+
+    flat_rows = []
+    for name_node, stock_node in zip(names, stocks):
+        display_node = name_node.find("DSPDISPNAME")
+        qty_node = stock_node.find(".//DSPCLQTY")
+        item_name = display_node.text.strip() if (display_node is not None and display_node.text) else ""
+        qty_text = qty_node.text if (qty_node is not None and qty_node.text) else "0"
+        match = re.search(r"-?\d+", qty_text)
+        qty = int(match.group()) if match else 0
+        if item_name:
+            flat_rows.append({"item_name": item_name, "qty": qty})
+
+    return flat_rows
+
+
+def _build_main_hierarchy_structure(flat_rows):
+    parent_names = {
+        normalize_text(name)
+        for name in _load_car_groups_from_cache_or_excel()
+        if str(name).strip()
+    }
+    structured_rows = []
+    current_parent = None
+
+    for row in flat_rows or []:
+        item_name = str(row.get("item_name") or "").strip()
+        qty = row.get("qty") or 0
+        try:
+            qty = int(qty)
+        except (TypeError, ValueError):
+            qty = 0
+
+        if not item_name:
+            continue
+
+        item_name_upper = normalize_text(item_name)
+        if item_name_upper in parent_names:
+            current_parent = {
+                "parent": item_name,
+                "parent_qty": qty,
+                "children": [],
+            }
+            structured_rows.append(current_parent)
+            continue
+
+        if current_parent is not None:
+            current_parent["children"].append({
+                "item_name": item_name,
+                "qty": qty,
+            })
+
+    return structured_rows
+
+
+def save_main_hierarchy_to_file(flat_rows):
+    main_file = get_main_file_path()
+    temp_file = main_file + ".tmp.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["PARTICULARS", "QUANTITY"])
+    for row in flat_rows:
+        ws.append([row.get("item_name", ""), row.get("qty", 0)])
+    wb.save(temp_file)
+    os.replace(temp_file, main_file)
+
+    structured_rows = _build_main_hierarchy_structure(flat_rows)
+    with open(MAIN_HIERARCHY_CACHE_JSON, "w", encoding="utf-8") as handle:
+        json.dump(structured_rows, handle, ensure_ascii=False)
+
+    print(f"wrote {len(flat_rows)} hierarchy rows to {main_file}")
+
+
+def _write_stock_excel(deduped):
+    EXPORT_LOCK.acquire()
+    try:
         temp_file = ITEM_STOCK_FILE_AUTO + ".tmp.xlsx"
         out_file = ITEM_STOCK_FILE_AUTO
         warning = None
@@ -723,11 +973,6 @@ def fetch_item_stock_flat():
         for r in deduped:
             ws.append([r["item_name"], r["qty"]])
         wb.save(temp_file)
-        try:
-            with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as handle:
-                json.dump(deduped, handle, ensure_ascii=False)
-        except Exception:
-            pass
 
         replaced = False
         for attempt in range(MAX_RETRY_ATTEMPTS):
@@ -756,7 +1001,7 @@ def fetch_item_stock_flat():
                 out_file = ITEM_STOCK_FILE_XLSX
             except Exception:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                out_file = f"data/item stock list.auto.{timestamp}.xlsx"
+                out_file = os.path.join(BASE_DIR, "data", f"item stock list.auto.{timestamp}.xlsx")
                 wb = openpyxl.Workbook()
                 ws = wb.active
                 ws.append(["item_name", "qty"])
@@ -774,9 +1019,10 @@ def fetch_item_stock_flat():
         if warning:
             print(warning)
         return {"rows": len(deduped), "file": out_file, "warning": warning}
-    except Exception as exc:
-        print(f"item stock export failed: {str(exc)}")
-        raise
+    except Exception:
+        logger.exception("background item stock excel write failed")
+    finally:
+        EXPORT_LOCK.release()
 
 
 def schedule_item_export(initial_delay: int = 0):
@@ -784,6 +1030,13 @@ def schedule_item_export(initial_delay: int = 0):
 
     def _export_job():
         global item_export_timer
+
+        if FULL_REFRESH_LOCK.locked():
+            logger.info("Skipping scheduled export because full refresh is in progress")
+            item_export_timer = threading.Timer(ITEM_EXPORT_INTERVAL, schedule_item_export)
+            item_export_timer.daemon = True
+            item_export_timer.start()
+            return
 
         if not EXPORT_LOCK.acquire(blocking=False):
             logger.warning("Skipping scheduled export because previous export is still running")
@@ -905,27 +1158,7 @@ def load_data(refresh_first: bool = False):
 
     # ---- Load car groups from car master list ----
     try:
-        car_groups = []
-        
-        # Try pandas first for .xls/.xlsx
-        try:
-            values = load_excel_column(CAR_FILE, col_index=0, min_row=1)
-            car_groups = [str(value).strip() for value in values if str(value).strip()]
-        except Exception as exc:
-            raise Exception(f"Failed to load car master list: {exc}")
-
-        # Filter to relevant range
-        start_marker = "ACCESSORIES (NECK REST)"
-        end_marker = "ZS - EV FOOT MAT"
-        if start_marker in car_groups and end_marker in car_groups:
-            start_idx = car_groups.index(start_marker)
-            end_idx = car_groups.index(end_marker)
-            if start_idx <= end_idx:
-                car_groups = car_groups[start_idx : end_idx + 1]
-            else:
-                car_groups = car_groups[end_idx : start_idx + 1]
-
-        CAR_GROUPS = car_groups
+        CAR_GROUPS = _load_car_groups_from_cache_or_excel()
         PARENT_NAME_SET = {normalize_text(name) for name in CAR_GROUPS if str(name).strip()}
         print(f"[OK] Loaded {len(CAR_GROUPS)} car models from dropdown")
     except Exception as exc:
@@ -943,19 +1176,19 @@ def load_data(refresh_first: bool = False):
         # Load all designs from Tally as a flat list
         all_designs = parse_flat_tally(main_file)
         design_index = defaultdict(list)
-        for design_item in all_designs:
+        for index, design_item in enumerate(all_designs):
             for token in normalize_text(design_item["raw"]).split():
                 if len(token) > 2:
-                    design_index[token].append(design_item)
+                    design_index[token].append(index)
 
         for car in CAR_GROUPS:
             base = normalize_text(extract_car_base_name(car) or car)
-            candidates = set()
+            candidate_indices = set()
             for token in base.split():
                 if len(token) > 2:
-                    for design_item in design_index.get(token, []):
-                        candidates.add(id(design_item))
-            CAR_DESIGN_MAP[car] = [d for d in all_designs if id(d) in candidates]
+                    for index in design_index.get(token, []):
+                        candidate_indices.add(index)
+            CAR_DESIGN_MAP[car] = [all_designs[index] for index in sorted(candidate_indices)]
 
         total_designs = sum(len(v) for v in CAR_DESIGN_MAP.values())
         print(f"Matched {len(CAR_DESIGN_MAP)} cars to {total_designs} designs")
@@ -1039,8 +1272,6 @@ def home():
         refresh_interval=ITEM_EXPORT_INTERVAL,
         last_refresh_status=last_refresh_status,
     )
-
-
 @app.route("/health")
 def health():
     db_ok = True
@@ -1087,6 +1318,10 @@ def _find_children_by_qty(car_name: str):
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
+    if not PARENT_NAME_SET:
+        logger.warning("Skipping child lookup because parent data has not loaded yet")
+        return []
+
     def _to_int(value):
         if value is None:
             return 0
@@ -1094,6 +1329,38 @@ def _find_children_by_qty(car_name: str):
         return int(match.group()) if match else 0
 
     def _load_main_rows_cached():
+        if os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+            try:
+                with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+
+                rows = []
+                exact_index = {}
+                for entry in payload if isinstance(payload, list) else []:
+                    parent_name = str(entry.get("parent") or "").strip()
+                    parent_qty = _to_int(entry.get("parent_qty"))
+                    if parent_name:
+                        parent_upper = _norm(parent_name)
+                        rows.append((parent_name, parent_upper, parent_qty))
+                        exact_index.setdefault(parent_upper, len(rows) - 1)
+
+                    children = entry.get("children", [])
+                    if not isinstance(children, list):
+                        children = []
+                    for child in children:
+                        child_name = str(child.get("item_name") or "").strip()
+                        child_qty = _to_int(child.get("qty"))
+                        if not child_name:
+                            continue
+                        child_upper = _norm(child_name)
+                        rows.append((child_name, child_upper, child_qty))
+                        exact_index.setdefault(child_upper, len(rows) - 1)
+
+                if rows:
+                    return rows, exact_index
+            except Exception:
+                pass
+
         main_file = get_main_file_path()
         fingerprint = _file_fingerprint(main_file)
         if fingerprint is None:
@@ -1185,7 +1452,7 @@ def _find_children_by_qty(car_name: str):
 
     rows, exact_index = _load_main_rows_cached()
     if not rows:
-        return []
+        return False, []
 
     parent_idx = None
     car_upper = _norm(car_name)
@@ -1205,7 +1472,7 @@ def _find_children_by_qty(car_name: str):
                 break
 
     if parent_idx is None:
-        return []
+        return False, []
 
     stock_qty_map = _load_stock_qty_map_cached()
 
@@ -1232,7 +1499,7 @@ def _find_children_by_qty(car_name: str):
 
             if parent_qty_total > 0 and running_qty >= parent_qty_total:
                 break
-    return children
+    return True, children
 
 
 def _coerce_limit(value, default=None, default_value=None):
@@ -1263,9 +1530,13 @@ def designs():
         return jsonify({"error": load_error}), 500
 
     # primary strategy: quantity-sum scanning of the export
-    children = _find_children_by_qty(car)
+    found, children = _find_children_by_qty(car)
     if children:
         return jsonify(_build_design_payload(children))
+
+    if found:
+        # Car exists in hierarchy but has zero stock — return empty, do not fall back
+        return jsonify([])
 
     # if that failed, keep the old flat lookup as a backup
     if car in CAR_DESIGN_MAP and CAR_DESIGN_MAP[car]:
@@ -1429,7 +1700,6 @@ def admin_get_all_customers():
         {
             "id": customer["id"],
             "username": customer["username"],
-            "access_code": customer.get("access_code", ""),
             "force_contact_us": bool(customer.get("force_contact_us")),
             "status": "paused" if bool(customer.get("force_contact_us")) else "active",
             "created_at": customer.get("created_at"),
@@ -1636,6 +1906,7 @@ def train_images():
 
 
 @app.route("/export_images", methods=["POST"])
+@admin_required
 def export_images():
     payload = request.get_json(silent=True) or request.form or {}
     raw_image_ids = payload.get("image_ids") or []
@@ -1841,6 +2112,76 @@ def scan_images():
 @app.route("/mapping_stats")
 def mapping_stats():
     return jsonify(db.get_mapping_stats())
+
+
+@app.route("/full_refresh", methods=["POST"])
+@admin_required
+def full_refresh():
+    global full_refresh_status
+
+    if not FULL_REFRESH_LOCK.acquire(blocking=False):
+        return jsonify({
+            "ok": False,
+            "busy": True,
+            "message": "Full refresh already in progress"
+        }), 409
+
+    def _run_full_refresh():
+        global full_refresh_status
+        try:
+            full_refresh_status = {
+                "running": True,
+                "stage": "car_master",
+                "error": None,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            car_names = fetch_car_master_from_tally()
+            save_car_master_to_file(car_names)
+            full_refresh_status["stage"] = "main_hierarchy"
+
+            flat_rows = fetch_main_hierarchy_from_tally()
+            save_main_hierarchy_to_file(flat_rows)
+            full_refresh_status["stage"] = "item_stock"
+
+            fetch_item_stock_flat()
+            full_refresh_status["stage"] = "reloading"
+
+            load_data(refresh_first=False)
+            full_refresh_status = {
+                "running": False,
+                "stage": "done",
+                "error": None,
+                "timestamp": datetime.now().isoformat()
+            }
+            logger.info("Full refresh completed successfully")
+
+        except Exception as exc:
+            error_code = _classify_tally_exception(exc)
+            full_refresh_status = {
+                "running": False,
+                "stage": "error",
+                "error": str(exc),
+                "error_code": error_code,
+                "timestamp": datetime.now().isoformat()
+            }
+            logger.exception("Full refresh failed: %s", exc)
+        finally:
+            FULL_REFRESH_LOCK.release()
+
+    thread = threading.Thread(target=_run_full_refresh, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "ok": True,
+        "busy": False,
+        "message": "Full refresh started"
+    }), 202
+
+
+@app.route("/full_refresh_status")
+def full_refresh_status_route():
+    return jsonify(full_refresh_status)
 
 
 @app.route("/reload", methods=["POST"])

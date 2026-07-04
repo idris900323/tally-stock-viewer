@@ -1,9 +1,21 @@
+import os
+from pathlib import Path
+import logging
+
 from waitress import serve
+
+from config import Config
 from app import app
-import os, logging
+
+
+BASE_DIR = Path(__file__).resolve().parent
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+os.makedirs(os.path.dirname(os.path.abspath(Config.LOG_FILE)), exist_ok=True)
 
 logging.basicConfig(
-    filename=r"C:\tally_stock\logs\app.log",
+    filename=Config.LOG_FILE,
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s: %(message)s"
 )

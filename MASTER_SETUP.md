@@ -1,222 +1,304 @@
-# Tally Stock Viewer — Setup & Deployment Guide (Master)
+# Tally Stock Viewer - Office PC Master Guide
 
-This master guide consolidates project setup, production deployment, troubleshooting, and operational procedures for Tally Stock Viewer v2.0.
+This is the main setup and day-to-day guide for the office PC.
+It replaces the older split between `MASTER_SETUP.md` and `MASTER_SETUP_Claude.md`.
 
----
+Use this guide when you need to:
+- set up a new office PC
+- start or stop the app
+- refresh stock from Tally
+- rescan images
+- check logs
+- hand the system over to non-technical staff
 
-## Overview
+For internet/public access, use `GOING_PUBLIC.md`.
+For the technical architecture, use `SOFTWARE_DEEP_DIVE.md`.
 
-Tally Stock Viewer is a Flask + SQLite application for viewing and mapping Tally stock with an image training UI. This guide explains how to install prerequisites, prepare a Windows host, create a portable environment, deploy using `waitress`, and (optionally) expose the app via Cloudflare Tunnel (`cloudflared`).
+## 1. What this PC runs
 
-**Key changes in v2.0**
-- Portable relative image paths in DB (no absolute machine paths).
-- Background service execution using `pythonw.exe` and a tray `launcher.pyw`.
-- `serve.py` to run the app under `waitress` in production.
-- Automated shortcuts via `setup_office_pc.bat`.
-- `requests` added to standard dependencies for Tally API integration.
+The office PC hosts the full stock viewer locally.
 
----
+Main parts:
+- Tally Prime runs on the same PC and answers on port `9000`
+- the stock viewer runs on `http://localhost:5000`
+- the live app is served by `serve.py` using `waitress`
+- `launcher.pyw` keeps the app running in the background and opens the browser
+- if `cloudflared.exe` is present, the launcher also tries to start the public tunnel
 
-## Prerequisites (Windows)
-- Windows 10/11 (64-bit)
-- Internet access for package installation
-- Admin rights for certain setup steps (creating shortcuts, installing system-wide tools)
+## 2. Files that matter
 
-### Recommended tools
-- Git for Windows (64-bit x86_64 installer)
-- Python 3.11 or 3.10 (official Windows installer, 64-bit)
-- PowerShell (default on Windows 10+)
+Main project folder after setup:
+- `C:\tally_stock`
 
----
+Important files and folders:
+- `C:\tally_stock\first_time_setup.bat` - use this for a new office PC
+- `C:\tally_stock\setup_office_pc.bat` - older legacy setup script
+- `C:\tally_stock\update_app.bat` - pulls code updates from Git
+- `C:\tally_stock\.env` - local settings
+- `C:\tally_stock\logs\app.log` - application log
+- `C:\tally_stock\data\mappings.db` - image mappings, users, and pricing
+- `C:\tally_stock\data\S.S IMAGE\` - source image folders
 
-## 1. Install Git
-Download from: https://git-scm.com/download/win — choose the standard 64-bit installer (x86_64). Avoid ARM64 builds on Intel/AMD machines.
+Desktop shortcuts created by setup:
+- `Start Stock Viewer.bat`
+- `Stop Stock Viewer.bat`
 
----
+## 3. First-time setup on a new office PC
 
-## 2. Install Python
-1. Download the Windows x86-64 installer for Python 3.10/3.11 from python.org.
-2. Run the installer and *check* "Add Python to PATH".
-3. Prefer installing for "All Users" to reduce file-permissions issues.
+Do this once per machine.
 
-Verify:
+### Step 1 - Install Python
+
+1. Go to `https://www.python.org/downloads/`
+2. Download Python 3.11 for Windows 64-bit
+3. Run the installer
+4. Make sure `Add Python to PATH` is checked
+5. Finish the install
+
+Check it worked:
 
 ```powershell
 python --version
-pip --version
 ```
 
----
+### Step 2 - Install Git
 
-## 3. Clone or copy the project
-Option A — Git (recommended):
+1. Go to `https://git-scm.com/download/win`
+2. Download the normal 64-bit Windows installer
+3. Install with default options
+
+Check it worked:
 
 ```powershell
-cd C:\Path\To\Where\You\Want\Tally_Stock
-git clone https://your.repo/url tally_stock
-cd tally_stock
+git --version
 ```
 
-Option B — Manual copy (USB): copy the project folder into `C:\tally_stock` or any chosen path.
+### Step 3 - Copy the project folder to the PC
 
-Note: The app uses portable relative paths for image references, so the folder can be moved between machines.
+Copy the whole project folder onto the office PC.
+It does not need to stay in a special place before setup.
 
----
+### Step 4 - Run the new-machine setup
 
-## 4. Create virtual environment and install dependencies
-Run these commands from the project root (where `app.py` lives):
+1. Open the copied project folder
+2. Right-click `first_time_setup.bat`
+3. Choose `Run as administrator`
+4. Follow the prompts on screen
+
+What the script does:
+- copies the project into `C:\tally_stock`
+- creates a fresh virtual environment
+- installs Python packages
+- creates `C:\tally_stock\.env`
+- creates Desktop start/stop shortcuts
+- registers Windows auto-start
+- optionally helps with Cloudflare tunnel setup
+- optionally connects the folder to GitHub for updates
+
+Important:
+- for a normal local-only install, you can skip the optional Cloudflare and Git sections — just press Enter when asked about them
+- if the script asks for the Tally port, keep `9000` unless your Tally setup uses a different port
+
+### Step 5 - Confirm setup finished
+
+After setup, check for:
+- `C:\tally_stock`
+- `C:\tally_stock\.venv`
+- `C:\tally_stock\.env`
+- Desktop shortcuts named `Start Stock Viewer.bat` and `Stop Stock Viewer.bat`
+
+## 4. Data the app expects
+
+These files should live inside `C:\tally_stock\data\`.
+
+Key files:
+- `car master list.xls`
+- `main.xlsx` or `main.xls`
+- `mappings.db`
+- `S.S IMAGE\` folder
+
+Files generated by the app:
+- `item stock list.auto.xlsx`
+- `item stock list.auto.json`
+
+If you are moving from an older PC, copy the `data\` contents before relying on the app.
+
+## 5. Daily start and stop
+
+### To start the app
+
+1. Make sure the office PC is on and logged into Windows
+2. Open Tally Prime if you want live stock refresh to work
+3. Double-click `Start Stock Viewer.bat` on the Desktop
+4. Wait 10 to 20 seconds
+5. Open `http://localhost:5000` if the browser does not open by itself
+
+You should see the login page.
+
+### To stop the app
+
+Preferred method:
+
+1. find the tray icon near the Windows clock
+2. right-click it
+3. choose `Stop & Exit`
+
+Important:
+- this is the clean stop because it shuts down both the local server and the launcher
+- the Desktop `Stop Stock Viewer.bat` shortcut is better treated as a recovery shortcut, not the normal daily stop method
+
+## 6. Logging in
+
+The app supports:
+- one admin account
+- multiple customer accounts
+
+Use the username and access code provided by the person managing the system.
+
+If the database is brand new and still using defaults, the seeded accounts are:
+- admin / `idris123`
+- star / `111`
+- jeewajee / `222`
+
+These defaults should be changed before public rollout.
+
+## 7. What staff normally do inside the app
+
+### Refresh stock from Tally
+
+1. Log in as admin
+2. Open the main screen
+3. Click `Update Stock`
+
+What happens:
+- the app requests the latest stock from Tally
+- it saves a fresh cached stock file
+- it reloads the in-memory design data
+
+If Tally is offline, the app falls back to the last saved stock export instead of fully failing.
+
+### Train image matches
+
+1. Log in as admin
+2. Click `Train Matches`
+3. Review unmatched images
+4. confirm the correct stock item for each image
+
+This saves image-to-stock mappings into `mappings.db`.
+
+### Manage pricing
+
+1. Log in as admin
+2. Click `Manage Pricing`
+3. Set either:
+- global prices for all customers
+- customer-specific override prices
+
+If no price exists, the customer-facing UI shows `Contact Us`.
+
+### Manage customer accounts
+
+1. Log in as admin
+2. Click `Manage Accounts`
+3. Create, pause, resume, or delete customer accounts
+
+## 8. Image scanning
+
+Run a scan when:
+- a new image folder is added
+- many new images are copied in
+- mapped images are not showing correctly after moving machines
+
+Current behavior:
+- the app automatically performs an initial scan when the image database is empty
+- the backend also supports a manual admin-only re-scan route
+
+For non-technical staff, treat image re-scan as a support task if the automatic scan did not cover new files.
+
+The scanner reads `C:\tally_stock\data\S.S IMAGE\` and stores portable relative paths in the database.
+
+## 9. Updates to the code
+
+If Git was connected during setup, code updates are done with:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # PowerShell
-pip install --upgrade pip
-pip install -r requirements.txt
+C:\tally_stock\update_app.bat
 ```
 
-If you copied `.venv` from another machine, delete it and recreate it locally to avoid binary incompatibilities.
+What it does:
+- stops the running app
+- runs `git pull origin main`
+- starts the launcher again
 
----
+If Git was not connected, code updates must be copied in manually.
 
-## 5. `requirements.txt` (project)
-The project includes a `requirements.txt`. Typical contents:
+## 10. Troubleshooting
 
-```
-Flask
-waitress
-requests
-Pillow
-psutil
-pystray
-```
+### The app will not open
 
-Install with `pip install -r requirements.txt`.
+Check:
+- the PC is logged in
+- `Start Stock Viewer.bat` was used
+- `C:\tally_stock\.venv` exists
+- `C:\tally_stock\logs\app.log` contains no startup error
 
----
+### Login page opens but stock refresh fails
 
-## 6. Project files of interest
-- `app.py` — Flask application and routes.
-- `serve.py` — Production entrypoint (uses `waitress`).
-- `launcher.pyw` — System tray launcher that starts/stops the app and optionally runs `cloudflared`.
-- `database.py` — SQLite helper and path canonicalization.
-- `image_scanner.py` — Scans `data/S.S IMAGE/` and inserts relative paths into DB.
-- `setup_office_pc.bat` — (optional) script to create Desktop shortcuts and prepare environment.
+Most likely causes:
+- Tally Prime is closed
+- Tally is not listening on port `9000`
+- Tally responded too slowly
 
----
+The app can still run in read-only mode using the last saved stock export.
 
-## 7. Running locally (development)
-Activate the venv and start Flask (dev server):
+### Images do not appear
+
+Check:
+- the image files exist under `C:\tally_stock\data\S.S IMAGE\`
+- the database was moved over correctly
+- an image scan has been run after the move
+
+### Desktop shortcuts are missing
+
+Run `first_time_setup.bat` again as administrator.
+
+### Auto-start after Windows login is not working
+
+Run `first_time_setup.bat` again as administrator to recreate the Windows startup entry.
+
+## 11. Useful checks
+
+Health check:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-$env:FLASK_APP='app.py'
-flask run
+http://localhost:5000/health
 ```
 
-The app will be available at `http://127.0.0.1:5000`.
-
----
-
-## 8. Running in production (recommended)
-Use `serve.py` which launches `waitress` and logs to `C:\tally_stock\logs\app.log` by default.
+App log:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python serve.py
+C:\tally_stock\logs\app.log
 ```
 
-To run the app silently as a background GUI process via the included launcher (recommended for non-server Windows installs):
-- Double-click `launcher.pyw` (or create a shortcut that runs it with `pythonw.exe`).
-- The launcher manages the server lifecycle and optionally starts `cloudflared` if present.
-
----
-
-## 9. Cloudflare Tunnel (optional)
-1. Download `cloudflared.exe` and place it in the project root (`C:\tally_stock\cloudflared.exe`).
-2. Authenticate & create a tunnel following Cloudflare docs (one-time, manual interactive step).
-3. The `launcher.pyw` will attempt to start/stop the tunnel automatically if `cloudflared.exe` exists.
-
-Manual start example:
+Project root:
 
 ```powershell
-.\cloudflared.exe tunnel --url http://localhost:5000 --name tally-stock
+C:\tally_stock
 ```
 
-The launcher stores the tunnel PID at `C:\tally_stock\tunnel.pid` and will kill it on stop.
+## 12. Which guide to use next
 
----
+Use `MASTER_SETUP.md` for:
+- office setup
+- daily operation
+- local troubleshooting
 
-## 10. Setup Shortcuts (setup_office_pc.bat)
-The repo contains `setup_office_pc.bat` which performs these actions:
-- Builds a fresh `.venv` if missing
-- Creates `Start Stock Viewer.bat` and `Stop Stock Viewer.bat` shortcuts on the current user's Desktop
+Use `GOING_PUBLIC.md` for:
+- `stock.carxone.com`
+- Cloudflare tunnel
+- DNS and public checks
 
-Run it after copying the folder to a new machine.
-
----
-
-## 11. Troubleshooting (common issues)
-- Git installer `CreateProcess failed; code 216`: use the x86_64 Git installer, not ARM64.
-- C-extension / numpy crashes: Delete and recreate `.venv` locally.
-- PowerShell `Access is denied` when deleting `.venv`: kill `pythonw` processes first: `Stop-Process -Name "pythonw" -Force`.
-- Missing `Start Stock Viewer.bat` after copying: run `setup_office_pc.bat` to regenerate shortcuts for the current machine.
-
----
-
-## 12. Fresh Installation Workflow (Manual Copy)
-If deploying via USB copy, follow these commands in an elevated PowerShell session:
-
-```powershell
-cd C:\tally_stock
-# Remove any copied virtualenv and create a fresh one
-Remove-Item -Recurse -Force .venv
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
----
-
-## 13. Security & Exposure Checklist (before going public)
-- Ensure only required ports are open to localhost. `waitress` binds to 127.0.0.1 by default.
-- Use a reverse-proxy / tunnel (Cloudflare Tunnel) when exposing to internet.
-- Limit sensitive credentials in the repo or DB; do not store API credentials in plain text.
-
----
-
-## 14. Verification & Smoke Tests
-After starting `serve.py`:
-- Visit `http://127.0.0.1:5000` and confirm the UI loads.
-- Use `GET /health` or a simple endpoint to confirm readiness (if present).
-- Navigate the Train UI and confirm images are served correctly from `/get_image/<id>`.
-
----
-
-## 15. Appendix: Useful Commands
-Activate venv (PowerShell):
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Install waitress & deps:
-
-```powershell
-pip install waitress requests Pillow psutil pystray
-```
-
-Start serve.py manually:
-
-```powershell
-python serve.py
-```
-
-Start launcher (tray): double-click `launcher.pyw` or run:
-
-```powershell
-.\.venv\Scripts\pythonw.exe launcher.pyw
-```
-
----
-
-If you want, I can also generate a trimmed `README.md` from this master guide and commit the changes to the repository. Let me know if you prefer a different filename or additional CI/packaging instructions.
+Use `SOFTWARE_DEEP_DIVE.md` for:
+- code structure
+- runtime architecture
+- database and route behavior

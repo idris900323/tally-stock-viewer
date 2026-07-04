@@ -446,11 +446,19 @@
             {% if is_admin %}
             <button class="secondary" onclick="shareVisibleImages()">Share Visible Images</button>
             <button id="updateStockBtn" class="secondary" onclick="updateStock()">Update Stock</button>
+            <button id="fullRefreshBtn" class="secondary" onclick="startFullRefresh()">
+                Full Refresh
+            </button>
             <button onclick="window.location.href='/train'">Train Matches</button>
             <button class="secondary" onclick="window.location.href='/admin/pricing'">Manage Pricing</button>
             <button class="secondary" onclick="window.location.href='/admin/accounts'">Manage Accounts</button>
             {% endif %}
         </div>
+        {% if is_admin %}
+        <div id="fullRefreshProgress" style="display:none; margin-top:10px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
+            <span id="fullRefreshStageText">Starting full refresh...</span>
+        </div>
+        {% endif %}
 
         {% if auto_export_enabled %}
         <p style="margin-top:10px; font-size:12px; color:#0f766e;">Auto-export enabled every {{ refresh_interval }} seconds.</p>
@@ -499,6 +507,16 @@
 <script>
 const isAdmin = {{ is_admin|tojson }};
 const isCustomer = {{ is_customer|tojson }};
+const STAGE_LABELS = {
+    car_master: "Stage 1/4 - Updating car master list from Tally...",
+    main_hierarchy: "Stage 2/4 - Updating main hierarchy from Tally...",
+    item_stock: "Stage 3/4 - Updating item stock from Tally...",
+    reloading: "Stage 4/4 - Reloading in-memory data...",
+    done: "Full refresh complete.",
+    error: "Full refresh failed."
+};
+
+let fullRefreshPoller = null;
 
 function escapeHtml(value) {
     return String(value)
@@ -801,6 +819,9 @@ async function updateStockSilently() {
     if (!res.ok) {
         throw new Error(data.error || data.message || `Update failed (HTTP ${res.status})`);
     }
+    if (data.ok === false && data.busy) {
+        throw new Error(data.message || "Full refresh is in progress. Please wait.");
+    }
 
     if (data.timestamp) {
         updateLastUpdateTime(data.timestamp);
@@ -831,6 +852,77 @@ async function updateStock() {
             button.disabled = false;
             button.textContent = "Update Stock";
         }
+    }
+}
+
+async function startFullRefresh() {
+    const btn = document.getElementById("fullRefreshBtn");
+    const updateBtn = document.getElementById("updateStockBtn");
+    const progress = document.getElementById("fullRefreshProgress");
+    const stageText = document.getElementById("fullRefreshStageText");
+
+    btn.disabled = true;
+    btn.textContent = "Refreshing...";
+    if (updateBtn) updateBtn.disabled = true;
+    progress.style.display = "block";
+    stageText.textContent = "Starting full refresh...";
+    clearMessages();
+
+    try {
+        const res = await fetch("/full_refresh", { method: "POST" });
+        const data = await res.json();
+
+        if (res.status === 409) {
+            showError("Full refresh is already running. Please wait.");
+            btn.disabled = false;
+            btn.textContent = "Full Refresh";
+            if (updateBtn) updateBtn.disabled = false;
+            progress.style.display = "none";
+            return;
+        }
+
+        if (!res.ok) {
+            throw new Error(data.message || "Failed to start full refresh");
+        }
+
+        fullRefreshPoller = setInterval(async () => {
+            try {
+                const statusRes = await fetch("/full_refresh_status");
+                const status = await statusRes.json();
+                const label = STAGE_LABELS[status.stage] || status.stage || "Running...";
+                stageText.textContent = label;
+
+                if (!status.running) {
+                    clearInterval(fullRefreshPoller);
+                    fullRefreshPoller = null;
+                    btn.disabled = false;
+                    btn.textContent = "Full Refresh";
+                    if (updateBtn) updateBtn.disabled = false;
+
+                    if (status.stage === "done") {
+                        progress.style.display = "none";
+                        showInfo("Full refresh complete. All data updated from Tally.");
+                        updateTimestamp();
+                        const carSelect = document.getElementById("carSelect");
+                        if (carSelect && carSelect.value) {
+                            await loadDesigns();
+                        }
+                    } else if (status.stage === "error") {
+                        progress.style.display = "none";
+                        showError("Full refresh failed: " + (status.error || "Unknown error"));
+                    }
+                }
+            } catch (pollError) {
+                console.error("Full refresh poll failed:", pollError);
+            }
+        }, 2000);
+
+    } catch (error) {
+        showError("Full refresh error: " + error.message);
+        btn.disabled = false;
+        btn.textContent = "Full Refresh";
+        if (updateBtn) updateBtn.disabled = false;
+        progress.style.display = "none";
     }
 }
 
@@ -945,6 +1037,15 @@ async function refreshStock() {
             showError(`Stock refresh failed: ${data.error || data.message || res.status}${errorCode}`);
             if (statusEl) {
                 statusEl.textContent = `Last error: ${data.message || data.error || res.status}${errorCode}`;
+                statusEl.style.color = "#b42318";
+            }
+            return;
+        }
+
+        if (data.ok === false && data.busy) {
+            showError(data.message || "Full refresh is in progress. Please wait.");
+            if (statusEl) {
+                statusEl.textContent = `Last error: ${data.message || "Full refresh is in progress. Please wait."}`;
                 statusEl.style.color = "#b42318";
             }
             return;

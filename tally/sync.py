@@ -10,7 +10,12 @@ def fetch_from_tally_with_retry(session, url, xml_request, timeout=120, max_retr
         try:
             if logger:
                 logger.info("[Tally] Attempt %s/%s", attempt + 1, max_retries)
-            response = session.post(url, data=xml_request, timeout=timeout)
+            response = session.post(
+                url,
+                data=xml_request,
+                timeout=timeout,
+                headers={"Content-Type": "text/xml; charset=utf-8"},
+            )
             response.raise_for_status()
             if logger:
                 logger.info("[Tally] Success on attempt %s", attempt + 1)

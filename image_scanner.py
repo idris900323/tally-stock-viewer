@@ -2,12 +2,13 @@ import os
 import logging
 
 from config import Config
-from database import add_images_batch, init_database
+from database import add_images_batch
 
 
 IMAGE_EXTENSIONS = set(Config.ALLOWED_IMAGE_EXTENSIONS)
 IMAGE_SCAN_BATCH_SIZE = 100
 logger = logging.getLogger(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _resolve_base_path(base_path):
@@ -33,8 +34,9 @@ def _relative_image_path(base_path, full_path):
     return normalized.lstrip("/")
 
 
-def scan_ss_image_folder(base_path="data/S.S IMAGE"):
-    init_database()
+def scan_ss_image_folder(base_path=None):
+    if base_path is None:
+        base_path = os.path.join(BASE_DIR, "data", "S.S IMAGE")
     resolved_base_path = _resolve_base_path(base_path)
 
     if not os.path.exists(resolved_base_path):
