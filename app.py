@@ -823,7 +823,7 @@ def _load_car_groups_from_cache_or_excel():
     # The list of car models loaded from Tally is trimmed to only
     # the range between start_marker and end_marker below.
     #
-    # start_marker = "ACCESSORIES (NECK REST)"
+    # start_marker = "ACCESSORIES"
     # end_marker   = "ZS - EV FOOT MAT"
     #
     # IF THE CAR DROPDOWN IS MISSING MODELS OR SHOWING WRONG CARS:
@@ -836,7 +836,7 @@ def _load_car_groups_from_cache_or_excel():
     # IF THIS FILTER IS REMOVED, ALL TALLY STOCK GROUPS WILL APPEAR
     # IN THE DROPDOWN INCLUDING INTERNAL/ACCOUNTING GROUPS.
     # ============================================================
-    start_marker = "ACCESSORIES (NECK REST)"
+    start_marker = "ACCESSORIES"
     end_marker = "ZS - EV FOOT MAT"
     if start_marker in car_groups and end_marker in car_groups:
         start_idx = car_groups.index(start_marker)
@@ -879,6 +879,8 @@ def fetch_main_hierarchy_from_tally():
                 <EXPLODEFLAG>Yes</EXPLODEFLAG>
                 <SVSHOWALLITEMS>Yes</SVSHOWALLITEMS>
                 <SVSHOWZEROBALANCES>Yes</SVSHOWZEROBALANCES>
+                <SHOWALLITEMS>Yes</SHOWALLITEMS>
+                <SHOWZEROBALANCES>Yes</SHOWZEROBALANCES>
             </STATICVARIABLES>
         </DESC>
     </BODY>
@@ -1322,9 +1324,19 @@ def _find_children_by_qty(car_name: str):
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
+    def _live_designs_for_car():
+        if car_name in CAR_DESIGN_MAP and CAR_DESIGN_MAP[car_name]:
+            return [
+                design
+                for design in CAR_DESIGN_MAP[car_name]
+                if design.get("qty", 0) > 0
+            ]
+        return []
+
     if not PARENT_NAME_SET:
         logger.warning("Skipping child lookup because parent data has not loaded yet")
-        return []
+        live_designs = _live_designs_for_car()
+        return (car_name in CAR_DESIGN_MAP), live_designs
 
     def _to_int(value):
         if value is None:
@@ -1456,7 +1468,8 @@ def _find_children_by_qty(car_name: str):
 
     rows, exact_index = _load_main_rows_cached()
     if not rows:
-        return False, []
+        live_designs = _live_designs_for_car()
+        return (car_name in CAR_DESIGN_MAP), live_designs
 
     parent_idx = None
     car_upper = _norm(car_name)
@@ -1476,7 +1489,8 @@ def _find_children_by_qty(car_name: str):
                 break
 
     if parent_idx is None:
-        return False, []
+        live_designs = _live_designs_for_car()
+        return (car_name in CAR_DESIGN_MAP), live_designs
 
     stock_qty_map = _load_stock_qty_map_cached()
 
@@ -1503,6 +1517,12 @@ def _find_children_by_qty(car_name: str):
 
             if parent_qty_total > 0 and running_qty >= parent_qty_total:
                 break
+    if children:
+        return True, children
+
+    live_designs = _live_designs_for_car()
+    if live_designs:
+        return True, live_designs
     return True, children
 
 
@@ -1542,9 +1562,15 @@ def designs():
         # Car exists in hierarchy but has zero stock — return empty, do not fall back
         return jsonify([])
 
-    # if that failed, keep the old flat lookup as a backup
+    # Car not in main hierarchy - check CAR_DESIGN_MAP as fallback
+    # but only return designs that have qty > 0 in the stock cache
     if car in CAR_DESIGN_MAP and CAR_DESIGN_MAP[car]:
-        return jsonify(_build_design_payload(CAR_DESIGN_MAP[car]))
+        live_designs = [
+            d for d in CAR_DESIGN_MAP[car]
+            if d.get("qty", 0) > 0
+        ]
+        if live_designs:
+            return jsonify(_build_design_payload(live_designs))
 
     return jsonify([])
 
