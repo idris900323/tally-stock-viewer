@@ -1,24 +1,24 @@
-import os
-from pathlib import Path
-import logging
-
 from waitress import serve
-
-from config import Config
 from app import app
+import os
+import logging
+from config import Config
 
+try:
+    log_path = os.path.abspath(Config.LOG_FILE)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="[%(asctime)s] %(levelname)s: %(message)s"
+    )
+except Exception:
+    pass
 
-BASE_DIR = Path(__file__).resolve().parent
-LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    log = logging.getLogger("waitress")
+    log.info("Starting waitress on port 5000")
+except Exception:
+    pass
 
-os.makedirs(os.path.dirname(os.path.abspath(Config.LOG_FILE)), exist_ok=True)
-
-logging.basicConfig(
-    filename=Config.LOG_FILE,
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s"
-)
-log = logging.getLogger("waitress")
-log.info("Starting waitress on port 5000")
 serve(app, host="127.0.0.1", port=5000, threads=8)
