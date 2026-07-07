@@ -653,6 +653,8 @@ def fetch_item_stock_flat():
                 <SVSTOCKGROUP>Primary</SVSTOCKGROUP>
                 <ISDETAILED>Yes</ISDETAILED>
                 <EXPLODEFLAG>Yes</EXPLODEFLAG>
+                <SVSHOWALLITEMS>Yes</SVSHOWALLITEMS>
+                <SVSHOWZEROBALANCES>Yes</SVSHOWZEROBALANCES>
         """ if detailed else ""
 
         xml_req = f'''<ENVELOPE>
@@ -875,6 +877,8 @@ def fetch_main_hierarchy_from_tally():
                 <SVSTOCKGROUP>Primary</SVSTOCKGROUP>
                 <ISDETAILED>Yes</ISDETAILED>
                 <EXPLODEFLAG>Yes</EXPLODEFLAG>
+                <SVSHOWALLITEMS>Yes</SVSHOWALLITEMS>
+                <SVSHOWZEROBALANCES>Yes</SVSHOWZEROBALANCES>
             </STATICVARIABLES>
         </DESC>
     </BODY>
