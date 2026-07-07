@@ -863,7 +863,81 @@ def save_car_master_to_file(car_names):
 
 
 def fetch_main_hierarchy_from_tally():
-    xml_req = '''<ENVELOPE>
+    def _norm(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text or "").strip()).upper()
+
+    def _node_text(node, tag_name: str) -> str:
+        child = node.find(f".//{tag_name}")
+        return child.text.strip() if (child is not None and child.text) else ""
+
+    def _load_existing_flat_rows():
+        main_file = get_main_file_path()
+        if not os.path.exists(main_file):
+            return None
+
+        try:
+            rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
+        except Exception:
+            logger.exception("Failed to read existing main hierarchy for fallback")
+            return None
+
+        flat_rows = []
+        for row in rows_data:
+            item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
+            qty = row[1] if len(row) > 1 else ""
+            qty_text = str(qty or "").strip().upper()
+            if item_name.upper() == "PARTICULARS" and qty_text == "QUANTITY":
+                continue
+            flat_rows.append({"item_name": item_name, "qty": "" if qty is None else qty})
+        return flat_rows or None
+
+    def _fallback_existing(reason: str):
+        existing_rows = _load_existing_flat_rows()
+        if existing_rows:
+            logger.warning("%s Keeping existing main hierarchy unchanged.", reason)
+            return existing_rows
+        raise Exception(reason)
+
+    def _fetch_stock_items_with_parent():
+        xml_req = '''<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export Data</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>List of Stock Items with Parent</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="List of Stock Items with Parent" ISMODIFY="No">
+                        <TYPE>StockItem</TYPE>
+                        <FETCH>NAME, PARENT</FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>'''.strip()
+
+        text = _post_tally_with_retry(xml_req)
+        if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
+            raise Exception(f"TDL collection request failed for stock items with parent: {text[:300]}")
+
+        root = ET.fromstring(text)
+        items = []
+        for item_node in root.findall(".//COLLECTION/STOCKITEM"):
+            item_name = item_node.attrib.get("NAME", "").strip() or _node_text(item_node, "NAME")
+            parent_name = item_node.attrib.get("PARENT", "").strip() or _node_text(item_node, "PARENT")
+            if item_name and parent_name:
+                items.append((item_name, parent_name))
+        return items
+
+    def _fetch_current_qty_map():
+        xml_req = '''<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export</TALLYREQUEST>
@@ -879,31 +953,73 @@ def fetch_main_hierarchy_from_tally():
                 <EXPLODEFLAG>Yes</EXPLODEFLAG>
                 <SVSHOWALLITEMS>Yes</SVSHOWALLITEMS>
                 <SVSHOWZEROBALANCES>Yes</SVSHOWZEROBALANCES>
-                <SHOWALLITEMS>Yes</SHOWALLITEMS>
-                <SHOWZEROBALANCES>Yes</SHOWZEROBALANCES>
             </STATICVARIABLES>
         </DESC>
     </BODY>
 </ENVELOPE>'''.strip()
 
-    text = _post_tally_with_retry(xml_req)
-    if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
-        raise Exception(f"Tally returned error: {text[:300]}")
+        text = _post_tally_with_retry(xml_req)
+        if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
+            raise Exception(f"Tally returned error while fetching detailed stock quantities: {text[:300]}")
 
-    root = ET.fromstring(text)
-    names = root.findall(".//DSPACCNAME")
-    stocks = root.findall(".//DSPSTKINFO")
+        root = ET.fromstring(text)
+        names = root.findall(".//DSPACCNAME")
+        stocks = root.findall(".//DSPSTKINFO")
+
+        qty_map = {}
+        for name_node, stock_node in zip(names, stocks):
+            display_node = name_node.find("DSPDISPNAME")
+            qty_node = stock_node.find(".//DSPCLQTY")
+            item_name = display_node.text.strip() if (display_node is not None and display_node.text) else ""
+            qty_text = qty_node.text if (qty_node is not None and qty_node.text) else "0"
+            match = re.search(r"-?\d+", qty_text)
+            qty = int(match.group()) if match else 0
+            if item_name and qty > 0:
+                qty_map[_norm(item_name)] = qty
+        return qty_map
+
+    stock_items = []
+    try:
+        stock_items = _fetch_stock_items_with_parent()
+    except Exception as exc:
+        return _fallback_existing(str(exc))
+
+    if not stock_items:
+        return _fallback_existing("Stock item master collection returned no items for main hierarchy refresh.")
+
+    qty_map = _fetch_current_qty_map()
+    allowed_parents = _load_car_groups_from_cache_or_excel()
+    allowed_parent_lookup = {_norm(parent_name): parent_name for parent_name in allowed_parents}
+
+    grouped_items = defaultdict(list)
+    for item_name, parent_name in stock_items:
+        parent_upper = _norm(parent_name)
+        canonical_parent = allowed_parent_lookup.get(parent_upper)
+        if canonical_parent:
+            grouped_items[canonical_parent].append(item_name)
+
+    if not grouped_items:
+        return _fallback_existing("Stock item master collection returned no items in the configured car range.")
 
     flat_rows = []
-    for name_node, stock_node in zip(names, stocks):
-        display_node = name_node.find("DSPDISPNAME")
-        qty_node = stock_node.find(".//DSPCLQTY")
-        item_name = display_node.text.strip() if (display_node is not None and display_node.text) else ""
-        qty_text = qty_node.text if (qty_node is not None and qty_node.text) else "0"
-        match = re.search(r"-?\d+", qty_text)
-        qty = int(match.group()) if match else 0
-        if item_name:
-            flat_rows.append({"item_name": item_name, "qty": qty})
+    for parent_name in allowed_parents:
+        child_names = grouped_items.get(parent_name, [])
+        if not child_names:
+            continue
+
+        child_rows = []
+        parent_qty = 0
+        for item_name in child_names:
+            qty = qty_map.get(_norm(item_name), 0)
+            parent_qty += qty
+            child_rows.append({"item_name": item_name, "qty": qty})
+
+        flat_rows.append({"item_name": parent_name, "qty": parent_qty})
+        flat_rows.extend(child_rows)
+        flat_rows.append({"item_name": "", "qty": ""})
+
+    if not flat_rows:
+        return _fallback_existing("No parent-child hierarchy rows were built from the stock item master collection.")
 
     return flat_rows
 
@@ -1344,73 +1460,6 @@ def _find_children_by_qty(car_name: str):
         match = re.search(r"-?\d+", str(value))
         return int(match.group()) if match else 0
 
-    def _load_main_rows_cached():
-        if os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
-            try:
-                with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-
-                rows = []
-                exact_index = {}
-                for entry in payload if isinstance(payload, list) else []:
-                    parent_name = str(entry.get("parent") or "").strip()
-                    parent_qty = _to_int(entry.get("parent_qty"))
-                    if parent_name:
-                        parent_upper = _norm(parent_name)
-                        rows.append((parent_name, parent_upper, parent_qty))
-                        exact_index.setdefault(parent_upper, len(rows) - 1)
-
-                    children = entry.get("children", [])
-                    if not isinstance(children, list):
-                        children = []
-                    for child in children:
-                        child_name = str(child.get("item_name") or "").strip()
-                        child_qty = _to_int(child.get("qty"))
-                        if not child_name:
-                            continue
-                        child_upper = _norm(child_name)
-                        rows.append((child_name, child_upper, child_qty))
-                        exact_index.setdefault(child_upper, len(rows) - 1)
-
-                if rows:
-                    return rows, exact_index
-            except Exception:
-                pass
-
-        main_file = get_main_file_path()
-        fingerprint = _file_fingerprint(main_file)
-        if fingerprint is None:
-            return [], {}
-
-        with DATA_CACHE_LOCK:
-            if MAIN_ROWS_CACHE["fingerprint"] == fingerprint:
-                return MAIN_ROWS_CACHE["rows"], MAIN_ROWS_CACHE["exact_index"]
-
-        rows = []
-        exact_index = {}
-        ignore = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
-        
-        try:
-            rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
-            for row in rows_data:
-                name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
-                if not name:
-                    continue
-                name_upper = _norm(name)
-                if name_upper in ignore:
-                    continue
-                qty = _to_int(row[1] if len(row) > 1 else None)
-                rows.append((name, name_upper, qty))
-                exact_index.setdefault(name_upper, len(rows) - 1)
-        except Exception:
-            return [], {}
-
-        with DATA_CACHE_LOCK:
-            MAIN_ROWS_CACHE["fingerprint"] = fingerprint
-            MAIN_ROWS_CACHE["rows"] = rows
-            MAIN_ROWS_CACHE["exact_index"] = exact_index
-        return rows, exact_index
-
     def _load_stock_qty_map_cached():
         json_file = ITEM_STOCK_CACHE_JSON
         if os.path.exists(json_file):
@@ -1465,6 +1514,79 @@ def _find_children_by_qty(car_name: str):
             STOCK_QTY_CACHE["fingerprint"] = fingerprint
             STOCK_QTY_CACHE["qty_map"] = qty_map
         return qty_map
+
+    def _lookup_from_hierarchy_json(car_name: str):
+        if not os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+            return False, None
+
+        try:
+            with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return False, None
+
+        car_upper = _norm(car_name)
+        for entry in payload if isinstance(payload, list) else []:
+            parent_name = str(entry.get("parent") or "").strip()
+            if _norm(parent_name) != car_upper:
+                continue
+
+            _ = _to_int(entry.get("parent_qty", 0))
+            children = entry.get("children", [])
+            if not isinstance(children, list):
+                children = []
+
+            stock_qty_map = _load_stock_qty_map_cached()
+            live_children = []
+            for child in children:
+                item_name = str(child.get("item_name") or "").strip()
+                if not item_name:
+                    continue
+                live_qty = stock_qty_map.get(_norm(item_name), 0)
+                if live_qty > 0:
+                    live_children.append({"raw": item_name, "design": item_name, "qty": live_qty})
+            return True, live_children
+
+        return False, None
+
+    found_in_json, json_children = _lookup_from_hierarchy_json(car_name)
+    if found_in_json:
+        return True, json_children
+
+    def _load_main_rows_cached():
+        main_file = get_main_file_path()
+        fingerprint = _file_fingerprint(main_file)
+        if fingerprint is None:
+            return [], {}
+
+        with DATA_CACHE_LOCK:
+            if MAIN_ROWS_CACHE["fingerprint"] == fingerprint:
+                return MAIN_ROWS_CACHE["rows"], MAIN_ROWS_CACHE["exact_index"]
+
+        rows = []
+        exact_index = {}
+        ignore = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
+        
+        try:
+            rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
+            for row in rows_data:
+                name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
+                if not name:
+                    continue
+                name_upper = _norm(name)
+                if name_upper in ignore:
+                    continue
+                qty = _to_int(row[1] if len(row) > 1 else None)
+                rows.append((name, name_upper, qty))
+                exact_index.setdefault(name_upper, len(rows) - 1)
+        except Exception:
+            return [], {}
+
+        with DATA_CACHE_LOCK:
+            MAIN_ROWS_CACHE["fingerprint"] = fingerprint
+            MAIN_ROWS_CACHE["rows"] = rows
+            MAIN_ROWS_CACHE["exact_index"] = exact_index
+        return rows, exact_index
 
     rows, exact_index = _load_main_rows_cached()
     if not rows:
