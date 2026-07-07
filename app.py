@@ -199,6 +199,23 @@ def _normalize_lookup_key(text):
     return _normalize_text(text).lower()
 
 
+def _sanitize_tally_xml(text):
+    import re
+    text = re.sub(u"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+
+    def _strip_invalid_ref(match):
+        try:
+            code = int(match.group(1))
+        except ValueError:
+            return ""
+        if code in (0x9, 0xA, 0xD) or (0x20 <= code <= 0xD7FF) or (0xE000 <= code <= 0xFFFD):
+            return match.group(0)
+        return ""
+
+    text = re.sub(r"&#(\d+);", _strip_invalid_ref, text)
+    return text
+
+
 def _file_fingerprint(file_path):
     if not file_path or not os.path.exists(file_path):
         return None
@@ -636,6 +653,7 @@ def fetch_item_stock_flat():
         if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
             raise Exception(f"Tally returned error for stock item collection: {text[:300]}")
 
+        text = _sanitize_tally_xml(text)
         root = ET.fromstring(text)
         master_names = set()
         for item_node in root.findall('.//COLLECTION/STOCKITEM'):
@@ -678,6 +696,7 @@ def fetch_item_stock_flat():
         if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
             raise Exception(f"Tally returned error: {text[:300]}")
 
+        text = _sanitize_tally_xml(text)
         root = ET.fromstring(text)
         names = root.findall(".//DSPACCNAME")
         stocks = root.findall(".//DSPSTKINFO")
@@ -784,6 +803,7 @@ def fetch_car_master_from_tally():
     if "<LINEERROR>" in text or "Unknown Request" in text:
         raise Exception(f"Tally returned error for stock group collection: {text[:300]}")
 
+    text = _sanitize_tally_xml(text)
     root = ET.fromstring(text)
     car_names = set()
     for item_node in root.findall('.//COLLECTION/STOCKGROUP'):
@@ -927,6 +947,7 @@ def fetch_main_hierarchy_from_tally():
         if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
             raise Exception(f"TDL collection request failed for stock items with parent: {text[:300]}")
 
+        text = _sanitize_tally_xml(text)
         root = ET.fromstring(text)
         items = []
         for item_node in root.findall(".//COLLECTION/STOCKITEM"):
@@ -962,6 +983,7 @@ def fetch_main_hierarchy_from_tally():
         if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
             raise Exception(f"Tally returned error while fetching detailed stock quantities: {text[:300]}")
 
+        text = _sanitize_tally_xml(text)
         root = ET.fromstring(text)
         names = root.findall(".//DSPACCNAME")
         stocks = root.findall(".//DSPSTKINFO")
@@ -981,6 +1003,8 @@ def fetch_main_hierarchy_from_tally():
     stock_items = []
     try:
         stock_items = _fetch_stock_items_with_parent()
+    except ET.ParseError:
+        raise
     except Exception as exc:
         return _fallback_existing(str(exc))
 
