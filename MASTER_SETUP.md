@@ -186,10 +186,12 @@ A `Full Refresh` also runs automatically once, about 45 seconds after the app st
 1. Log in as admin
 2. Click `Train Matches`
 3. Review unmatched images
-4. When picking a stock item from the dropdown, the page shows the image currently linked to that stock item (if any) so you can compare it against the new image before confirming
+4. When picking a stock item from the dropdown, the page shows a larger preview of the image currently linked to that stock item (if any) so you can compare it against the new image before confirming
 5. confirm the correct stock item for each image
 
 This saves image-to-stock mappings into `mappings.db`. Each stock item can only be linked to one image at a time — confirming a new image against a stock item that already has one automatically replaces the old link.
+
+If you have a photo that isn't in the `S.S IMAGE` folder yet, use `Upload Image` on the `Train Matches` page instead of copying it in manually and rescanning: pick the matching stock item first, click `Upload Image`, choose the file, confirm the car folder, and it is saved and matched in one step.
 
 ### Manage pricing
 
@@ -206,6 +208,9 @@ If no price exists, the customer-facing UI shows `Contact Us`.
 1. Log in as admin
 2. Click `Manage Accounts`
 3. Create, pause, resume, or delete customer accounts
+4. Each row shows the account's status (Active/Paused) and last login time; use `Resume All` or `Pause All` to change every customer account's access at once
+
+A paused customer account cannot log in until it is resumed — the login page shows "This account has been paused. Contact the administrator."
 
 ## 8. Image scanning
 

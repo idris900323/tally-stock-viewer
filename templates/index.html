@@ -260,6 +260,7 @@
         }
 
         .thumbnail-button {
+            position: relative;
             appearance: none;
             border: 0;
             background: transparent;
@@ -273,6 +274,51 @@
             gap: 8px;
             flex-wrap: wrap;
             margin-top: 8px;
+        }
+
+        .selection-toolbar {
+            margin-bottom: 14px;
+        }
+
+        .selection-count {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        .select-check {
+            display: none;
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 22px;
+            height: 22px;
+            border-radius: 999px;
+            background: var(--accent);
+            color: #fff;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 700;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+        }
+
+        .design-item.selected {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent) inset;
+            background: linear-gradient(180deg, #eef4ff, #f5f9ff);
+        }
+
+        .design-item.selected .select-check {
+            display: flex;
+        }
+
+        #designsList.select-mode .design-item {
+            cursor: pointer;
+        }
+
+        #designsList.select-mode .thumbnail-actions {
+            display: none;
         }
 
         .topbar {
@@ -556,7 +602,7 @@
                 <option value="">Search for a car...</option>
             </select>
             {% if is_admin %}
-            <button class="secondary" onclick="shareVisibleImages()" title="Share or download all currently visible design images">Share Visible Images</button>
+            <button id="selectModeBtn" class="secondary" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
             <button id="updateStockBtn" class="secondary" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
             <button id="fullRefreshBtn" class="secondary" onclick="startFullRefresh()" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">
                 Full Refresh
@@ -596,6 +642,13 @@
             <h2 style="margin:0;">Available Designs for <span id="selectedCarName"></span></h2>
             <p id="designCount" style="margin:0; color: var(--muted);"></p>
         </div>
+        {% if is_admin %}
+        <div id="selectionToolbar" class="toolbar selection-toolbar" style="display:none;">
+            <button id="selectAllBtn" class="secondary" onclick="toggleSelectAll()" title="Select every image currently shown">Select All</button>
+            <span id="selectionCount" class="selection-count">0 selected</span>
+            <button id="copySelectedBtn" onclick="copySelectedImages()" title="Share the selected images" disabled>Share Images</button>
+        </div>
+        {% endif %}
         <ul id="designsList"></ul>
     </div>
 </div>
@@ -629,6 +682,13 @@ const STAGE_LABELS = {
 };
 
 let fullRefreshPoller = null;
+let selectMode = false;
+let selectedImageIds = new Set();
+let longPressTimer = null;
+let longPressStartXY = null;
+let suppressNextClick = false;
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_MOVE_THRESHOLD = 10;
 
 function escapeHtml(value) {
     return String(value)
@@ -738,7 +798,163 @@ async function convertImageBlobToPng(blob) {
     }
 }
 
-async function shareVisibleImages() {
+function toggleSelectMode() {
+    if (!isAdmin) {
+        return;
+    }
+    if (selectMode) {
+        exitSelectMode();
+    } else {
+        enterSelectMode();
+    }
+}
+
+function enterSelectMode() {
+    if (!isAdmin) {
+        return;
+    }
+    selectMode = true;
+    updateSelectModeUI();
+}
+
+function exitSelectMode() {
+    selectMode = false;
+    selectedImageIds.clear();
+    updateSelectModeUI();
+}
+
+function toggleImageSelection(imageId) {
+    if (!imageId) {
+        return;
+    }
+    if (selectedImageIds.has(imageId)) {
+        selectedImageIds.delete(imageId);
+    } else {
+        selectedImageIds.add(imageId);
+    }
+    updateSelectModeUI();
+}
+
+function getSelectableImageIds() {
+    return Array.from(document.querySelectorAll("#designsList .design-item[data-image-id]"))
+        .map(item => item.dataset.imageId)
+        .filter(Boolean);
+}
+
+function toggleSelectAll() {
+    const allIds = getSelectableImageIds();
+    const allSelected = allIds.length > 0 && allIds.every(id => selectedImageIds.has(id));
+    if (allSelected) {
+        selectedImageIds.clear();
+    } else {
+        allIds.forEach(id => selectedImageIds.add(id));
+    }
+    updateSelectModeUI();
+}
+
+function updateSelectModeUI() {
+    const btn = document.getElementById("selectModeBtn");
+    const toolbar = document.getElementById("selectionToolbar");
+    const list = document.getElementById("designsList");
+
+    if (btn) {
+        btn.textContent = selectMode ? "Cancel" : "Select Images";
+    }
+    if (toolbar) {
+        toolbar.style.display = selectMode ? "flex" : "none";
+    }
+    if (list) {
+        list.classList.toggle("select-mode", selectMode);
+        list.querySelectorAll(".design-item").forEach(item => {
+            const imageId = item.dataset.imageId;
+            item.classList.toggle("selected", Boolean(selectMode && imageId && selectedImageIds.has(imageId)));
+        });
+    }
+
+    const countLabel = document.getElementById("selectionCount");
+    if (countLabel) {
+        countLabel.textContent = `${selectedImageIds.size} selected`;
+    }
+
+    const copyBtn = document.getElementById("copySelectedBtn");
+    if (copyBtn) {
+        copyBtn.disabled = selectedImageIds.size === 0;
+    }
+
+    const selectAllBtn = document.getElementById("selectAllBtn");
+    if (selectAllBtn) {
+        const allIds = getSelectableImageIds();
+        const allSelected = allIds.length > 0 && allIds.every(id => selectedImageIds.has(id));
+        selectAllBtn.textContent = allSelected ? "Deselect All" : "Select All";
+    }
+}
+
+function handleDesignsListClick(event) {
+    if (suppressNextClick) {
+        suppressNextClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+    }
+    if (!selectMode) {
+        return;
+    }
+    const card = event.target.closest(".design-item");
+    if (!card) {
+        return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    toggleImageSelection(card.dataset.imageId || "");
+}
+
+function handleDesignsListTouchStart(event) {
+    if (!isAdmin) {
+        return;
+    }
+    const card = event.target.closest(".design-item");
+    if (!card || !event.touches || !event.touches.length) {
+        return;
+    }
+    const touch = event.touches[0];
+    longPressStartXY = { x: touch.clientX, y: touch.clientY };
+    clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        const imageId = card.dataset.imageId;
+        if (!imageId) {
+            return;
+        }
+        if (!selectMode) {
+            enterSelectMode();
+        }
+        selectedImageIds.add(imageId);
+        updateSelectModeUI();
+        suppressNextClick = true;
+    }, LONG_PRESS_MS);
+}
+
+function handleDesignsListTouchMove(event) {
+    if (!longPressStartXY || !event.touches || !event.touches.length) {
+        return;
+    }
+    const touch = event.touches[0];
+    const dx = Math.abs(touch.clientX - longPressStartXY.x);
+    const dy = Math.abs(touch.clientY - longPressStartXY.y);
+    if (dx > LONG_PRESS_MOVE_THRESHOLD || dy > LONG_PRESS_MOVE_THRESHOLD) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+        longPressStartXY = null;
+    }
+}
+
+function handleDesignsListTouchEnd() {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+    longPressStartXY = null;
+}
+
+async function copySelectedImages() {
     try {
         clearMessages();
         if (!isAdmin) {
@@ -746,27 +962,22 @@ async function shareVisibleImages() {
             return;
         }
 
-        const visibleButtons = Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
-            .filter(button => {
-                const imageId = Number(button.dataset.imageId);
-                if (!Number.isFinite(imageId) || imageId <= 0) {
-                    return false;
-                }
-                if (button.offsetParent === null) {
-                    return false;
-                }
-                const style = window.getComputedStyle(button);
-                return style.display !== "none" && style.visibility !== "hidden";
-            });
+        if (!selectedImageIds.size) {
+            showError("No images selected to share.");
+            return;
+        }
+
+        const selectedButtons = Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
+            .filter(button => selectedImageIds.has(button.dataset.imageId));
 
         const urls = Array.from(new Set(
-            visibleButtons
+            selectedButtons
                 .map(button => button.dataset.src || "")
                 .filter(Boolean)
         ));
 
         if (!urls.length) {
-            showError("No linked images are visible to share.");
+            showError("No linked images are available in the current selection.");
             return;
         }
 
@@ -791,6 +1002,7 @@ async function shareVisibleImages() {
         ) {
             await navigator.share({ files, title: "Stock Images" });
             showInfo(`Shared ${files.length} image${files.length === 1 ? "" : "s"}.`);
+            exitSelectMode();
             return;
         }
 
@@ -803,6 +1015,7 @@ async function shareVisibleImages() {
             link.remove();
         }
         showInfo(`Share not supported on this browser. Downloaded ${urls.length} image${urls.length === 1 ? "" : "s"} instead.`);
+        exitSelectMode();
     } catch (error) {
         if (error && error.name === "AbortError") {
             showInfo("Share canceled.");
@@ -855,6 +1068,7 @@ function initializeCarSelect() {
     });
 
     select.on("select2:select", function () {
+        exitSelectMode();
         loadDesigns();
     });
 }
@@ -1106,9 +1320,10 @@ function renderDesignItem(item) {
 
     return `
         <li>
-            <div class="design-item">
+            <div class="design-item" data-image-id="${imageId}">
                 <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this.dataset.src, this.dataset.label)">
                     <img src="${thumbnailUrl}" alt="${escapedTitle}" class="design-thumbnail">
+                    <span class="select-check" aria-hidden="true">&#10003;</span>
                 </button>
                 <div class="design-text">
                     <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? 'Linked' : 'Needs link'}</div>
@@ -1162,6 +1377,7 @@ async function loadDesigns() {
             container.classList.add("show");
             showInfo("No designs found");
         }
+        updateSelectModeUI();
     } catch (error) {
         showError(`Error loading designs: ${error.message}`);
     } finally {
@@ -1236,6 +1452,15 @@ window.addEventListener("DOMContentLoaded", () => {
         }, 30000);
     }
     setInterval(checkTimestampFreshness, 10000);
+
+    const designsList = document.getElementById("designsList");
+    if (designsList) {
+        designsList.addEventListener("click", handleDesignsListClick, true);
+        designsList.addEventListener("touchstart", handleDesignsListTouchStart, { passive: true });
+        designsList.addEventListener("touchmove", handleDesignsListTouchMove, { passive: true });
+        designsList.addEventListener("touchend", handleDesignsListTouchEnd, { passive: true });
+        designsList.addEventListener("touchcancel", handleDesignsListTouchEnd, { passive: true });
+    }
 });
 
 document.addEventListener("keydown", event => {

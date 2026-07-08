@@ -1566,6 +1566,15 @@ def login():
             next_url=next_url,
         ), 401
 
+    if user_record.get("role") == "customer" and not user_record.get("is_active", 1):
+        return render_template(
+            "login.html",
+            error="This account has been paused. Contact the administrator.",
+            next_url=next_url,
+        ), 403
+
+    db.update_last_login(user_record["id"])
+
     session.clear()
     session["user_id"] = user_record["id"]
     session["username"] = user_record["username"]
@@ -1956,11 +1965,51 @@ def admin_get_all_customers():
         {
             "id": customer["id"],
             "username": customer["username"],
-            "status": "active",
+            "access_code": customer.get("access_code"),
+            "status": "active" if customer.get("is_active", 1) else "paused",
+            "is_active": bool(customer.get("is_active", 1)),
             "created_at": customer.get("created_at"),
+            "last_login": customer.get("last_login"),
         }
         for customer in customers
     ])
+
+
+@app.route("/admin/toggle_user_status/<int:user_id>", methods=["POST"])
+@admin_required
+def admin_toggle_user_status(user_id):
+    try:
+        updated_user = db.toggle_customer_active_status(user_id)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if "not found" in message.lower() else 400
+        return jsonify({"success": False, "error": message}), status
+
+    is_active = bool(updated_user.get("is_active"))
+    action = "resumed" if is_active else "paused"
+    db.log_account_action(user_id, action, _current_user_id())
+    return jsonify({
+        "success": True,
+        "message": f"Account '{updated_user['username']}' {action}",
+        "user_id": user_id,
+        "is_active": is_active,
+    })
+
+
+@app.route("/admin/set_all_customer_status", methods=["POST"])
+@admin_required
+def admin_set_all_customer_status():
+    payload = request.get_json(silent=True) or request.form or {}
+    is_active = bool(payload.get("is_active", True))
+    updated_count = db.set_all_customer_active_status(is_active)
+    action = "resumed" if is_active else "paused"
+    db.log_account_action(None, f"bulk_{action}", _current_user_id())
+    return jsonify({
+        "success": True,
+        "message": f"{updated_count} account{'s' if updated_count != 1 else ''} {action}",
+        "is_active": is_active,
+        "updated_count": updated_count,
+    })
 
 
 @app.route("/admin/delete_user/<int:user_id>", methods=["POST"])
@@ -2003,6 +2052,8 @@ def train():
         ss_image_folders=db.get_image_folders(),
         mapping_stats=db.get_mapping_stats(),
         selected_role=_current_role(),
+        max_image_size=Config.MAX_IMAGE_SIZE,
+        allowed_image_extensions=sorted(Config.ALLOWED_IMAGE_EXTENSIONS),
     )
 
 
@@ -2125,6 +2176,30 @@ def remove_mapping():
     })
 
 
+def _confirm_mapping_core(image_id, stock_item_name, car_model="", confidence=1.0, confirmed_by="human"):
+    """Save image_id -> stock_item_name and return {image_id, next_image, stats}.
+
+    Shared by the manual /confirm_mapping route and the image upload route so
+    both go through the exact same save/overwrite behavior.
+    """
+    image_record = db.get_image_by_id(image_id)
+    if not image_record:
+        raise ValueError("image not found")
+
+    resolved_car_model = car_model or _resolve_car_model_hint(image_record) or image_record.get("car_folder")
+    if stock_item_name not in ("", "__UNMATCHABLE__"):
+        db.remove_mappings_for_stock_item(stock_item_name, exclude_image_id=image_id)
+    db.add_mapping(image_id, stock_item_name, resolved_car_model, confidence, confirmed_by=confirmed_by)
+    if resolved_car_model and confidence >= 1.0 and stock_item_name not in ("", "__UNMATCHABLE__"):
+        db.add_folder_mapping(image_record.get("car_folder", ""), resolved_car_model)
+
+    return {
+        "image_id": image_id,
+        "next_image": db.get_next_unmapped_image(after_image_id=image_id),
+        "stats": db.get_mapping_stats(),
+    }
+
+
 @app.route("/confirm_mapping", methods=["POST"])
 @admin_required
 def confirm_mapping():
@@ -2147,24 +2222,118 @@ def confirm_mapping():
     except (TypeError, ValueError):
         confidence = 1.0
 
-    image_record = db.get_image_by_id(image_id)
-    if not image_record:
-        return jsonify({"error": "image not found"}), 404
+    try:
+        result = _confirm_mapping_core(image_id, stock_item_name, car_model=car_model, confidence=confidence, confirmed_by=confirmed_by)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
 
-    resolved_car_model = car_model or _resolve_car_model_hint(image_record) or image_record.get("car_folder")
-    if stock_item_name not in ("", "__UNMATCHABLE__"):
-        db.remove_mappings_for_stock_item(stock_item_name, exclude_image_id=image_id)
-    db.add_mapping(image_id, stock_item_name, resolved_car_model, confidence, confirmed_by=confirmed_by)
-    if resolved_car_model and confidence >= 1.0 and stock_item_name not in ("", "__UNMATCHABLE__"):
-        db.add_folder_mapping(image_record.get("car_folder", ""), resolved_car_model)
-
-    next_image = db.get_next_unmapped_image(after_image_id=image_id)
     return jsonify({
         "status": "saved",
-        "image_id": image_id,
-        "next_image": next_image,
-        "stats": db.get_mapping_stats(),
+        "image_id": result["image_id"],
+        "next_image": result["next_image"],
+        "stats": result["stats"],
     })
+
+
+def _sanitize_upload_car_folder(raw_name):
+    value = str(raw_name or "").strip()
+    if not value:
+        raise ValueError("Car folder name is required")
+    if "\x00" in value:
+        raise ValueError("Car folder name contains invalid characters")
+    if "/" in value or "\\" in value or ".." in value:
+        raise ValueError("Car folder name cannot contain path separators")
+    return value
+
+
+def _sanitize_upload_filename(original_name):
+    base = os.path.basename(str(original_name or "").replace("\\", "/")).strip()
+    return base or "upload"
+
+
+def _unique_filename_in_dir(target_dir, base_name):
+    name_part, ext_part = os.path.splitext(base_name)
+    candidate = base_name
+    counter = 1
+    while os.path.exists(os.path.join(target_dir, candidate)):
+        counter += 1
+        candidate = f"{name_part} ({counter}){ext_part}"
+    return candidate
+
+
+@app.route("/admin/upload_image", methods=["POST"])
+@admin_required
+def admin_upload_image():
+    uploaded_file = request.files.get("file")
+    stock_item_name = (request.form.get("stock_item") or "").strip()
+
+    if not uploaded_file or not uploaded_file.filename:
+        return jsonify({"success": False, "error": "No file was uploaded"}), 400
+    if not stock_item_name:
+        return jsonify({"success": False, "error": "stock_item is required"}), 400
+
+    try:
+        car_folder = _sanitize_upload_car_folder(request.form.get("car_folder", ""))
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    original_name = uploaded_file.filename
+    extension = os.path.splitext(original_name)[1].lower()
+    if extension not in Config.ALLOWED_IMAGE_EXTENSIONS:
+        allowed = ", ".join(sorted(Config.ALLOWED_IMAGE_EXTENSIONS))
+        return jsonify({"success": False, "error": f"Unsupported file type '{extension or 'unknown'}'. Allowed types: {allowed}"}), 400
+
+    uploaded_file.seek(0, os.SEEK_END)
+    file_size = uploaded_file.tell()
+    uploaded_file.seek(0)
+    if file_size <= 0:
+        return jsonify({"success": False, "error": "Uploaded file is empty"}), 400
+    if file_size > Config.MAX_IMAGE_SIZE:
+        max_mb = Config.MAX_IMAGE_SIZE / (1024 * 1024)
+        return jsonify({"success": False, "error": f"File is too large. Maximum size is {max_mb:.0f} MB"}), 400
+
+    target_dir = os.path.join(IMAGE_SCAN_ROOT, car_folder)
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+    except OSError as exc:
+        return jsonify({"success": False, "error": f"Could not create folder: {exc}"}), 500
+
+    safe_base_name = _sanitize_upload_filename(original_name)
+    final_filename = _unique_filename_in_dir(target_dir, safe_base_name)
+    destination_path = os.path.join(target_dir, final_filename)
+
+    try:
+        uploaded_file.save(destination_path)
+    except OSError as exc:
+        return jsonify({"success": False, "error": f"Failed to save file: {exc}"}), 500
+
+    relative_path = os.path.relpath(destination_path, IMAGE_SCAN_ROOT).replace("\\", "/")
+
+    try:
+        image_id = db.add_image(car_folder, final_filename, relative_path)
+    except Exception as exc:
+        try:
+            os.remove(destination_path)
+        except OSError:
+            pass
+        logger.exception("Failed to add uploaded image to database")
+        return jsonify({"success": False, "error": f"Failed to save image record: {exc}"}), 500
+
+    try:
+        confirm_result = _confirm_mapping_core(image_id, stock_item_name, car_model=car_folder, confidence=1.0, confirmed_by="human")
+    except ValueError as exc:
+        logger.exception("Failed to confirm mapping for uploaded image")
+        return jsonify({"success": False, "error": f"Image saved but failed to confirm match: {exc}"}), 500
+
+    return jsonify({
+        "success": True,
+        "image_id": image_id,
+        "image_url": f"/get_image/{image_id}",
+        "car_folder": car_folder,
+        "stock_item": stock_item_name,
+        "mapped": True,
+        "stats": confirm_result.get("stats"),
+    }), 200
 
 
 def _resolve_stored_image_path(stored_path):

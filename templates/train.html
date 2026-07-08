@@ -367,8 +367,8 @@
 
         .topbar {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
             gap: 12px;
             flex-wrap: wrap;
             position: sticky;
@@ -381,6 +381,52 @@
             padding: 10px 14px;
             margin-bottom: 16px;
             box-shadow: 0 8px 24px rgba(20, 33, 61, 0.08);
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .topbar-left > .link-button {
+            margin-right: 20px;
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .button-group {
+            display: flex;
+        }
+
+        .button-group > button,
+        .button-group > .link-button {
+            border-radius: 0;
+        }
+
+        .button-group > button:first-child,
+        .button-group > .link-button:first-child {
+            border-top-left-radius: 12px;
+            border-bottom-left-radius: 12px;
+        }
+
+        .button-group > button:last-child,
+        .button-group > .link-button:last-child {
+            border-top-right-radius: 12px;
+            border-bottom-right-radius: 12px;
+        }
+
+        .button-group > button + button,
+        .button-group > .link-button + .link-button,
+        .button-group > button + .link-button,
+        .button-group > .link-button + button {
+            border-left: 1px solid rgba(15, 23, 42, 0.15);
         }
 
         .rescan-btn {
@@ -399,16 +445,13 @@
             display: none;
         }
 
-        .role-badge {
+        .role-indicator {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            border-radius: 999px;
-            background: #e8eef7;
-            color: var(--text);
-            font-size: 12px;
-            font-weight: 700;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            padding: 0 2px;
         }
 
         .viewer-note {
@@ -497,6 +540,11 @@
             color: var(--muted);
         }
 
+        #currentMatchImg {
+            max-width: 280px;
+            max-height: 280px;
+        }
+
         @media (max-width: 980px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -552,60 +600,74 @@
                 border-left: 0;
                 border-right: 0;
                 border-top: 0;
+                flex-direction: column;
+                align-items: stretch;
             }
 
-            .topbar .actions {
-                flex-direction: row;
-                flex-wrap: nowrap;
-                gap: 8px;
+            .topbar-left,
+            .topbar-right {
                 width: 100%;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                justify-content: flex-start;
-                padding-bottom: 2px;
             }
 
-            .topbar .actions button,
-            .topbar .actions .link-button {
-                width: auto;
-                flex: 0 0 auto;
-                white-space: nowrap;
-                min-height: 40px;
+            .topbar-left > .link-button {
+                margin-right: 0;
             }
 
-            #rescanImagesBtn {
+            .topbar-right {
+                justify-content: space-between;
+            }
+
+            .button-group {
+                width: 100%;
+            }
+
+            .button-group > button,
+            .button-group > .link-button {
                 width: auto;
-                min-height: 40px;
+                flex: 1;
+                min-height: 44px;
             }
 
             .select2-results__options {
                 max-height: 60vh !important;
+            }
+
+            #currentMatchImg {
+                max-width: 200px;
+                max-height: 200px;
             }
         }
     </style>
 </head>
 <body>
 <div class="page">
-    <div class="topbar">
-        <div class="role-badge">{{ current_role|default('viewer')|title }} mode</div>
-        <div class="actions">
-            <a href="/" class="link-button" title="Return to the main stock viewer page">Back to Viewer</a>
-            {% if is_admin %}
-            <button id="rescanImagesBtn" class="rescan-btn" onclick="rescanImages()" title="Scan the S.S IMAGE folder for new images or car folders that haven't been added yet">
-                <span aria-hidden="true">&#8635;</span>&nbsp;Rescan Images
-            </button>
-            <a href="/admin/accounts" class="link-button" title="Manage staff login accounts (admin only)">Manage Accounts</a>
-            {% endif %}
-            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
-        </div>
-    </div>
-
     <div class="header">
         <h1>Training Mode - Stock Matching</h1>
         <p>Confirm which stock item belongs to each scanned image. Confirmed matches are saved directly to the local database.</p>
         {% if is_admin %}
         <div id="rescanStatus" class="rescan-status"></div>
         {% endif %}
+    </div>
+
+    <div class="topbar">
+        <div class="topbar-left">
+            <a href="/" class="link-button" title="Return to the main stock viewer page">Home</a>
+            {% if is_admin %}
+            <div class="button-group">
+                <button id="rescanImagesBtn" class="rescan-btn" onclick="rescanImages()" title="Scan the S.S IMAGE folder for new images or car folders that haven't been added yet">
+                    <span aria-hidden="true">&#8635;</span>&nbsp;Rescan Images
+                </button>
+                <input type="file" id="uploadImageInput" accept="image/*" style="display:none" onchange="handleFileSelected(event)" />
+                <button id="uploadImageBtn" class="rescan-btn" onclick="handleUploadImageClick()" title="Upload a new photo and match it to the selected stock item">
+                    Upload Image
+                </button>
+            </div>
+            {% endif %}
+        </div>
+        <div class="topbar-right">
+            <span class="role-indicator">{{ current_role|default('viewer')|title }} mode</span>
+            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
+        </div>
     </div>
 
     <div class="progress-card" id="progressCard">
@@ -676,7 +738,7 @@
                     <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase; margin-bottom:6px;">
                         Currently Matched Image
                     </div>
-                    <img id="currentMatchImg" style="max-width:150px; max-height:150px; border-radius:8px; border:1px solid #e2e8f0; object-fit:cover;" />
+                    <img id="currentMatchImg" style="border-radius:8px; border:1px solid #e2e8f0; object-fit:cover;" />
                     <div id="currentMatchEmpty" style="display:none; color:#94a3b8; font-size:13px;">
                         No image currently matched to this stock item.
                     </div>
@@ -720,11 +782,39 @@
     </div>
 </div>
 
+{% if is_admin %}
+<div class="modal" id="uploadModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="cancelUploadModal()"></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Upload image">
+        <div class="modal-head">
+            <strong>Upload Image</strong>
+            <button class="secondary" onclick="cancelUploadModal()">Cancel</button>
+        </div>
+        <div class="modal-body" style="background:#f8fafc; flex-direction:column; align-items:stretch; padding:18px; gap:14px; overflow-y:auto;">
+            <div style="display:flex; justify-content:center;">
+                <img id="uploadPreviewImg" alt="Selected image preview" style="max-width:100%; max-height:220px; border-radius:10px; border:1px solid var(--border); object-fit:contain; background:#eef2f7;">
+            </div>
+            <div class="field">
+                <label for="uploadFolderInput" title="Type an existing car folder name or a new one to create">Car Folder</label>
+                <input type="text" id="uploadFolderInput" list="existingFoldersList" placeholder="e.g. ALCAZAR(7)(WA)" />
+                <datalist id="existingFoldersList"></datalist>
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button class="secondary" onclick="cancelUploadModal()">Cancel</button>
+            <button class="primary" id="uploadConfirmBtn" onclick="confirmImageUpload()" title="Save this image as matched to the selected stock item">Upload</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <script>
 const initialImage = {{ initial_image | tojson }};
 const targetStockItem = {{ target_stock_item | tojson }};
 const ssImageFolders = {{ ss_image_folders | tojson }};
 const isAdmin = {{ is_admin|tojson }};
+const MAX_UPLOAD_SIZE = {{ max_image_size|tojson }};
+const ALLOWED_UPLOAD_EXTENSIONS = {{ allowed_image_extensions|tojson }};
 
 let imageQueue = [];
 let currentImage = null;
@@ -976,6 +1066,178 @@ function initializeQueueFilter(initialFolder = "") {
     }
 }
 
+async function loadExistingFoldersList() {
+    const datalist = document.getElementById("existingFoldersList");
+    if (!datalist) {
+        return;
+    }
+
+    const folders = [];
+    try {
+        let page = 1;
+        let hasMore = true;
+        while (hasMore && page <= 20) {
+            const res = await fetch(`/api/search_car_folders?q=&page=${page}`);
+            if (!res.ok) {
+                break;
+            }
+            const data = await res.json();
+            const results = Array.isArray(data.results) ? data.results : [];
+            results.forEach(result => {
+                const text = (result && (result.text || result.id)) || "";
+                if (text) {
+                    folders.push(text);
+                }
+            });
+            hasMore = Boolean(data.pagination && data.pagination.more);
+            page += 1;
+        }
+    } catch (err) {
+        // Autocomplete suggestions are a convenience; failing silently keeps typing a new folder unaffected.
+    }
+
+    datalist.innerHTML = folders.map(name => `<option value="${name.replace(/"/g, "&quot;")}"></option>`).join("");
+}
+
+function refreshQueueFolderOptions() {
+    const select = $("#ssCarQueueSelect");
+    if (!select.data("select2")) {
+        return;
+    }
+    const currentValue = select.val();
+    select.select2("destroy");
+    initializeQueueFilter(currentValue || "");
+}
+
+let selectedUploadFile = null;
+let uploadPreviewObjectUrl = null;
+
+function validateUploadFile(file) {
+    const extension = `.${(file.name.split(".").pop() || "").toLowerCase()}`;
+    if (!ALLOWED_UPLOAD_EXTENSIONS.includes(extension)) {
+        return `Unsupported file type '${extension}'. Allowed types: ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")}`;
+    }
+    if (file.size > MAX_UPLOAD_SIZE) {
+        const maxMb = Math.round(MAX_UPLOAD_SIZE / (1024 * 1024));
+        return `File is too large. Maximum size is ${maxMb} MB.`;
+    }
+    return null;
+}
+
+function handleFileSelected(event) {
+    const fileInput = document.getElementById("uploadImageInput");
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) {
+        return;
+    }
+
+    clearNotices();
+    const validationError = validateUploadFile(file);
+    if (validationError) {
+        showNotice("error", validationError);
+        fileInput.value = "";
+        return;
+    }
+
+    selectedUploadFile = file;
+    openUploadModal(file);
+}
+
+function openUploadModal(file) {
+    if (uploadPreviewObjectUrl) {
+        URL.revokeObjectURL(uploadPreviewObjectUrl);
+    }
+    uploadPreviewObjectUrl = URL.createObjectURL(file);
+    document.getElementById("uploadPreviewImg").src = uploadPreviewObjectUrl;
+    document.getElementById("uploadFolderInput").value = "";
+
+    const modal = document.getElementById("uploadModal");
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function closeUploadModal() {
+    const modal = document.getElementById("uploadModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+
+    if (uploadPreviewObjectUrl) {
+        URL.revokeObjectURL(uploadPreviewObjectUrl);
+        uploadPreviewObjectUrl = null;
+    }
+    document.getElementById("uploadPreviewImg").src = "";
+}
+
+function resetUploadSelection() {
+    selectedUploadFile = null;
+    document.getElementById("uploadImageInput").value = "";
+    document.getElementById("uploadFolderInput").value = "";
+}
+
+function cancelUploadModal() {
+    closeUploadModal();
+    resetUploadSelection();
+}
+
+async function confirmImageUpload() {
+    const folderInput = document.getElementById("uploadFolderInput");
+    const confirmBtn = document.getElementById("uploadConfirmBtn");
+    const file = selectedUploadFile;
+
+    if (!file) {
+        showNotice("error", "No file selected.");
+        closeUploadModal();
+        return;
+    }
+
+    const stockItem = document.getElementById("stockItemSelect").value || "";
+    if (!stockItem) {
+        showNotice("error", "Select a stock item on the right first.");
+        cancelUploadModal();
+        return;
+    }
+
+    const carFolder = String(folderInput.value || "").trim();
+    if (!carFolder) {
+        showNotice("error", "Type or pick a car folder before uploading.");
+        return;
+    }
+
+    const originalText = confirmBtn.textContent;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = "Uploading...";
+
+    try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("car_folder", carFolder);
+        formData.append("stock_item", stockItem);
+
+        const response = await fetch("/admin/upload_image", {
+            method: "POST",
+            body: formData,
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Upload failed (HTTP ${response.status})`);
+        }
+
+        closeUploadModal();
+        resetUploadSelection();
+
+        showNotice("success", `Image uploaded and matched to "${stockItem}" in folder "${result.car_folder}".`);
+        updateProgress(result.stats || null);
+        await loadCurrentMatchPreview(stockItem);
+        refreshQueueFolderOptions();
+        await loadExistingFoldersList();
+    } catch (error) {
+        showNotice("error", error.message);
+    } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = originalText;
+    }
+}
+
 function populateQueueFolders(selectedFolder = "") {
     if (!ssImageFolders.length) {
         return "";
@@ -1004,14 +1266,16 @@ function selectPreferredStockItem(preferredStockItem = "") {
     const select = document.getElementById("stockItemSelect");
     const normalizedPreferred = normalize(preferredStockItem || targetStockItem);
     if (!normalizedPreferred || !select.options.length) {
-        return;
+        return false;
     }
 
     const match = Array.from(select.options).find(option => normalize(option.value) === normalizedPreferred);
     if (match) {
         select.value = match.value;
         document.getElementById("stockItemSelect").dispatchEvent(new Event("change"));
+        return true;
     }
+    return false;
 }
 
 async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
@@ -1064,7 +1328,9 @@ async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
 
     // If a preferred stock item was provided, select it.
     if (preferredStockItem) {
-        selectPreferredStockItem(preferredStockItem);
+        if (!selectPreferredStockItem(preferredStockItem)) {
+            handleStockItemSelection();
+        }
         return;
     }
 
@@ -1095,15 +1361,20 @@ async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
 
         if (picked) {
             select.value = picked.value;
-        } else {
-            // fallback to previously-targeted stock item if provided by URL
-            selectPreferredStockItem(preferredStockItem);
+            handleStockItemSelection();
+        } else if (!selectPreferredStockItem(preferredStockItem)) {
+            // fallback to previously-targeted stock item if provided by URL;
+            // if that didn't match either, the select still holds a value
+            // (browser default or previous state) that needs to be reported.
+            handleStockItemSelection();
         }
         return;
     }
 
-    // No current image or no match; try selecting preferredStockItem if available
-    selectPreferredStockItem(preferredStockItem);
+    // No current image or no match; try selecting preferredStockItem if available.
+    if (!selectPreferredStockItem(preferredStockItem)) {
+        handleStockItemSelection();
+    }
 }
 
 function populateImageDropdown(selectedId = "") {
@@ -1291,6 +1562,16 @@ function handleStockItemSelection() {
     loadCurrentMatchPreview(select.value || "");
 }
 
+function handleUploadImageClick() {
+    clearNotices();
+    const stockItem = document.getElementById("stockItemSelect").value || "";
+    if (!stockItem) {
+        showNotice("error", "Select a car and stock item on the right first, then click Upload Image.");
+        return;
+    }
+    document.getElementById("uploadImageInput").click();
+}
+
 async function confirmSelectedMatch() {
     try {
         const stockItem = document.getElementById("stockItemSelect").value;
@@ -1381,6 +1662,9 @@ async function initializePage() {
     initializeCarFilter();
     initializeQueueFilter(selectedFolder);
     updateItemCount(0, "");
+    if (isAdmin) {
+        loadExistingFoldersList();
+    }
     await loadImageQueue(selectedFolder);
 }
 
@@ -1395,9 +1679,21 @@ window.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    const uploadModalEl = document.getElementById("uploadModal");
+    if (uploadModalEl) {
+        uploadModalEl.addEventListener("click", event => {
+            if (event.target.id === "uploadModal") {
+                cancelUploadModal();
+            }
+        });
+    }
+
     document.addEventListener("keydown", event => {
         if (event.key === "Escape") {
             closeFullscreenImage();
+            if (uploadModalEl) {
+                cancelUploadModal();
+            }
         }
     });
 });

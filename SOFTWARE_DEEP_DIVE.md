@@ -292,10 +292,13 @@ The mapping workflow lives mostly in `app.py`, `database.py`, `matcher.py`, and 
 - `POST /confirm_mapping`
 - `POST /remove_mapping`
 - `POST /scan_images`
+- `POST /admin/upload_image` — lets an admin upload a photo straight from the `Train Matches` page instead of pre-copying it into `S.S IMAGE\` and rescanning; validates extension (`Config.ALLOWED_IMAGE_EXTENSIONS`) and size (`Config.MAX_IMAGE_SIZE`), saves it under `data/S.S IMAGE/<car_folder>/` (de-duplicating the filename with `_unique_filename_in_dir()` if one already exists), inserts an `images` row via `db.add_image()`, then confirms the mapping to the selected stock item through the same `_confirm_mapping_core()` helper used by `/confirm_mapping`
 - `GET /mapping_stats`
 - `GET /get_current_mapping_image?stock_item=<name>` — used by the `train.html` "Currently Matched Image" preview; looks up `db.get_mapping_for_stock_item()` and returns `{has_mapping, image_id, image_url, confidence}` as JSON so the admin can visually compare the existing match against the new image before confirming
 
 ### Mapping save behavior
+
+The save logic is factored into `_confirm_mapping_core(image_id, stock_item_name, car_model, confidence, confirmed_by)` in `app.py`, shared by both `/confirm_mapping` and `/admin/upload_image` so a manually-confirmed match and a freshly-uploaded-and-matched image go through identical save/overwrite behavior.
 
 When an admin confirms a mapping:
 - the image row is looked up
@@ -352,12 +355,14 @@ Customer account administration is built into the same Flask app.
 Important routes:
 - `GET /admin/accounts`
 - `POST /admin/create_user`
-- `GET /admin/get_all_customers`
+- `GET /admin/get_all_customers` — now also returns `access_code`, `is_active`/`status`, and `last_login` per customer
 - `POST /admin/delete_user/<user_id>`
-- `POST /admin/toggle_user_status/<user_id>`
-- `POST /admin/set_all_customer_status`
+- `POST /admin/toggle_user_status/<user_id>` — flips a single customer's `is_active` flag (admin-only accounts can't be toggled; `db.toggle_customer_active_status()` raises `ValueError` if the target isn't a customer)
+- `POST /admin/set_all_customer_status` — bulk-sets `is_active` for every customer account in one call (`db.set_all_customer_active_status()`), used by the `Resume All` / `Pause All` buttons on `templates/accounts.html`
 
-Each major account action is logged through `account_logs`.
+The `users` table has `is_active` (default `1`) and `last_login` columns, added via `_ensure_users_schema()` so existing databases are migrated in place. `login()` rejects a customer login with HTTP `403` if `is_active` is `0`, and records `last_login` on every successful login through `db.update_last_login()`.
+
+Each major account action is logged through `account_logs`, including bulk pause/resume (`bulk_paused` / `bulk_resumed` action labels).
 
 ## 17. Search endpoints
 
@@ -384,10 +389,15 @@ The templates map cleanly to the major workflows:
   - `checkTimestampFreshness()` marks the "Last updated" text with the `.stale-timestamp` class (red, bold) whenever it is more than 180 seconds old; it runs after every timestamp update and on a 10-second `setInterval`, so it turns red live even if no new data arrives (e.g. Tally down for a while)
 - `templates/train.html`
   - image mapping workflow
+  - the "Currently Matched Image" preview (`#currentMatchImg`) is 280px on desktop / 200px on narrow screens (`@media (max-width: 640px)`), sized via CSS id rules rather than inline `max-width`/`max-height` so the mobile override can apply
+  - admin-only `Upload Image` button opens a modal to pick a car folder and upload a photo straight to `POST /admin/upload_image`, skipping the manual copy-then-rescan flow
 - `templates/pricing.html`
   - pricing management
 - `templates/accounts.html`
   - customer account management
+  - accounts table adds Access Code, Status (Active/Paused), and Last Login columns, plus per-row Pause/Resume and bulk `Resume All`/`Pause All` controls
+
+`templates/train.html` and `templates/accounts.html` share the same sticky topbar pattern (`.topbar` > `.topbar-left` / `.topbar-right`, `.link-button` for navigation, `.role-indicator` for the current role label) for visual consistency across admin screens; `templates/index.html` still uses the older `.role-badge` topbar style.
 
 The main page supports both admin and customer roles.
 Customer mode is read-only.
@@ -453,6 +463,8 @@ The health endpoint checks SQLite access, not live Tally reachability.
 - `templates/train.html` exposes an admin-only `Rescan Images` button that calls `POST /scan_images` directly; it also runs automatically on every app startup
 - a full refresh (car master + main hierarchy + item stock) also runs automatically once, ~45 seconds after every app startup, sharing `run_full_refresh_job()` with the manual `Full Refresh` button; it silently skips if a refresh is already running and fails gracefully (logged, `full_refresh_status` set to `error`) if Tally isn't reachable yet — it never blocks startup or crashes the app
 - each stock item can only be mapped to one image at a time; confirming a new image against a stock item that's already mapped elsewhere silently deletes that other mapping first (`db.remove_mappings_for_stock_item`)
+- `/admin/upload_image` sanitizes `car_folder` against path separators and `..` (`_sanitize_upload_car_folder()`) and the filename against directory components (`_sanitize_upload_filename()`) before touching the filesystem — do not bypass these when adding new upload entry points
+- in `templates/train.html`, `#stockItemSelect` is a plain `<select>` (not Select2); its `change` event only fires on real user interaction. Any code path that sets `select.value` programmatically (auto-matching by filename/car folder, restoring a preferred stock item, or leaving the browser's default first-option selection in place) must explicitly call `handleStockItemSelection()` afterward, or the "Currently Matched Image" preview silently stays out of sync until the user manually changes the dropdown — this was the root cause of a bug where the preview only appeared from the second selection onward
 
 ## 22. File map for maintenance
 

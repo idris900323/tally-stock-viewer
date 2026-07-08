@@ -46,23 +46,55 @@
 
         .topbar {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
             gap: 12px;
             flex-wrap: wrap;
-            margin-bottom: 12px;
+            position: sticky;
+            top: 8px;
+            z-index: 40;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 24px rgba(19, 34, 56, 0.08);
         }
 
-        .role-badge {
+        .topbar-left,
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .link-button {
+            padding: 11px 14px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #f8fafc;
+            color: var(--accent);
+            font-size: 14px;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .link-button:hover {
+            background: #eef2f7;
+        }
+
+        .role-indicator {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            border-radius: 999px;
-            background: #e8eef7;
-            color: var(--text);
-            font-size: 12px;
-            font-weight: 700;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            padding: 0 2px;
         }
 
         .toolbar {
@@ -139,7 +171,7 @@
         table {
             width: 100%;
             border-collapse: collapse;
-            min-width: 780px;
+            min-width: 960px;
         }
 
         th, td {
@@ -165,14 +197,33 @@
             font-size: 13px;
         }
 
-        .status-active {
-            color: #166534;
+        .status-active,
+        .status-paused {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
             font-weight: 700;
+        }
+
+        .status-active {
+            color: var(--success-text);
+            background: var(--success-bg);
+        }
+
+        .status-paused {
+            color: #6b7280;
+            background: #f3f4f6;
         }
 
         .btn-delete {
             background: #dc2626;
             color: #fff;
+        }
+
+        .bulk-actions {
+            margin-bottom: 12px;
         }
 
         @media (max-width: 980px) {
@@ -190,8 +241,20 @@
                 padding: 18px 12px 28px;
             }
 
-            .topbar .toolbar {
-                flex-wrap: wrap;
+            .topbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .topbar-left,
+            .topbar-right {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .link-button {
+                width: auto;
+                min-height: 44px;
             }
 
             #createUserBtn {
@@ -211,11 +274,13 @@
 <body>
 <div class="page">
     <div class="topbar">
-        <div class="role-badge">{{ current_role|default('admin')|title }} mode</div>
-        <div class="toolbar">
-            <button class="secondary" onclick="window.location.href='/'">Back to Viewer</button>
-            <button class="secondary" onclick="window.location.href='/train'">Train Matches</button>
-            <button class="secondary" onclick="window.location.href='/logout'">Logout</button>
+        <div class="topbar-left">
+            <a href="/" class="link-button" title="Return to the main stock viewer page">Home</a>
+            <a href="/train" class="link-button" title="Go to the training mode stock matching page">Train Matches</a>
+        </div>
+        <div class="topbar-right">
+            <span class="role-indicator">{{ current_role|default('admin')|title }} mode</span>
+            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
         </div>
     </div>
 
@@ -243,19 +308,27 @@
             </form>
         </div>
 
-        <div class="panel table-wrap">
+        <div class="panel">
             <h2 style="margin:0 0 10px;">Manage Customer Accounts</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width:220px;">Username</th>
-                        <th style="width:130px;">Status</th>
-                        <th style="width:200px;">Created</th>
-                        <th style="width:220px;">Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="accountsTableBody"></tbody>
-            </table>
+            <div class="bulk-actions toolbar">
+                <button type="button" class="secondary" onclick="setAllCustomerStatus(true)" title="Resume login access for every customer account">Resume All</button>
+                <button type="button" class="secondary" onclick="setAllCustomerStatus(false)" title="Pause login access for every customer account">Pause All</button>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:200px;">Username</th>
+                            <th style="width:160px;" title="This code is used by the customer to log in">Access Code</th>
+                            <th style="width:110px;">Status</th>
+                            <th style="width:200px;">Last Login</th>
+                            <th style="width:180px;">Created</th>
+                            <th style="width:220px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="accountsTableBody"></tbody>
+                </table>
+            </div>
             <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No customer accounts found.</div>
         </div>
     </div>
@@ -292,6 +365,28 @@ function formatDateLabel(value) {
     const minutes = String(date.getMinutes()).padStart(2, "0");
     const seconds = String(date.getSeconds()).padStart(2, "0");
     return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
+function formatLastLoginLabel(value) {
+    if (!value) {
+        return "Never";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "Never";
+    }
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    let hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12;
+    if (hours === 0) {
+        hours = 12;
+    }
+    return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`;
 }
 
 function escapeHtml(value) {
@@ -356,17 +451,75 @@ function renderAccountsTable(customers) {
     empty.style.display = "none";
     body.innerHTML = customers.map(customer => {
         const createdLabel = formatDateLabel(customer.created_at);
+        const lastLoginLabel = formatLastLoginLabel(customer.last_login);
+        const isActive = customer.is_active !== false;
+        const statusBadge = isActive
+            ? `<span class="status-active">Active</span>`
+            : `<span class="status-paused">Paused</span>`;
+        const toggleLabel = isActive ? "Pause" : "Resume";
         return `
             <tr>
                 <td>${escapeHtml(customer.username || "")}</td>
-                <td><span class="status-active">Active</span></td>
+                <td>${escapeHtml(customer.access_code || "")}</td>
+                <td>${statusBadge}</td>
+                <td>${escapeHtml(lastLoginLabel)}</td>
                 <td>${escapeHtml(createdLabel)}</td>
                 <td>
+                    <button type="button" class="secondary" data-user-id="${Number(customer.id)}" onclick="toggleAccountStatus(this)" title="${isActive ? "Pause this account's login access" : "Resume this account's login access"}">${toggleLabel}</button>
                     <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>
                 </td>
             </tr>
         `;
     }).join("");
+}
+
+async function toggleAccountStatus(button) {
+    const userId = Number(button?.dataset?.userId || 0);
+    if (!userId) {
+        return;
+    }
+
+    button.disabled = true;
+    try {
+        const response = await fetch(`/admin/toggle_user_status/${encodeURIComponent(userId)}`, {
+            method: "POST",
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Update failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Account status updated");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+        button.disabled = false;
+    }
+}
+
+async function setAllCustomerStatus(isActive) {
+    const label = isActive ? "resume" : "pause";
+    const confirmed = window.confirm(`Are you sure you want to ${label} ALL customer accounts?`);
+    if (!confirmed) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/admin/set_all_customer_status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ is_active: isActive }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Update failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Accounts updated");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+    }
 }
 
 function deleteAccountFromButton(button) {

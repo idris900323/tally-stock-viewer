@@ -227,6 +227,8 @@ def init_database():
                 access_code TEXT NOT NULL,
                 role TEXT NOT NULL CHECK(role IN ('admin', 'customer')),
                 force_contact_us INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_login TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -291,6 +293,10 @@ def _ensure_users_schema(conn):
     if "created_at" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
         conn.execute("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL OR TRIM(created_at) = ''")
+    if "is_active" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+    if "last_login" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN last_login TEXT")
 
     conn.execute(
         """
@@ -853,7 +859,7 @@ def authenticate_user(username, access_code):
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT id, username, role
+            SELECT id, username, role, is_active
             FROM users
             WHERE LOWER(username) = LOWER(?) AND access_code = ?
             LIMIT 1
@@ -861,6 +867,14 @@ def authenticate_user(username, access_code):
             (username_value, access_code_value),
         ).fetchone()
     return _row_to_dict(row)
+
+
+def update_last_login(user_id):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET last_login = ? WHERE id = ?",
+            (datetime.now().isoformat(timespec="seconds"), int(user_id)),
+        )
 
 
 def get_user_by_id(user_id):
@@ -937,13 +951,42 @@ def get_all_customers_with_details():
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, role, created_at
+            SELECT id, username, access_code, role, is_active, created_at, last_login
             FROM users
             WHERE role = 'customer'
             ORDER BY datetime(COALESCE(created_at, '1970-01-01T00:00:00')) DESC, id DESC
             """
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def toggle_customer_active_status(user_id):
+    user_id_value = int(user_id)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, username, role, is_active FROM users WHERE id = ?",
+            (user_id_value,),
+        ).fetchone()
+        user = _row_to_dict(row)
+        if not user:
+            raise ValueError("user not found")
+        if user.get("role") != "customer":
+            raise ValueError("only customer accounts can be paused or resumed")
+
+        new_status = 0 if user.get("is_active") else 1
+        conn.execute("UPDATE users SET is_active = ? WHERE id = ?", (new_status, user_id_value))
+        user["is_active"] = new_status
+    return user
+
+
+def set_all_customer_active_status(is_active):
+    status_value = 1 if is_active else 0
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET is_active = ? WHERE role = 'customer'",
+            (status_value,),
+        )
+    return cursor.rowcount
 
 
 def delete_customer_user(user_id):
