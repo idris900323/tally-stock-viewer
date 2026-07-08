@@ -78,18 +78,32 @@ def _validate_filepath(filepath):
 
 
 def _normalize_legacy_absolute_image_paths(conn):
-    """Convert legacy absolute image paths under IMAGE_ROOT to portable relative paths."""
+    """Convert legacy absolute image paths under IMAGE_ROOT to portable relative paths.
+
+    Some rows already have a canonical relative-path row for the same physical
+    file (left behind by earlier scans). Renaming the legacy row in place would
+    collide with that row's UNIQUE(filepath) constraint, so such duplicates are
+    merged into the canonical row (preserving any mapping) and the legacy row
+    is dropped instead of renamed.
+    """
     rows = conn.execute("SELECT id, filepath FROM images").fetchall()
-    updates = []
     image_root_norm = os.path.normcase(os.path.normpath(IMAGE_ROOT)) if os.name == "nt" else os.path.normpath(IMAGE_ROOT)
 
+    canonical_ids_by_relpath = {}
+    legacy_rows = []
     for row in rows:
         raw_value = str(row["filepath"] or "").strip()
         if not raw_value:
             continue
-        if not os.path.isabs(raw_value):
-            continue
+        if os.path.isabs(raw_value):
+            legacy_rows.append(row)
+        else:
+            canonical_ids_by_relpath[raw_value.strip("/").lower()] = int(row["id"])
 
+    renamed = 0
+    merged = 0
+    for row in legacy_rows:
+        raw_value = str(row["filepath"]).strip()
         abs_value = os.path.normpath(os.path.abspath(raw_value))
         abs_norm = os.path.normcase(abs_value) if os.name == "nt" else abs_value
         if not (abs_norm == image_root_norm or abs_norm.startswith(image_root_norm + os.sep)):
@@ -98,14 +112,54 @@ def _normalize_legacy_absolute_image_paths(conn):
         relative_path = os.path.relpath(abs_value, IMAGE_ROOT).replace("\\", "/")
         if not relative_path or relative_path == ".":
             continue
-        updates.append((relative_path, int(row["id"])))
 
-    if updates:
-        conn.executemany(
-            "UPDATE images SET filepath = ? WHERE id = ?",
-            updates,
+        legacy_id = int(row["id"])
+        canonical_id = canonical_ids_by_relpath.get(relative_path.strip("/").lower())
+
+        if canonical_id is None:
+            conn.execute("UPDATE images SET filepath = ? WHERE id = ?", (relative_path, legacy_id))
+            canonical_ids_by_relpath[relative_path.strip("/").lower()] = legacy_id
+            renamed += 1
+            continue
+
+        legacy_mapping = conn.execute(
+            "SELECT stock_item_name, car_model, confidence, confirmed_by, created_at FROM mappings WHERE image_id = ?",
+            (legacy_id,),
+        ).fetchone()
+        canonical_mapping = conn.execute(
+            "SELECT created_at FROM mappings WHERE image_id = ?", (canonical_id,)
+        ).fetchone()
+        # Both rows may carry independent human-confirmed mappings (the legacy
+        # duplicate wasn't always a dead end); keep whichever was confirmed most
+        # recently rather than always favoring the canonical row.
+        legacy_is_newer = legacy_mapping is not None and (
+            canonical_mapping is None or str(legacy_mapping["created_at"]) > str(canonical_mapping["created_at"])
         )
-    return len(updates)
+        if legacy_is_newer:
+            conn.execute(
+                """
+                INSERT INTO mappings (image_id, stock_item_name, car_model, confidence, confirmed_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(image_id) DO UPDATE SET
+                    stock_item_name=excluded.stock_item_name,
+                    car_model=excluded.car_model,
+                    confidence=excluded.confidence,
+                    confirmed_by=excluded.confirmed_by,
+                    created_at=excluded.created_at
+                """,
+                (
+                    canonical_id,
+                    legacy_mapping["stock_item_name"],
+                    legacy_mapping["car_model"],
+                    legacy_mapping["confidence"],
+                    legacy_mapping["confirmed_by"],
+                    legacy_mapping["created_at"],
+                ),
+            )
+        conn.execute("DELETE FROM images WHERE id = ?", (legacy_id,))
+        merged += 1
+
+    return renamed + merged
 
 
 def _connect():
@@ -266,13 +320,13 @@ def seed_default_data(conn=None):
 
         conn.executemany(
             """
-            INSERT INTO users (username, access_code, role, force_contact_us, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (username, access_code, role, created_at)
+            VALUES (?, ?, ?, ?)
             """,
             [
-                ("admin", "idris123", "admin", 0, datetime.now().isoformat(timespec="seconds")),
-                ("star", "111", "customer", 0, datetime.now().isoformat(timespec="seconds")),
-                ("jeewajee", "222", "customer", 0, datetime.now().isoformat(timespec="seconds")),
+                ("admin", "idris123", "admin", datetime.now().isoformat(timespec="seconds")),
+                ("star", "111", "customer", datetime.now().isoformat(timespec="seconds")),
+                ("jeewajee", "222", "customer", datetime.now().isoformat(timespec="seconds")),
             ],
         )
     finally:
@@ -565,7 +619,7 @@ def get_unmapped_images(limit=None):
         SELECT id, car_folder, filename, filepath, scan_date
         FROM ranked_unmapped
         WHERE rn = 1
-        ORDER BY id ASC
+        ORDER BY LOWER(filename) ASC, id ASC
     """
     params = []
     if limit is not None:
@@ -602,7 +656,7 @@ def get_unmapped_images_by_folder(folder_name, limit=None):
         SELECT id, car_folder, filename, filepath, scan_date
         FROM ranked_unmapped
         WHERE rn = 1
-        ORDER BY id ASC
+        ORDER BY LOWER(filename) ASC, id ASC
     """
     params = [folder_name]
     if limit is not None:
@@ -648,7 +702,7 @@ def get_images_by_folder(folder_name, limit=None):
             confidence
         FROM ranked_images
         WHERE rn = 1
-        ORDER BY id ASC
+        ORDER BY LOWER(filename) ASC, id ASC
     """
     params = [folder_name]
     if limit is not None:
@@ -776,7 +830,7 @@ def authenticate_user(username, access_code):
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT id, username, role, force_contact_us
+            SELECT id, username, role
             FROM users
             WHERE LOWER(username) = LOWER(?) AND access_code = ?
             LIMIT 1
@@ -789,7 +843,7 @@ def authenticate_user(username, access_code):
 def get_user_by_id(user_id):
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, username, role, force_contact_us FROM users WHERE id = ?",
+            "SELECT id, username, role FROM users WHERE id = ?",
             (int(user_id),),
         ).fetchone()
     return _row_to_dict(row)
@@ -799,7 +853,7 @@ def get_customer_users():
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, role, force_contact_us, created_at
+            SELECT id, username, role, created_at
             FROM users
             WHERE role = 'customer'
             ORDER BY LOWER(username), username
@@ -825,8 +879,8 @@ def create_customer_user(username, access_code):
             created_at = datetime.now().isoformat(timespec="seconds")
             cursor = conn.execute(
                 """
-                INSERT INTO users (username, access_code, role, force_contact_us, created_at)
-                VALUES (?, ?, 'customer', 0, ?)
+                INSERT INTO users (username, access_code, role, created_at)
+                VALUES (?, ?, 'customer', ?)
                 """,
                 (username_value, access_code_value, created_at),
             )
@@ -835,19 +889,6 @@ def create_customer_user(username, access_code):
         raise ValueError("username already exists") from exc
 
     return get_user_by_id(user_id)
-
-
-def set_force_contact_us(user_id, enabled):
-    force_value = 1 if bool(enabled) else 0
-    with _connect() as conn:
-        conn.execute(
-            """
-            UPDATE users
-            SET force_contact_us = ?
-            WHERE id = ? AND role = 'customer'
-            """,
-            (force_value, int(user_id)),
-        )
 
 
 def log_account_action(user_id, action, performed_by):
@@ -873,7 +914,7 @@ def get_all_customers_with_details():
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, role, force_contact_us, created_at
+            SELECT id, username, role, created_at
             FROM users
             WHERE role = 'customer'
             ORDER BY datetime(COALESCE(created_at, '1970-01-01T00:00:00')) DESC, id DESC
@@ -900,141 +941,3 @@ def delete_customer_user(user_id):
     return user
 
 
-def set_customer_access_paused(user_id, pause):
-    user_id_value = int(user_id)
-    force_value = 1 if bool(pause) else 0
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT id, username, role, force_contact_us FROM users WHERE id = ?",
-            (user_id_value,),
-        ).fetchone()
-        user = _row_to_dict(row)
-        if not user:
-            raise ValueError("user not found")
-        if user.get("role") != "customer":
-            raise ValueError("only customer accounts can be updated")
-
-        conn.execute(
-            "UPDATE users SET force_contact_us = ? WHERE id = ? AND role = 'customer'",
-            (force_value, user_id_value),
-        )
-
-        updated = conn.execute(
-            "SELECT id, username, role, force_contact_us, created_at FROM users WHERE id = ?",
-            (user_id_value,),
-        ).fetchone()
-    return _row_to_dict(updated)
-
-
-def set_all_customer_access_paused(pause):
-    force_value = 1 if bool(pause) else 0
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE users SET force_contact_us = ? WHERE role = 'customer'",
-            (force_value,),
-        )
-        row = conn.execute("SELECT changes() AS count").fetchone()
-    return int(row["count"] if row else 0)
-
-
-def upsert_base_price(stock_item_name, price):
-    item_name = _validate_stock_item_name(stock_item_name).strip()
-    if not item_name:
-        return
-    price_value = str(price or "").strip()
-    with _connect() as conn:
-        if price_value:
-            conn.execute(
-                """
-                INSERT INTO base_prices (stock_item_name, price)
-                VALUES (?, ?)
-                ON CONFLICT(stock_item_name) DO UPDATE SET
-                    price = excluded.price
-                """,
-                (item_name, price_value),
-            )
-        else:
-            conn.execute(
-                "DELETE FROM base_prices WHERE LOWER(stock_item_name) = LOWER(?)",
-                (item_name,),
-            )
-
-
-def upsert_customer_price(user_id, stock_item_name, price):
-    item_name = _validate_stock_item_name(stock_item_name).strip()
-    if not item_name:
-        return
-    price_value = str(price or "").strip()
-    with _connect() as conn:
-        if price_value:
-            conn.execute(
-                """
-                INSERT INTO customer_prices (user_id, stock_item_name, price)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id, stock_item_name) DO UPDATE SET
-                    price = excluded.price
-                """,
-                (int(user_id), item_name, price_value),
-            )
-        else:
-            conn.execute(
-                """
-                DELETE FROM customer_prices
-                WHERE user_id = ? AND LOWER(stock_item_name) = LOWER(?)
-                """,
-                (int(user_id), item_name),
-            )
-
-
-def get_base_prices_for_stock_items(stock_item_names):
-    cleaned = []
-    seen = set()
-    for stock_item_name in stock_item_names or []:
-        item_name = str(stock_item_name or "").strip()
-        if not item_name:
-            continue
-        key = item_name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        cleaned.append(key)
-    if not cleaned:
-        return {}
-
-    placeholders = ", ".join(["?"] * len(cleaned))
-    query = f"""
-        SELECT stock_item_name, price
-        FROM base_prices
-        WHERE LOWER(stock_item_name) IN ({placeholders})
-    """
-    with _connect() as conn:
-        rows = conn.execute(query, cleaned).fetchall()
-    return {str(row["stock_item_name"]).strip().lower(): str(row["price"] or "") for row in rows}
-
-
-def get_customer_prices_for_stock_items(user_id, stock_item_names):
-    cleaned = []
-    seen = set()
-    for stock_item_name in stock_item_names or []:
-        item_name = str(stock_item_name or "").strip()
-        if not item_name:
-            continue
-        key = item_name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        cleaned.append(key)
-    if not cleaned:
-        return {}
-
-    placeholders = ", ".join(["?"] * len(cleaned))
-    params = [int(user_id)]
-    params.extend(cleaned)
-    query = f"""
-        SELECT stock_item_name, price
-        FROM customer_prices
-        WHERE user_id = ? AND LOWER(stock_item_name) IN ({placeholders})
-    """
-    with _connect() as conn:
-        rows = conn.execute(query, params).fetchall()
-    return {str(row["stock_item_name"]).strip().lower(): str(row["price"] or "") for row in rows}

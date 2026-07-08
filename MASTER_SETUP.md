@@ -210,10 +210,10 @@ Run a scan when:
 - mapped images are not showing correctly after moving machines
 
 Current behavior:
-- the app automatically performs an initial scan when the image database is empty
-- the backend also supports a manual admin-only re-scan route
+- the app automatically re-scans the image folder every time it starts (restarting the app is enough to pick up new images copied in while it was stopped)
+- while the app is running, click `Rescan Images` on the `Train Matches` page (admin only) to pick up new images without restarting
 
-For non-technical staff, treat image re-scan as a support task if the automatic scan did not cover new files.
+For non-technical staff, treat image re-scan as a support task if a newly added image is not showing up yet — either restart the app or use the `Rescan Images` button.
 
 The scanner reads `C:\tally_stock\data\S.S IMAGE\` and stores portable relative paths in the database.
 
@@ -256,7 +256,7 @@ The app can still run in read-only mode using the last saved stock export.
 Check:
 - the image files exist under `C:\tally_stock\data\S.S IMAGE\`
 - the database was moved over correctly
-- an image scan has been run after the move
+- an image scan has been run after the move or after adding new files (restart the app, or click `Rescan Images` on the `Train Matches` page)
 
 ### Desktop shortcuts are missing
 

@@ -95,7 +95,10 @@ def search_customers():
 @search_bp.route("/api/get_stock_items_for_car")
 def get_stock_items_for_car():
     car_full = request.args.get("car", "")
-    items = _get_dependency("get_stock_items_for_car")(car_full)
+    hierarchy_lookup = _dependencies.get("get_stock_items_for_car_from_hierarchy")
+    items = hierarchy_lookup(car_full) if hierarchy_lookup is not None else None
+    if items is None:
+        items = _get_dependency("get_stock_items_for_car")(car_full)
     return jsonify({
         "car": car_full,
         "base_car": extract_car_base_name(car_full),

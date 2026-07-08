@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Accounts Admin - Tally Stock Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         :root {
             --bg: #f3f6fb;
@@ -169,36 +170,40 @@
             font-weight: 700;
         }
 
-        .status-paused {
-            color: #b91c1c;
-            font-weight: 700;
-        }
-
         .btn-delete {
             background: #dc2626;
             color: #fff;
         }
 
-        .btn-toggle {
-            background: #f59e0b;
-            color: #111827;
-        }
-
-        .btn-toggle.paused {
-            background: #16a34a;
-            color: #fff;
-        }
-
-        .bulk-actions {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 8px;
-        }
-
         @media (max-width: 980px) {
             .grid {
                 grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .page {
+                padding: 18px 12px 28px;
+            }
+
+            .topbar .toolbar {
+                flex-wrap: wrap;
+            }
+
+            #createUserBtn {
+                width: 100%;
+            }
+
+            .bulk-actions button {
+                flex: 1;
+            }
+
+            button {
+                min-height: 44px;
             }
         }
     </style>
@@ -210,14 +215,13 @@
         <div class="toolbar">
             <button class="secondary" onclick="window.location.href='/'">Back to Viewer</button>
             <button class="secondary" onclick="window.location.href='/train'">Train Matches</button>
-            <button class="secondary" onclick="window.location.href='/admin/pricing'">Manage Pricing</button>
             <button class="secondary" onclick="window.location.href='/logout'">Logout</button>
         </div>
     </div>
 
     <div class="panel">
         <h1 style="margin:0 0 10px;">Account Management</h1>
-        <p class="muted" style="margin:0;">Create, delete, pause, and resume customer accounts from this page.</p>
+        <p class="muted" style="margin:0;">Create and delete customer accounts from this page.</p>
     </div>
 
     <div id="successMsg" class="notice success"></div>
@@ -241,10 +245,6 @@
 
         <div class="panel table-wrap">
             <h2 style="margin:0 0 10px;">Manage Customer Accounts</h2>
-            <div class="bulk-actions">
-                <button type="button" class="secondary" onclick="pauseAllCustomers()">Pause All Customers</button>
-                <button type="button" class="secondary" onclick="resumeAllCustomers()">Resume All Customers</button>
-            </div>
             <table>
                 <thead>
                     <tr>
@@ -355,18 +355,13 @@ function renderAccountsTable(customers) {
 
     empty.style.display = "none";
     body.innerHTML = customers.map(customer => {
-        const paused = Boolean(customer.force_contact_us);
-        const statusText = paused ? "Paused" : "Active";
-        const statusClass = paused ? "status-paused" : "status-active";
-        const toggleText = paused ? "Resume" : "Pause";
         const createdLabel = formatDateLabel(customer.created_at);
         return `
             <tr>
                 <td>${escapeHtml(customer.username || "")}</td>
-                <td><span class="${statusClass}">${statusText}</span></td>
+                <td><span class="status-active">Active</span></td>
                 <td>${escapeHtml(createdLabel)}</td>
                 <td>
-                    <button type="button" class="btn-toggle ${paused ? "paused" : ""}" onclick="toggleAccountStatus(${Number(customer.id)}, ${paused})">${toggleText}</button>
                     <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>
                 </td>
             </tr>
@@ -422,67 +417,6 @@ async function deleteAccount(userId, username) {
     } catch (error) {
         showError(error.message);
     }
-}
-
-async function toggleAccountStatus(userId, currentlyPaused) {
-    const nextPause = !Boolean(currentlyPaused);
-    const confirmed = window.confirm(nextPause ? "Pause this customer account?" : "Resume this customer account?");
-    if (!confirmed) {
-        return;
-    }
-
-    try {
-        const response = await fetch(`/admin/toggle_user_status/${encodeURIComponent(userId)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pause: nextPause }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || `Status update failed (HTTP ${response.status})`);
-        }
-
-        showSuccess(result.message || "Status updated");
-        await loadCustomerAccounts();
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-async function setAllCustomersStatus(pause) {
-    const confirmed = window.confirm(
-        pause
-            ? "Pause ALL customers? They will see Contact Us for all prices."
-            : "Resume ALL customers?"
-    );
-    if (!confirmed) {
-        return;
-    }
-
-    try {
-        const response = await fetch("/admin/set_all_customer_status", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pause }),
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-            throw new Error(result.error || `Bulk update failed (HTTP ${response.status})`);
-        }
-
-        showSuccess(result.message || "Customer access updated");
-        await loadCustomerAccounts();
-    } catch (error) {
-        showError(error.message);
-    }
-}
-
-function pauseAllCustomers() {
-    return setAllCustomersStatus(true);
-}
-
-function resumeAllCustomers() {
-    return setAllCustomersStatus(false);
 }
 
 window.addEventListener("DOMContentLoaded", () => {

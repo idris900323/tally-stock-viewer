@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Training Mode - Stock Matching</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
@@ -445,15 +446,44 @@
             }
 
             .header h1 {
-                font-size: 28px;
+                font-size: 24px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
             }
 
             .progress-card {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .image-frame {
+                max-width: 100%;
             }
 
             button, .link-button {
                 width: 100%;
+                min-height: 44px;
+            }
+
+            select,
+            input[type="text"] {
+                font-size: 16px;
+                min-height: 44px;
+            }
+
+            .actions {
+                flex-direction: column;
+            }
+
+            .topbar .actions {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            #rescanImagesBtn {
+                width: 100%;
+                min-height: 44px;
             }
         }
     </style>
@@ -466,7 +496,6 @@
             <div class="actions">
                 <a href="/" class="link-button">Back to Viewer</a>
                 {% if is_admin %}
-                <a href="/admin/pricing" class="link-button">Manage Pricing</a>
                 <a href="/admin/accounts" class="link-button">Manage Accounts</a>
                 {% endif %}
                 <a href="/logout" class="link-button">Logout</a>
@@ -526,6 +555,15 @@
             <div class="footer-actions">
                 <a href="/" class="link-button">Back to Viewer</a>
             </div>
+            {% if is_admin %}
+            <div class="actions">
+                <button id="rescanImagesBtn" class="secondary" onclick="rescanImages()">
+                    Rescan Images
+                </button>
+            </div>
+            <div id="rescanStatus" style="display:none; margin-top:8px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
+            </div>
+            {% endif %}
         </div>
 
         <div class="panel">
@@ -606,6 +644,50 @@ function showNotice(type, message) {
 function clearNotices() {
     document.getElementById("successNotice").style.display = "none";
     document.getElementById("errorNotice").style.display = "none";
+}
+
+async function rescanImages() {
+    const btn = document.getElementById("rescanImagesBtn");
+    const status = document.getElementById("rescanStatus");
+
+    btn.disabled = true;
+    btn.textContent = "Scanning...";
+    status.style.display = "block";
+    status.textContent = "Scanning S.S IMAGE folder for new images and car folders...";
+    status.style.background = "#f0f9ff";
+    status.style.borderColor = "#bae6fd";
+    status.style.color = "#0369a1";
+
+    try {
+        const res = await fetch("/scan_images", { method: "POST" });
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.message || data.error || "Scan failed");
+        }
+
+        const added = data.added_count ?? data.new_images ?? data.count ?? "unknown number of";
+        status.textContent = `Scan complete. ${added} new image(s) found and added.`;
+        status.style.background = "#f0fdf4";
+        status.style.borderColor = "#bbf7d0";
+        status.style.color = "#166534";
+
+        if (typeof updateProgress === "function") {
+            updateProgress(data.stats || null);
+        }
+        if (typeof loadImageQueue === "function") {
+            await loadImageQueue(selectedQueueFolder || "");
+        }
+    } catch (error) {
+        status.textContent = "Scan failed: " + error.message;
+        status.style.background = "#fef2f2";
+        status.style.borderColor = "#fecaca";
+        status.style.color = "#991b1b";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Rescan Images";
+        setTimeout(() => { status.style.display = "none"; }, 6000);
+    }
 }
 
 function updateProgress(stats) {
@@ -843,16 +925,14 @@ async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
         return;
     }
 
-    // Use the same designs endpoint as the main viewer so results and ranking
-    // match what users see on the index page.
-    const response = await fetch(`/designs?car=${encodeURIComponent(carFullName)}`);
+    const response = await fetch(`/api/get_stock_items_for_car?car=${encodeURIComponent(carFullName)}`);
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.error || `Failed to load designs (HTTP ${response.status})`);
     }
 
-    const designs = await response.json();
-    const items = Array.isArray(designs) ? designs : [];
+    const payload = await response.json();
+    const items = Array.isArray(payload.items) ? payload.items : [];
     if (items.length === 0) {
         const option = document.createElement("option");
         option.value = "";
@@ -862,11 +942,10 @@ async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
         return;
     }
 
-    // The designs payload uses `design` or `raw` as the stock item label.
     const seenStock = new Set();
     let uniqueCount = 0;
     for (const item of items) {
-        const stockName = item.design || item.raw || item.stock_item_name || "Unknown";
+        const stockName = item.stock_item_name || item.design || item.raw || "Unknown";
         const key = normalize(stockName);
         if (seenStock.has(key)) {
             continue;
@@ -875,7 +954,7 @@ async function loadStockItemsForCar(carFullName = "", preferredStockItem = "") {
         uniqueCount += 1;
         const option = document.createElement("option");
         option.value = stockName;
-        option.textContent = `${stockName} ${item.qty ? `(${item.qty})` : ""}`.trim();
+        option.textContent = `${stockName} (${item.qty ?? 0})`;
         select.appendChild(option);
     }
 

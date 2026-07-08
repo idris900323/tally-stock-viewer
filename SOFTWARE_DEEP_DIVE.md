@@ -124,7 +124,7 @@ The Excel cache is used as a saved local stock export and fallback artifact.
 
 Notable behavior:
 - scanned file paths are validated and normalized
-- legacy absolute image paths are repaired toward portable relative paths
+- legacy absolute image paths are migrated to portable relative paths on every startup; if a relative-path row for the same file already exists, the legacy row is merged into it instead of renamed (keeping whichever confirmed mapping has the more recent `created_at`) and the legacy row is deleted
 - default seed users are inserted only when the `users` table is empty
 
 Seeded defaults from the current code:
@@ -209,9 +209,11 @@ If Tally is unreachable or times out:
 
 `start_background_startup_tasks()` launches a daemon thread that:
 - preloads local design data when possible
-- runs an initial image scan if the database is empty
+- runs an image scan on every startup (`_scan_images_on_startup()`), as long as `INITIAL_IMAGE_SCAN` is enabled and `IMAGE_SCAN_ROOT` exists
 - schedules item stock export if auto-export is enabled
 - schedules car master refresh
+
+The startup scan used to be skipped whenever the `images` table already had rows, which meant it only ever ran once, the very first time the database was populated — restarting the app afterward never picked up new files added to `S.S IMAGE`. It now always re-scans on startup; the scan is an upsert (`add_images_batch`), so re-scanning unchanged files is a cheap no-op.
 
 ### Timers
 - item export default interval: from `TALLY_EXPORT_INTERVAL`, default `180` seconds
@@ -254,10 +256,12 @@ Important details:
 - oversized files are skipped
 - unreadable files are skipped
 - relative paths outside the image root are rejected
-- inserts are batched through `database.add_images_batch()`
+- inserts are batched through `database.add_images_batch()`, which upserts on the `filepath` UNIQUE constraint
 
 This is one of the portability improvements in the current codebase.
 The database no longer has to rely on machine-specific absolute image paths.
+
+Image list queries used by the training UI (`get_images_by_folder`, `get_unmapped_images`, `get_unmapped_images_by_folder`) order results by `LOWER(filename) ASC, id ASC`, not insertion order. This matters because newly-scanned files get a much higher autoincrement `id` than the rest of their folder; ordering by `id` alone would always push new images to the end of the list regardless of filename. `get_next_unmapped_image()` is the one exception — it still orders by `id` because it uses `id` as a pagination cursor (`WHERE i.id > ?`), so it is not filename-sorted.
 
 ## 13. Mapping workflow
 
@@ -354,6 +358,7 @@ The templates map cleanly to the major workflows:
 - `templates/index.html`
   - main stock viewer
   - admin-only update, training, pricing, and account links
+  - `checkTimestampFreshness()` marks the "Last updated" text with the `.stale-timestamp` class (red, bold) whenever it is more than 180 seconds old; it runs after every timestamp update and on a 10-second `setInterval`, so it turns red live even if no new data arrives (e.g. Tally down for a while)
 - `templates/train.html`
   - image mapping workflow
 - `templates/pricing.html`
@@ -422,7 +427,7 @@ The health endpoint checks SQLite access, not live Tally reachability.
 - seeded credentials still exist if the database has not been hardened
 - public tunnel startup is conditional on `cloudflared.exe` being present in the app root
 - the generated Desktop stop shortcut only kills the server PID; the full clean shutdown path is the tray menu item `Stop & Exit`
-- the backend exposes `POST /scan_images`, but the current standard UI does not expose a dedicated visible re-scan control
+- `templates/train.html` exposes an admin-only `Rescan Images` button that calls `POST /scan_images` directly; it also runs automatically on every app startup
 
 ## 22. File map for maintenance
 

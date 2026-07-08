@@ -8,6 +8,7 @@ import threading
 import time
 import glob
 import logging
+import psutil
 import pandas as pd
 from collections import defaultdict
 from io import BytesIO
@@ -223,6 +224,32 @@ def _file_fingerprint(file_path):
     return (os.path.abspath(file_path), stats.st_mtime_ns, stats.st_size)
 
 
+def _check_multiple_tally_instances():
+    count = 0
+    for process in psutil.process_iter(["name", "exe"]):
+        try:
+            names = []
+            process_name = str(process.info.get("name") or "").strip().lower()
+            if process_name:
+                names.append(process_name)
+                if process_name.endswith(".exe"):
+                    names.append(process_name[:-4])
+
+            process_exe = str(process.info.get("exe") or "").strip().lower()
+            if process_exe:
+                exe_name = os.path.basename(process_exe)
+                if exe_name:
+                    names.append(exe_name)
+                    if exe_name.endswith(".exe"):
+                        names.append(exe_name[:-4])
+
+            if "tally.exe" in names or "tally" in names:
+                count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return count
+
+
 # Runtime caches used by hot endpoints.
 STOCK_ITEMS_CACHE = []
 MAIN_ROWS_CACHE = {"fingerprint": None, "rows": [], "exact_index": {}}
@@ -263,41 +290,6 @@ def _all_stock_items():
     return STOCK_ITEMS_CACHE
 
 
-def _resolve_prices_for_stock_items(stock_item_names):
-    lookup = {}
-    default_price = "Contact Us"
-
-    current_user_id = _current_user_id()
-    current_role = _current_role()
-    if current_user_id is None or current_role is None:
-        return lookup, default_price
-
-    user_record = db.get_user_by_id(current_user_id)
-    if user_record and bool(user_record.get("force_contact_us")):
-        for stock_item_name in stock_item_names:
-            lookup[_normalize_lookup_key(stock_item_name)] = default_price
-        return lookup, default_price
-
-    custom_lookup = db.get_customer_prices_for_stock_items(current_user_id, stock_item_names)
-    base_lookup = db.get_base_prices_for_stock_items(stock_item_names)
-
-    for stock_item_name in stock_item_names:
-        key = _normalize_lookup_key(stock_item_name)
-        custom_price = custom_lookup.get(key)
-        if custom_price:
-            lookup[key] = custom_price
-            continue
-
-        base_price = base_lookup.get(key)
-        if base_price:
-            lookup[key] = base_price
-            continue
-
-        lookup[key] = default_price
-
-    return lookup, default_price
-
-
 def _build_design_payload(designs):
     stock_item_names = []
     seen = set()
@@ -309,11 +301,9 @@ def _build_design_payload(designs):
             stock_item_names.append(stock_item_name)
 
     mapping_lookup = db.get_mappings_for_stock_items(stock_item_names)
-    price_lookup, default_price = _resolve_prices_for_stock_items(stock_item_names)
     payload = []
     for item in designs or []:
         stock_item_name = item.get("design") or item.get("raw") or "Unknown"
-        price = price_lookup.get(_normalize_lookup_key(stock_item_name), default_price)
         mapping = mapping_lookup.get(_normalize_lookup_key(stock_item_name))
         enriched_item = dict(item)
         if mapping and mapping.get("image_id"):
@@ -331,7 +321,6 @@ def _build_design_payload(designs):
                 "confidence": 0.0,
             })
         enriched_item["fix_url"] = f"/train?stock_item={quote(stock_item_name)}"
-        enriched_item["price"] = price
         payload.append(enriched_item)
     return payload
 
@@ -358,11 +347,162 @@ def _resolve_car_model_hint(image_record):
     return None
 
 
-def _stock_items_for_train_page():
-    items = _all_stock_items()
-    if items:
-        return items
-    return []
+def _load_training_stock_qty_map():
+    json_file = ITEM_STOCK_CACHE_JSON
+    if os.path.exists(json_file):
+        try:
+            with open(json_file, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            qty_map = {}
+            for row in payload if isinstance(payload, list) else []:
+                item_name = str(row.get("item_name") or "").strip()
+                try:
+                    qty = int(row.get("qty") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if item_name and qty > 0:
+                    qty_map[_normalize_text(item_name)] = qty
+            if qty_map:
+                with DATA_CACHE_LOCK:
+                    STOCK_QTY_CACHE["fingerprint"] = _file_fingerprint(json_file)
+                    STOCK_QTY_CACHE["qty_map"] = qty_map
+                return qty_map
+        except Exception:
+            pass
+
+    stock_file = get_latest_stock_file_path()
+    fingerprint = _file_fingerprint(stock_file)
+    if fingerprint is None:
+        return {}
+
+    with DATA_CACHE_LOCK:
+        if STOCK_QTY_CACHE["fingerprint"] == fingerprint:
+            return STOCK_QTY_CACHE["qty_map"]
+
+    qty_map = {}
+    try:
+        rows = load_excel_rows(stock_file, usecols=[0, 1], min_row=2)
+        for row in rows:
+            item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
+            qty_val = row[1] if len(row) > 1 else None
+            if not item_name or qty_val in (None, ""):
+                continue
+            try:
+                qty = int(float(qty_val))
+            except (ValueError, TypeError):
+                continue
+            if qty <= 0:
+                continue
+            qty_map[_normalize_text(item_name)] = qty
+    except Exception:
+        qty_map = {}
+
+    with DATA_CACHE_LOCK:
+        STOCK_QTY_CACHE["fingerprint"] = fingerprint
+        STOCK_QTY_CACHE["qty_map"] = qty_map
+    return qty_map
+
+
+def _load_training_hierarchy_items():
+    qty_map = _load_training_stock_qty_map()
+    items = []
+
+    if os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+        try:
+            with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            for entry in payload if isinstance(payload, list) else []:
+                parent_name = str(entry.get("parent") or "").strip()
+                children = entry.get("children", [])
+                if not parent_name or not isinstance(children, list):
+                    continue
+                for child in children:
+                    item_name = str(child.get("item_name") or "").strip()
+                    if not item_name:
+                        continue
+                    items.append({
+                        "car_model": parent_name,
+                        "stock_item_name": item_name,
+                        "qty": qty_map.get(_normalize_text(item_name), 0),
+                    })
+            if items:
+                return items
+        except Exception:
+            pass
+
+    main_file = get_main_file_path()
+    if not os.path.exists(main_file):
+        return []
+
+    parent_names = {
+        _normalize_text(name)
+        for name in _load_car_groups_from_cache_or_excel()
+        if str(name).strip()
+    }
+    ignored_labels = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
+    current_parent = None
+
+    try:
+        rows = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
+    except Exception:
+        return []
+
+    for row in rows:
+        item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
+        if not item_name:
+            continue
+
+        item_upper = _normalize_text(item_name)
+        if item_upper in ignored_labels:
+            continue
+
+        if item_upper in parent_names:
+            current_parent = item_name
+            continue
+
+        if current_parent is not None:
+            items.append({
+                "car_model": current_parent,
+                "stock_item_name": item_name,
+                "qty": qty_map.get(item_upper, 0),
+            })
+
+    return items
+
+
+def get_stock_items_for_training_from_hierarchy(car_full_name):
+    if not os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+        return None
+
+    try:
+        with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return None
+
+    car_upper = _normalize_text(car_full_name)
+    qty_map = _load_training_stock_qty_map()
+    for entry in payload if isinstance(payload, list) else []:
+        parent_name = str(entry.get("parent") or "").strip()
+        if _normalize_text(parent_name) != car_upper:
+            continue
+
+        children = entry.get("children", [])
+        if not isinstance(children, list):
+            children = []
+
+        return [
+            {
+                "car_model": parent_name,
+                "stock_item_name": item_name,
+                "qty": qty_map.get(_normalize_text(item_name), 0),
+            }
+            for child in children
+            for item_name in [str(child.get("item_name") or "").strip()]
+            if item_name
+        ]
+
+    return None
 
 
 def get_stock_items_for_training(car_full_name):
@@ -371,7 +511,7 @@ def get_stock_items_for_training(car_full_name):
     full_norm = _normalize_text(car_full_name)
     exact_car_norm = _normalize_text(car_full_name)
 
-    items = _all_stock_items()
+    items = _load_training_hierarchy_items()
     if not base_norm:
         return items
 
@@ -507,15 +647,12 @@ def get_latest_stock_file_path():
     return max(existing, key=lambda path: os.path.getmtime(path))
 
 
-def _scan_images_if_database_empty():
+def _scan_images_on_startup():
     try:
         if not app.config["INITIAL_IMAGE_SCAN"]:
             logger.info("Initial image scan disabled by INITIAL_IMAGE_SCAN")
             return
         if not os.path.exists(IMAGE_SCAN_ROOT):
-            return
-        if db.get_image_count() > 0:
-            logger.info("Skipping startup image scan because database already has indexed images")
             return
         result = image_scanner.scan_ss_image_folder(IMAGE_SCAN_ROOT)
         print(f"scanned image folder: {result['total_images']} images from {result['total_folders']} folders")
@@ -543,7 +680,7 @@ def start_background_startup_tasks():
             logger.exception("Background data load failed")
 
         try:
-            _scan_images_if_database_empty()
+            _scan_images_on_startup()
         except Exception:
             logger.exception("Background image scan failed")
 
@@ -629,6 +766,13 @@ def fetch_item_stock_flat():
 
     This avoids writing Tally XML error text into the spreadsheet file.
     """
+    tally_instance_count = _check_multiple_tally_instances()
+    if tally_instance_count > 1:
+        raise Exception(
+            f"Multiple Tally instances detected ({tally_instance_count} running). "
+            "Close duplicate Tally windows and keep only one open, then try again."
+        )
+
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
@@ -780,6 +924,13 @@ def fetch_item_stock_flat():
 
 
 def fetch_car_master_from_tally():
+    tally_instance_count = _check_multiple_tally_instances()
+    if tally_instance_count > 1:
+        raise Exception(
+            f"Multiple Tally instances detected ({tally_instance_count} running). "
+            "Close duplicate Tally windows and keep only one open, then try again."
+        )
+
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
@@ -883,6 +1034,13 @@ def save_car_master_to_file(car_names):
 
 
 def fetch_main_hierarchy_from_tally():
+    tally_instance_count = _check_multiple_tally_instances()
+    if tally_instance_count > 1:
+        raise Exception(
+            f"Multiple Tally instances detected ({tally_instance_count} running). "
+            "Close duplicate Tally windows and keep only one open, then try again."
+        )
+
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
@@ -1731,40 +1889,6 @@ def resolve_car_from_folder():
     return jsonify({"car": hint})
 
 
-@app.route("/admin/pricing")
-@admin_required
-def admin_pricing():
-    customers = db.get_customer_users()
-    raw_customer = (request.args.get("customer_id") or "").strip()
-    selected_mode = "global"
-    selected_customer_id = None
-    selected_customer = None
-
-    if raw_customer and raw_customer.lower() not in {"global", "0"}:
-        try:
-            candidate_id = int(raw_customer)
-        except (TypeError, ValueError):
-            candidate_id = None
-        if candidate_id is not None:
-            customer_index = {c["id"]: c for c in customers}
-            selected_customer = customer_index.get(candidate_id)
-            if selected_customer:
-                selected_mode = "customer"
-                selected_customer_id = candidate_id
-
-    status_message = (request.args.get("status") or "").strip()
-    error_message = (request.args.get("error") or "").strip()
-    return render_template(
-        "pricing.html",
-        customers=customers,
-        selected_customer=selected_customer,
-        selected_customer_id=selected_customer_id,
-        selected_mode=selected_mode,
-        status_message=status_message,
-        error_message=error_message,
-    )
-
-
 @app.route("/admin/accounts")
 @admin_required
 def admin_accounts():
@@ -1775,62 +1899,6 @@ def admin_accounts():
         status_message=status_message,
         error_message=error_message,
     )
-
-
-@app.route("/admin/pricing_data")
-@admin_required
-def admin_pricing_data():
-    load_error = ensure_data_loaded()
-    if load_error:
-        return jsonify({"error": load_error}), 500
-
-    customers = db.get_customer_users()
-    raw_customer = (request.args.get("customer_id") or "").strip()
-    selected_mode = "global"
-    selected_customer_id = None
-    selected_customer = None
-
-    if raw_customer and raw_customer.lower() not in {"global", "0"}:
-        try:
-            candidate_id = int(raw_customer)
-        except (TypeError, ValueError):
-            candidate_id = None
-        if candidate_id is not None:
-            customer_index = {c["id"]: c for c in customers}
-            selected_customer = customer_index.get(candidate_id)
-            if selected_customer:
-                selected_mode = "customer"
-                selected_customer_id = candidate_id
-
-    stock_items = _stock_items_for_train_page()
-    stock_item_names = [item.get("stock_item_name", "") for item in stock_items]
-    base_prices = db.get_base_prices_for_stock_items(stock_item_names)
-    customer_prices = (
-        db.get_customer_prices_for_stock_items(selected_customer_id, stock_item_names)
-        if selected_mode == "customer" and selected_customer_id is not None
-        else {}
-    )
-
-    rows = []
-    for item in stock_items:
-        stock_item_name = item.get("stock_item_name", "")
-        key = _normalize_lookup_key(stock_item_name)
-        base_price = str(base_prices.get(key, "") or "").strip()
-        custom_price = str(customer_prices.get(key, "") or "").strip()
-        rows.append({
-            "car_model": item.get("car_model", ""),
-            "stock_item_name": stock_item_name,
-            "base_price": base_price,
-            "custom_price": custom_price,
-            "default_display": base_price or "Contact Us",
-        })
-
-    return jsonify({
-        "mode": selected_mode,
-        "selected_customer_id": selected_customer_id,
-        "selected_customer": selected_customer,
-        "rows": rows,
-    })
 
 
 @app.route("/admin/create_user", methods=["POST"])
@@ -1861,8 +1929,7 @@ def admin_create_user():
             "id": created_user["id"],
             "username": created_user["username"],
             "role": created_user.get("role", "customer"),
-            "force_contact_us": bool(created_user.get("force_contact_us")),
-            "status": "paused" if bool(created_user.get("force_contact_us")) else "active",
+            "status": "active",
             "created_at": created_user.get("created_at"),
         },
     }), 200
@@ -1876,8 +1943,7 @@ def admin_get_all_customers():
         {
             "id": customer["id"],
             "username": customer["username"],
-            "force_contact_us": bool(customer.get("force_contact_us")),
-            "status": "paused" if bool(customer.get("force_contact_us")) else "active",
+            "status": "active",
             "created_at": customer.get("created_at"),
         }
         for customer in customers
@@ -1899,118 +1965,6 @@ def admin_delete_user(user_id):
         "success": True,
         "message": f"Account '{deleted_user['username']}' deleted successfully",
         "user_id": user_id,
-    })
-
-
-@app.route("/admin/toggle_user_status/<int:user_id>", methods=["POST"])
-@admin_required
-def admin_toggle_user_status(user_id):
-    payload = request.get_json(silent=True) or request.form or {}
-    pause = _parse_bool(payload.get("pause"))
-
-    try:
-        updated_user = db.set_customer_access_paused(user_id, pause)
-    except ValueError as exc:
-        message = str(exc)
-        status = 404 if "not found" in message.lower() else 400
-        return jsonify({"success": False, "error": message}), status
-
-    db.log_account_action(user_id, "paused" if pause else "resumed", _current_user_id())
-    return jsonify({
-        "success": True,
-        "message": f"Account '{updated_user['username']}' {'paused' if pause else 'resumed'}",
-        "status": "paused" if bool(updated_user.get("force_contact_us")) else "active",
-        "force_contact_us": bool(updated_user.get("force_contact_us")),
-        "user_id": user_id,
-    })
-
-
-@app.route("/admin/set_all_customer_status", methods=["POST"])
-@admin_required
-def admin_set_all_customer_status():
-    payload = request.get_json(silent=True) or request.form or {}
-    pause = _parse_bool(payload.get("pause"))
-    changed = db.set_all_customer_access_paused(pause)
-
-    customers = db.get_all_customers_with_details()
-    action_name = "paused" if pause else "resumed"
-    admin_id = _current_user_id()
-    for customer in customers:
-        db.log_account_action(customer["id"], action_name, admin_id)
-
-    return jsonify({
-        "success": True,
-        "message": f"All customers {action_name}",
-        "updated_count": changed,
-        "status": "paused" if pause else "active",
-    })
-
-
-@app.route("/admin/save_price", methods=["POST"])
-@admin_required
-def admin_save_price():
-    payload = request.get_json(silent=True) or request.form or {}
-
-    stock_item_name = str(payload.get("stock_item_name") or "").strip()
-    if not stock_item_name:
-        return jsonify({"error": "stock_item_name is required"}), 400
-
-    mode = str(payload.get("mode") or "customer").strip().lower()
-    base_price = str(payload.get("base_price") or "").strip()
-    if mode == "global":
-        db.upsert_base_price(stock_item_name, base_price)
-
-    customer_id = None
-    custom_price = ""
-    if mode != "global":
-        customer_id_raw = payload.get("customer_id")
-        try:
-            customer_id = int(customer_id_raw)
-        except (TypeError, ValueError):
-            return jsonify({"error": "customer_id is required"}), 400
-
-        customer = db.get_user_by_id(customer_id)
-        if not customer or customer.get("role") != "customer":
-            return jsonify({"error": "customer not found"}), 404
-
-        custom_price = str(payload.get("custom_price") or "").strip()
-        db.upsert_customer_price(customer_id, stock_item_name, custom_price)
-
-    return jsonify({
-        "status": "saved",
-        "mode": mode,
-        "customer_id": customer_id,
-        "stock_item_name": stock_item_name,
-        "base_price": base_price,
-        "custom_price": custom_price,
-    })
-
-
-@app.route("/admin/toggle_contact_us", methods=["POST"])
-@admin_required
-def admin_toggle_contact_us():
-    payload = request.get_json(silent=True) or request.form or {}
-    customer_id = payload.get("customer_id")
-    try:
-        customer_id = int(customer_id)
-    except (TypeError, ValueError):
-        return jsonify({"error": "customer_id is required"}), 400
-
-    customer = db.get_user_by_id(customer_id)
-    if not customer or customer.get("role") != "customer":
-        return jsonify({"error": "customer not found"}), 404
-
-    if "force_contact_us" in payload:
-        next_value = _parse_bool(payload.get("force_contact_us"))
-    else:
-        next_value = not bool(customer.get("force_contact_us"))
-
-    db.set_force_contact_us(customer_id, next_value)
-
-    return jsonify({
-        "status": "updated",
-        "customer_id": customer_id,
-        "force_contact_us": bool(next_value),
     })
 
 
@@ -2430,6 +2384,7 @@ set_search_dependencies(
     get_car_models=lambda: list(CAR_GROUPS),
     get_car_folders=db.get_image_folders,
     get_customer_users=db.get_customer_users,
+    get_stock_items_for_car_from_hierarchy=get_stock_items_for_training_from_hierarchy,
     get_stock_items_for_car=get_stock_items_for_training,
 )
 
