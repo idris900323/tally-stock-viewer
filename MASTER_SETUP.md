@@ -135,6 +135,8 @@ If you are moving from an older PC, copy the `data\` contents before relying on 
 
 You should see the login page.
 
+Note: about 45 seconds after the app starts, it automatically pulls a fresh car master, hierarchy, and stock export from Tally on its own — the same thing the `Full Refresh` button does. As long as Tally Prime was already open at that point, most mornings nobody needs to click `Full Refresh` manually. If Tally was not open yet, this automatic attempt just fails quietly in the log and the `Full Refresh` button remains available to run once Tally is up.
+
 ### To stop the app
 
 Preferred method:
@@ -168,7 +170,7 @@ These defaults should be changed before public rollout.
 
 1. Log in as admin
 2. Open the main screen
-3. Click `Update Stock`
+3. Click `Update Stock` (quantities only) or `Full Refresh` (car master + hierarchy + stock)
 
 What happens:
 - the app requests the latest stock from Tally
@@ -177,14 +179,17 @@ What happens:
 
 If Tally is offline, the app falls back to the last saved stock export instead of fully failing.
 
+A `Full Refresh` also runs automatically once, about 45 seconds after the app starts (see section 5) — the manual button is mainly for triggering it again later in the day, or if Tally wasn't open yet when the app started.
+
 ### Train image matches
 
 1. Log in as admin
 2. Click `Train Matches`
 3. Review unmatched images
-4. confirm the correct stock item for each image
+4. When picking a stock item from the dropdown, the page shows the image currently linked to that stock item (if any) so you can compare it against the new image before confirming
+5. confirm the correct stock item for each image
 
-This saves image-to-stock mappings into `mappings.db`.
+This saves image-to-stock mappings into `mappings.db`. Each stock item can only be linked to one image at a time — confirming a new image against a stock item that already has one automatically replaces the old link.
 
 ### Manage pricing
 

@@ -491,6 +491,29 @@ def get_mapping_by_image_id(image_id):
     return _row_to_dict(row)
 
 
+def remove_mappings_for_stock_item(stock_item_name, exclude_image_id=None):
+    """Delete any mapping(s) pointing at stock_item_name, optionally excluding one image_id.
+
+    Used so a stock item is only ever mapped to a single image at a time.
+    """
+    try:
+        with _connect() as conn:
+            if exclude_image_id is not None:
+                cursor = conn.execute(
+                    "DELETE FROM mappings WHERE LOWER(stock_item_name) = LOWER(?) AND image_id != ?",
+                    (stock_item_name, exclude_image_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM mappings WHERE LOWER(stock_item_name) = LOWER(?)",
+                    (stock_item_name,),
+                )
+        return cursor.rowcount
+    except Exception:
+        logger.exception("remove_mappings_for_stock_item failed for stock_item_name=%s", stock_item_name)
+        raise
+
+
 def get_mapping_for_stock_item(stock_item_name):
     with _connect() as conn:
         row = conn.execute(

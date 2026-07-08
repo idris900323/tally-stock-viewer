@@ -690,6 +690,19 @@ def start_background_startup_tasks():
     thread = threading.Thread(target=_startup_routine, daemon=True)
     thread.start()
 
+    def _startup_full_refresh():
+        time.sleep(45)  # give Tally and the app time to be ready
+        if FULL_REFRESH_LOCK.acquire(blocking=False):
+            try:
+                logger.info("Running automatic full refresh on startup")
+                run_full_refresh_job()
+            finally:
+                FULL_REFRESH_LOCK.release()
+        else:
+            logger.info("Skipping startup full refresh — already running")
+
+    threading.Thread(target=_startup_full_refresh, daemon=True).start()
+
 
 def _refresh_stock_data():
     global last_refresh_status
@@ -2139,6 +2152,8 @@ def confirm_mapping():
         return jsonify({"error": "image not found"}), 404
 
     resolved_car_model = car_model or _resolve_car_model_hint(image_record) or image_record.get("car_folder")
+    if stock_item_name not in ("", "__UNMATCHABLE__"):
+        db.remove_mappings_for_stock_item(stock_item_name, exclude_image_id=image_id)
     db.add_mapping(image_id, stock_item_name, resolved_car_model, confidence, confirmed_by=confirmed_by)
     if resolved_car_model and confidence >= 1.0 and stock_item_name not in ("", "__UNMATCHABLE__"):
         db.add_folder_mapping(image_record.get("car_folder", ""), resolved_car_model)
@@ -2227,6 +2242,25 @@ def get_stock_image():
     return _placeholder_response()
 
 
+@app.route("/get_current_mapping_image")
+def get_current_mapping_image():
+    stock_item_name = request.args.get("stock_item", "")
+    if not stock_item_name:
+        return jsonify({"has_mapping": False, "image_id": None, "image_url": None, "confidence": None})
+
+    mapping = db.get_mapping_for_stock_item(stock_item_name)
+    if not mapping:
+        return jsonify({"has_mapping": False, "image_id": None, "image_url": None, "confidence": None})
+
+    image_id = mapping.get("image_id")
+    return jsonify({
+        "has_mapping": True,
+        "image_id": image_id,
+        "image_url": f"/get_image/{image_id}",
+        "confidence": mapping.get("confidence"),
+    })
+
+
 @app.route("/suggest_match/<int:image_id>")
 def suggest_match_route(image_id):
     return jsonify({"error": "AI suggestion is disabled for now"}), 410
@@ -2244,11 +2278,56 @@ def mapping_stats():
     return jsonify(db.get_mapping_stats())
 
 
+def run_full_refresh_job():
+    """Fetch car master, main hierarchy, and item stock from Tally, then reload.
+
+    Shared by the manual /full_refresh route and the automatic startup refresh.
+    Caller is responsible for holding FULL_REFRESH_LOCK for the duration of this call.
+    """
+    global full_refresh_status
+    try:
+        full_refresh_status = {
+            "running": True,
+            "stage": "car_master",
+            "error": None,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        car_names = fetch_car_master_from_tally()
+        save_car_master_to_file(car_names)
+        full_refresh_status["stage"] = "main_hierarchy"
+
+        flat_rows = fetch_main_hierarchy_from_tally()
+        save_main_hierarchy_to_file(flat_rows)
+        full_refresh_status["stage"] = "item_stock"
+
+        fetch_item_stock_flat()
+        full_refresh_status["stage"] = "reloading"
+
+        load_data(refresh_first=False)
+        full_refresh_status = {
+            "running": False,
+            "stage": "done",
+            "error": None,
+            "timestamp": datetime.now().isoformat()
+        }
+        logger.info("Full refresh completed successfully")
+
+    except Exception as exc:
+        error_code = _classify_tally_exception(exc)
+        full_refresh_status = {
+            "running": False,
+            "stage": "error",
+            "error": str(exc),
+            "error_code": error_code,
+            "timestamp": datetime.now().isoformat()
+        }
+        logger.exception("Full refresh failed: %s", exc)
+
+
 @app.route("/full_refresh", methods=["POST"])
 @admin_required
 def full_refresh():
-    global full_refresh_status
-
     if not FULL_REFRESH_LOCK.acquire(blocking=False):
         return jsonify({
             "ok": False,
@@ -2257,45 +2336,8 @@ def full_refresh():
         }), 409
 
     def _run_full_refresh():
-        global full_refresh_status
         try:
-            full_refresh_status = {
-                "running": True,
-                "stage": "car_master",
-                "error": None,
-                "timestamp": datetime.now().isoformat()
-            }
-
-            car_names = fetch_car_master_from_tally()
-            save_car_master_to_file(car_names)
-            full_refresh_status["stage"] = "main_hierarchy"
-
-            flat_rows = fetch_main_hierarchy_from_tally()
-            save_main_hierarchy_to_file(flat_rows)
-            full_refresh_status["stage"] = "item_stock"
-
-            fetch_item_stock_flat()
-            full_refresh_status["stage"] = "reloading"
-
-            load_data(refresh_first=False)
-            full_refresh_status = {
-                "running": False,
-                "stage": "done",
-                "error": None,
-                "timestamp": datetime.now().isoformat()
-            }
-            logger.info("Full refresh completed successfully")
-
-        except Exception as exc:
-            error_code = _classify_tally_exception(exc)
-            full_refresh_status = {
-                "running": False,
-                "stage": "error",
-                "error": str(exc),
-                "error_code": error_code,
-                "timestamp": datetime.now().isoformat()
-            }
-            logger.exception("Full refresh failed: %s", exc)
+            run_full_refresh_job()
         finally:
             FULL_REFRESH_LOCK.release()
 

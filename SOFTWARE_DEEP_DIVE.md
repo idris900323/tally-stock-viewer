@@ -126,6 +126,7 @@ Notable behavior:
 - scanned file paths are validated and normalized
 - legacy absolute image paths are migrated to portable relative paths on every startup; if a relative-path row for the same file already exists, the legacy row is merged into it instead of renamed (keeping whichever confirmed mapping has the more recent `created_at`) and the legacy row is deleted
 - default seed users are inserted only when the `users` table is empty
+- `remove_mappings_for_stock_item(stock_item_name, exclude_image_id=None)` deletes any mapping row(s) for a given stock item, optionally excluding one image; `confirm_mapping` in `app.py` calls this before every save so a stock item only ever has one image mapped to it (see section 13)
 
 Seeded defaults from the current code:
 - admin / `idris123`
@@ -183,6 +184,16 @@ Manual stock refresh uses this path:
 6. JSON and Excel cache files are updated
 7. `load_data()` rebuilds the in-memory design map
 
+### Full refresh
+
+`run_full_refresh_job()` is the shared implementation behind every "full refresh" (car master + main hierarchy + item stock, in that order, followed by `load_data()`). It updates the module-level `full_refresh_status` dict as it moves through stages (`car_master` -> `main_hierarchy` -> `item_stock` -> `reloading` -> `done`, or `error`), guarded end-to-end by `FULL_REFRESH_LOCK`.
+
+Two callers share this function without duplicating logic:
+- `POST /full_refresh` — the manual admin button; acquires the lock (non-blocking, `409` if already running), runs the job in a background thread, returns `202` immediately
+- the automatic startup job described in section 10 — runs once, ~45 seconds after the app starts
+
+`GET /full_refresh_status` polls the same `full_refresh_status` dict regardless of which caller started the job, so the frontend progress bar behaves identically whether a human clicked the button or the startup job triggered it.
+
 ### What the refresh actually asks from Tally
 
 The code performs two main export requests:
@@ -215,9 +226,16 @@ If Tally is unreachable or times out:
 
 The startup scan used to be skipped whenever the `images` table already had rows, which meant it only ever ran once, the very first time the database was populated — restarting the app afterward never picked up new files added to `S.S IMAGE`. It now always re-scans on startup; the scan is an upsert (`add_images_batch`), so re-scanning unchanged files is a cheap no-op.
 
+`start_background_startup_tasks()` also starts a second, independent daemon thread that runs one automatic full refresh (car master + main hierarchy + item stock via `run_full_refresh_job()`, see section 9) shortly after startup:
+- it sleeps 45 seconds first, to give Tally and the app time to be ready
+- it then tries to acquire `FULL_REFRESH_LOCK` (non-blocking); if the lock is already held (e.g. someone clicked the manual button first) it logs and skips instead of waiting or queuing
+- if Tally is not reachable yet at the 45-second mark, `run_full_refresh_job()`'s own error handling catches it, logs a warning, and updates `full_refresh_status` to `error` — it does not crash the app or block startup
+- this runs exactly once per app start; it is not a repeating timer, and the manual `Full Refresh` button remains the way to trigger it again later
+
 ### Timers
 - item export default interval: from `TALLY_EXPORT_INTERVAL`, default `180` seconds
 - car master refresh interval: `86400` seconds
+- automatic startup full refresh: one-time, 45 seconds after `start_background_startup_tasks()` runs
 
 ### Car master refresh
 
@@ -275,20 +293,25 @@ The mapping workflow lives mostly in `app.py`, `database.py`, `matcher.py`, and 
 - `POST /remove_mapping`
 - `POST /scan_images`
 - `GET /mapping_stats`
+- `GET /get_current_mapping_image?stock_item=<name>` — used by the `train.html` "Currently Matched Image" preview; looks up `db.get_mapping_for_stock_item()` and returns `{has_mapping, image_id, image_url, confidence}` as JSON so the admin can visually compare the existing match against the new image before confirming
 
 ### Mapping save behavior
 
 When an admin confirms a mapping:
 - the image row is looked up
+- any other image currently mapped to the same `stock_item_name` is deleted first via `db.remove_mappings_for_stock_item(stock_item_name, exclude_image_id=image_id)`, so a stock item is only ever mapped to one image at a time (blank and `__UNMATCHABLE__` values are skipped, matching the existing folder-mapping guard just below it)
 - the selected stock item is saved to `mappings`
 - the car model hint is resolved
 - high-confidence confirmed mappings also update `folder_car_mapping`
+
+Before this, `mappings` only enforced a UNIQUE constraint on `image_id`, so two images could independently end up mapped to the same stock item — `get_mapping_for_stock_item()` would just return whichever was most recently confirmed while the older mapping sat unused in the table. The explicit delete-then-insert step closes that gap.
 
 ### Image serving behavior
 
 Images are served through:
 - `GET /get_image/<image_id>`
 - `GET /get_stock_image`
+- `GET /get_current_mapping_image` (JSON metadata only, not the image bytes — the frontend then loads the image itself via `/get_image/<image_id>`)
 
 If no file can be resolved, the app returns an inline SVG placeholder instead of failing.
 
@@ -428,6 +451,8 @@ The health endpoint checks SQLite access, not live Tally reachability.
 - public tunnel startup is conditional on `cloudflared.exe` being present in the app root
 - the generated Desktop stop shortcut only kills the server PID; the full clean shutdown path is the tray menu item `Stop & Exit`
 - `templates/train.html` exposes an admin-only `Rescan Images` button that calls `POST /scan_images` directly; it also runs automatically on every app startup
+- a full refresh (car master + main hierarchy + item stock) also runs automatically once, ~45 seconds after every app startup, sharing `run_full_refresh_job()` with the manual `Full Refresh` button; it silently skips if a refresh is already running and fails gracefully (logged, `full_refresh_status` set to `error`) if Tally isn't reachable yet — it never blocks startup or crashes the app
+- each stock item can only be mapped to one image at a time; confirming a new image against a stock item that's already mapped elsewhere silently deletes that other mapping first (`db.remove_mappings_for_stock_item`)
 
 ## 22. File map for maintenance
 

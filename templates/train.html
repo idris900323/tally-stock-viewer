@@ -272,6 +272,28 @@
             display: inline-flex;
             justify-content: center;
             align-items: center;
+            transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        button:hover, .link-button:hover {
+            transform: translateY(-1px);
+        }
+
+        button:active, .link-button:active {
+            transform: translateY(0);
+        }
+
+        button:focus-visible, .link-button:focus-visible, select:focus-visible, input:focus-visible {
+            outline: 2px solid var(--accent-2);
+            outline-offset: 2px;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
 
         button.primary {
@@ -279,9 +301,17 @@
             color: #fff;
         }
 
+        button.primary:hover {
+            background: #0c5c54;
+        }
+
         button.secondary {
             background: #e8eef7;
             color: var(--text);
+        }
+
+        button.secondary:hover {
+            background: #dbe4f0;
         }
 
         button.ghost {
@@ -289,10 +319,22 @@
             color: var(--text);
         }
 
+        button.ghost:hover {
+            background: #e5e7eb;
+        }
+
+        .rescan-btn:hover {
+            background: #c7ddfc;
+        }
+
         .link-button {
             background: #f8fafc;
             color: var(--accent-2);
             border: 1px solid var(--border);
+        }
+
+        .link-button:hover {
+            background: #eef2f7;
         }
 
         .notice {
@@ -329,7 +371,32 @@
             align-items: center;
             gap: 12px;
             flex-wrap: wrap;
-            margin-bottom: 12px;
+            position: sticky;
+            top: 8px;
+            z-index: 40;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 24px rgba(20, 33, 61, 0.08);
+        }
+
+        .rescan-btn {
+            background: #dbeafe;
+            color: var(--accent-2);
+        }
+
+        .rescan-status {
+            margin-top: 10px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            color: #0369a1;
+            font-size: 13px;
+            display: none;
         }
 
         .role-badge {
@@ -476,33 +543,69 @@
                 flex-direction: column;
             }
 
+            .topbar {
+                position: sticky;
+                top: 0;
+                margin: -18px -12px 14px;
+                padding: 10px 12px;
+                border-radius: 0;
+                border-left: 0;
+                border-right: 0;
+                border-top: 0;
+            }
+
             .topbar .actions {
-                flex-wrap: wrap;
+                flex-direction: row;
+                flex-wrap: nowrap;
                 gap: 8px;
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                justify-content: flex-start;
+                padding-bottom: 2px;
+            }
+
+            .topbar .actions button,
+            .topbar .actions .link-button {
+                width: auto;
+                flex: 0 0 auto;
+                white-space: nowrap;
+                min-height: 40px;
             }
 
             #rescanImagesBtn {
-                width: 100%;
-                min-height: 44px;
+                width: auto;
+                min-height: 40px;
+            }
+
+            .select2-results__options {
+                max-height: 60vh !important;
             }
         }
     </style>
 </head>
 <body>
 <div class="page">
-    <div class="header">
-        <div class="topbar">
-            <div class="role-badge">{{ current_role|default('viewer')|title }} mode</div>
-            <div class="actions">
-                <a href="/" class="link-button">Back to Viewer</a>
-                {% if is_admin %}
-                <a href="/admin/accounts" class="link-button">Manage Accounts</a>
-                {% endif %}
-                <a href="/logout" class="link-button">Logout</a>
-            </div>
+    <div class="topbar">
+        <div class="role-badge">{{ current_role|default('viewer')|title }} mode</div>
+        <div class="actions">
+            <a href="/" class="link-button" title="Return to the main stock viewer page">Back to Viewer</a>
+            {% if is_admin %}
+            <button id="rescanImagesBtn" class="rescan-btn" onclick="rescanImages()" title="Scan the S.S IMAGE folder for new images or car folders that haven't been added yet">
+                <span aria-hidden="true">&#8635;</span>&nbsp;Rescan Images
+            </button>
+            <a href="/admin/accounts" class="link-button" title="Manage staff login accounts (admin only)">Manage Accounts</a>
+            {% endif %}
+            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
         </div>
+    </div>
+
+    <div class="header">
         <h1>Training Mode - Stock Matching</h1>
         <p>Confirm which stock item belongs to each scanned image. Confirmed matches are saved directly to the local database.</p>
+        {% if is_admin %}
+        <div id="rescanStatus" class="rescan-status"></div>
+        {% endif %}
     </div>
 
     <div class="progress-card" id="progressCard">
@@ -527,19 +630,19 @@
     <div class="grid">
         <div class="panel preview-wrap">
             <div class="field">
-                <label for="ssCarQueueSelect">SS Car Queue</label>
-                <div id="ssCarQueueContainer">
+                <label for="ssCarQueueSelect">SS Car Folder</label>
+                <div id="ssCarQueueContainer" title="Choose which car folder's images to review">
                     <select id="ssCarQueueSelect"></select>
                 </div>
             </div>
 
             <div class="field">
                 <label for="imageSelect">Images in Selected Car</label>
-                <select id="imageSelect" onchange="handleImageSelection()"></select>
+                <select id="imageSelect" onchange="handleImageSelection()" title="Pick which image from this car folder to work on"></select>
             </div>
 
             <div class="image-frame">
-                <img id="imagePreview" alt="Training preview" onclick="openFullscreenImage()">
+                <img id="imagePreview" alt="Training preview" onclick="openFullscreenImage()" title="Click to view this image full-screen">
                 <div class="image-overlay">
                     <span class="pill" id="imageIdPill">Image #-</span>
                     <span class="pill" id="imageStatusPill">Awaiting image</span>
@@ -552,39 +655,37 @@
                 <div>Scan Date: <strong id="scanDateText">-</strong></div>
             </div>
 
-            <div class="footer-actions">
-                <a href="/" class="link-button">Back to Viewer</a>
-            </div>
-            {% if is_admin %}
-            <div class="actions">
-                <button id="rescanImagesBtn" class="secondary" onclick="rescanImages()">
-                    Rescan Images
-                </button>
-            </div>
-            <div id="rescanStatus" style="display:none; margin-top:8px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
-            </div>
-            {% endif %}
         </div>
 
         <div class="panel">
             <div class="form-grid">
                 <div class="field">
-                    <label for="carModelFilter">Car Filter</label>
-                    <div id="carFilterContainer">
+                    <label for="carModelFilter">Search Stock By Car</label>
+                    <div id="carFilterContainer" title="Choose which car's stock items to search when picking a match">
                         <select id="carModelFilter"></select>
                     </div>
                 </div>
 
                 <div class="field">
                     <label for="stockItemSelect">Select Matching Stock Item</label>
-                    <select id="stockItemSelect"></select>
+                    <select id="stockItemSelect" onchange="handleStockItemSelection()" title="Choose the stock item that matches the image shown on the left"></select>
                     <div class="muted" id="itemCount" style="margin-top:6px; font-size:12px;">Select a car to load stock items.</div>
+                </div>
+
+                <div id="currentMatchPreview" style="display:none; margin-top:12px;" title="Shows the image currently linked to this stock item, if any">
+                    <div style="font-size:12px; font-weight:600; color:#64748b; text-transform:uppercase; margin-bottom:6px;">
+                        Currently Matched Image
+                    </div>
+                    <img id="currentMatchImg" style="max-width:150px; max-height:150px; border-radius:8px; border:1px solid #e2e8f0; object-fit:cover;" />
+                    <div id="currentMatchEmpty" style="display:none; color:#94a3b8; font-size:13px;">
+                        No image currently matched to this stock item.
+                    </div>
                 </div>
 
                 {% if is_admin %}
                 <div class="actions">
-                    <button class="primary" onclick="confirmSelectedMatch()">Confirm Match</button>
-                    <button class="ghost" onclick="removeCurrentMatch()">Remove Match</button>
+                    <button class="primary" onclick="confirmSelectedMatch()" title="Save this image as matched to the selected stock item">Confirm Match</button>
+                    <button class="ghost" onclick="removeCurrentMatch()" title="Unlink this image from its current stock item so it can be remapped">Remove Match</button>
                 </div>
                 {% else %}
                 <div class="viewer-note">
@@ -614,7 +715,7 @@
             <img id="modalImage" alt="Full screen preview">
         </div>
         <div class="modal-actions">
-            <button class="secondary" onclick="copyModalImage()">Copy Image</button>
+            <button class="secondary" onclick="copyModalImage()" title="Copy this image to your clipboard">Copy Image</button>
         </div>
     </div>
 </div>
@@ -909,6 +1010,7 @@ function selectPreferredStockItem(preferredStockItem = "") {
     const match = Array.from(select.options).find(option => normalize(option.value) === normalizedPreferred);
     if (match) {
         select.value = match.value;
+        document.getElementById("stockItemSelect").dispatchEvent(new Event("change"));
     }
 }
 
@@ -1155,6 +1257,38 @@ async function submitMapping(stockItemName, confidence, confirmedBy) {
     }
 
     updateImageView(null);
+}
+
+async function loadCurrentMatchPreview(stockItemName) {
+    const preview = document.getElementById("currentMatchPreview");
+    const img = document.getElementById("currentMatchImg");
+    const empty = document.getElementById("currentMatchEmpty");
+
+    if (!stockItemName) {
+        preview.style.display = "none";
+        return;
+    }
+
+    preview.style.display = "block";
+    try {
+        const res = await fetch(`/get_current_mapping_image?stock_item=${encodeURIComponent(stockItemName)}`);
+        const data = await res.json();
+        if (data.has_mapping && data.image_url) {
+            img.src = data.image_url;
+            img.style.display = "block";
+            empty.style.display = "none";
+        } else {
+            img.style.display = "none";
+            empty.style.display = "block";
+        }
+    } catch (err) {
+        preview.style.display = "none";
+    }
+}
+
+function handleStockItemSelection() {
+    const select = document.getElementById("stockItemSelect");
+    loadCurrentMatchPreview(select.value || "");
 }
 
 async function confirmSelectedMatch() {

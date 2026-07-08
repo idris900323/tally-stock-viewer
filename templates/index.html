@@ -141,11 +141,24 @@
             border: 0;
             cursor: pointer;
             transition: transform 0.12s ease, background-color 0.12s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
 
         button:hover {
             background: var(--accent-dark);
             transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:focus-visible,
+        select:focus-visible,
+        .select2-container--default.select2-container--focus .select2-selection--single {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
         }
 
         button.secondary {
@@ -307,6 +320,14 @@
             color: var(--accent-dark);
             font-weight: 700;
             font-size: 12px;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .thumbnail-button,
+        .design-thumbnail {
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
         }
 
         .badge {
@@ -531,17 +552,17 @@
     <div class="panel">
         <div class="toolbar">
             <label for="carSelect">Select Car Model:</label>
-            <select id="carSelect">
+            <select id="carSelect" title="Choose a car model to see its stock designs and linked images">
                 <option value="">Search for a car...</option>
             </select>
             {% if is_admin %}
-            <button class="secondary" onclick="shareVisibleImages()">Share Visible Images</button>
-            <button id="updateStockBtn" class="secondary" onclick="updateStock()">Update Stock</button>
-            <button id="fullRefreshBtn" class="secondary" onclick="startFullRefresh()">
+            <button class="secondary" onclick="shareVisibleImages()" title="Share or download all currently visible design images">Share Visible Images</button>
+            <button id="updateStockBtn" class="secondary" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
+            <button id="fullRefreshBtn" class="secondary" onclick="startFullRefresh()" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">
                 Full Refresh
             </button>
-            <button onclick="window.location.href='/train'">Train Matches</button>
-            <button class="secondary" onclick="window.location.href='/admin/accounts'">Manage Accounts</button>
+            <button onclick="window.location.href='/train'" title="Open Training Mode to match scanned images to stock items">Train Matches</button>
+            <button class="secondary" onclick="window.location.href='/admin/accounts'" title="Manage customer login accounts">Manage Accounts</button>
             {% endif %}
         </div>
         <div id="designLoadingStatus" class="loading-status">Loading designs...</div>
