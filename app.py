@@ -1,7 +1,9 @@
+'''idris' special project'''
 from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for
 import json
 import os
 import requests
+import sys
 import xml.etree.ElementTree as ET
 import re
 import shutil
@@ -2774,10 +2776,32 @@ def system_logs():
     return Response("".join(all_lines[-lines:]), mimetype="text/plain")
 
 
+def _spawn_relaunch_helper():
+    """Spawn relaunch_helper.py detached so the restart works even if
+    launcher.pyw's watchdog isn't running (see relaunch_helper.py's
+    docstring for why this can't just rely on that watchdog alone)."""
+    python_w = os.path.join(BASE_DIR, ".venv", "Scripts", "pythonw.exe")
+    python_exe = python_w if os.path.exists(python_w) else sys.executable
+    helper_script = os.path.join(BASE_DIR, "relaunch_helper.py")
+    try:
+        subprocess.Popen(
+            [python_exe, helper_script],
+            cwd=BASE_DIR,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to spawn relaunch_helper.py")
+        return False
+
+
 def _trigger_self_restart(reason):
     def _do_restart():
         time.sleep(1.5)
         logger.info(reason)
+        spawned = _spawn_relaunch_helper()
+        if not spawned:
+            logger.error("relaunch_helper.py failed to spawn; server will NOT come back automatically.")
         os._exit(0)
 
     threading.Thread(target=_do_restart, daemon=True).start()
