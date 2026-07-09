@@ -53,7 +53,6 @@ customer users - built and run by one person on an office PC.
 - Matching is heuristic/rule-based, not ML - it won't get smarter on its own
 - Single admin account model; no granular permissions
 - Runs on one office PC with a tray launcher rather than a managed server - fine for the current scale, would need rework to scale past it
-- Two setup scripts exist side by side (`first_time_setup.bat` and the older `setup_office_pc.bat`) - a bit of accumulated cruft
 
 Overall: a genuinely useful, correctly-engineered internal tool - not a toy, not over-engineered either. It solves the actual business problem (matching photos to stock and pricing them per customer) without dragging in a framework or infrastructure it doesn't need.
 

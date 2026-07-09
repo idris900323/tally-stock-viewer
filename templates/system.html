@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>System - Tally Stock Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root {
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --text: #14213d;
+            --muted: #607086;
+            --border: #d6e0ea;
+            --accent: #0f766e;
+            --accent-2: #1d4ed8;
+            --warning: #b45309;
+            --danger: #b91c1c;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 26%),
+                radial-gradient(circle at top right, rgba(29, 78, 216, 0.12), transparent 22%),
+                var(--bg);
+            color: var(--text);
+        }
+
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 28px 20px 40px;
+        }
+
+        .header {
+            margin-bottom: 18px;
+        }
+
+        .header h1 {
+            margin: 0 0 8px;
+            font-size: 34px;
+        }
+
+        .header p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            position: sticky;
+            top: 8px;
+            z-index: 40;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 24px rgba(20, 33, 61, 0.08);
+        }
+
+        .topbar-left, .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .role-indicator {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: 0 14px 40px rgba(20, 33, 61, 0.08);
+            padding: 20px;
+            margin-bottom: 18px;
+        }
+
+        .panel h2 {
+            margin: 0 0 14px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .panel h2 .badge {
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 4px 10px;
+        }
+
+        .badge.ok { background: #ecfdf3; color: #166534; }
+        .badge.warn { background: #fffbeb; color: var(--warning); }
+        .badge.bad { background: #fef2f2; color: var(--danger); }
+        .badge.muted { background: #edf2f7; color: #475569; }
+
+        .kv-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .kv-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .kv-table td:first-child {
+            color: var(--muted);
+            font-weight: 700;
+            white-space: nowrap;
+            width: 40%;
+        }
+
+        .commit-row {
+            display: flex;
+            gap: 8px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            font-family: "Consolas", monospace;
+        }
+
+        .commit-row:last-child { border-bottom: 0; }
+
+        .commit-hash {
+            color: var(--accent-2);
+            font-weight: 700;
+            flex: none;
+        }
+
+        .commit-message {
+            flex: 1;
+            min-width: 0;
+            word-break: break-word;
+            font-family: Arial, sans-serif;
+        }
+
+        .commit-time {
+            color: var(--muted);
+            flex: none;
+            font-size: 12px;
+            font-family: Arial, sans-serif;
+        }
+
+        details > summary {
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--accent-2);
+            margin-top: 10px;
+        }
+
+        button, .link-button {
+            padding: 11px 14px;
+            border-radius: 12px;
+            border: 0;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.12s ease, background-color 0.12s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        button:hover, .link-button:hover { transform: translateY(-1px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        button.primary { background: var(--accent); color: #fff; }
+        button.primary:hover { background: #0c5c54; }
+        button.secondary { background: #e8eef7; color: var(--text); }
+        button.secondary:hover { background: #dbe4f0; }
+        button.danger-outline { background: #fef2f2; color: var(--danger); }
+        button.danger-outline:hover { background: #fee2e2; }
+
+        .link-button {
+            background: #f8fafc;
+            color: var(--accent-2);
+            border: 1px solid var(--border);
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 6px;
+        }
+
+        .output-box {
+            margin-top: 12px;
+            max-height: 320px;
+            overflow-y: auto;
+            background: #0f172a;
+            color: #e2e8f0;
+            border-radius: 12px;
+            padding: 12px 14px;
+            font-family: "Consolas", monospace;
+            font-size: 12.5px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .notice {
+            display: none;
+            margin-top: 12px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+        }
+
+        .notice.success { background: #ecfdf3; color: #166534; }
+        .notice.error { background: #fef2f2; color: var(--danger); }
+
+        .muted { color: var(--muted); font-size: 13px; }
+
+        .dup-group {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .dup-group .dup-head {
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .dup-group .dup-row {
+            color: var(--muted);
+            font-size: 12px;
+            padding: 2px 0;
+        }
+
+        @media (max-width: 640px) {
+            .page { padding: 18px 12px 28px; }
+            .header h1 { font-size: 24px; }
+            button, .link-button { width: 100%; min-height: 44px; }
+            .actions { flex-direction: column; }
+            .topbar {
+                position: sticky;
+                top: 0;
+                margin: -18px -12px 14px;
+                padding: 10px 12px;
+                border-radius: 0;
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .topbar-left, .topbar-right { width: 100%; justify-content: space-between; }
+            .kv-table td:first-child { width: 50%; }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="header">
+        <h1>System</h1>
+        <p>Deployment status, logs, and environment health — check and fix things from any paired browser.</p>
+    </div>
+
+    <div class="topbar">
+        <div class="topbar-left">
+            <a href="/" class="link-button" title="Return to the main stock viewer page">Home</a>
+        </div>
+        <div class="topbar-right">
+            <span class="role-indicator">{{ current_role|default('admin')|title }} mode</span>
+            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Deployment <span class="badge muted" id="deployStatusBadge">Checking...</span></h2>
+        <table class="kv-table">
+            <tr><td>Local commit</td><td id="localCommit">-</td></tr>
+            <tr><td>Committed</td><td id="localCommitTime">-</td></tr>
+            <tr><td>Remote (origin/main)</td><td id="remoteCommit">-</td></tr>
+        </table>
+
+        <details>
+            <summary>Recent commits</summary>
+            <div id="recentCommits" style="margin-top:8px;"></div>
+        </details>
+
+        <div class="actions" style="margin-top:16px;">
+            <button class="primary" id="pullRestartBtn" onclick="pullAndRestart()" title="Pulls the latest code from GitHub and restarts the server. The site will be briefly unavailable while it restarts.">Pull Latest Code &amp; Restart</button>
+            <button class="secondary" id="restartOnlyBtn" onclick="restartAppOnly()" title="Restarts the server without changing any code. Useful if something seems stuck.">Restart App Only</button>
+            <a class="link-button" href="/admin/system/download_backup" title="Downloads a zip of the database and key data files as they are right now.">Download Full Backup</a>
+        </div>
+
+        <div class="output-box" id="deployOutput" style="display:none;"></div>
+        <div class="notice success" id="deploySuccess"></div>
+        <div class="notice error" id="deployError"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Duplicate Images <span class="badge muted" id="dupBadge"></span></h2>
+        <p class="muted">Finds image rows that look like duplicates (same folder, same base filename) and confirms with a content hash so two different photos that merely share a generic filename aren't flagged. This is list-only — nothing is deleted.</p>
+        <div class="actions">
+            <button class="secondary" onclick="checkDuplicateImages()" title="Scan the database for likely duplicate image rows (read-only)">Check for Duplicate Images</button>
+        </div>
+        <div id="dupResults" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Tally &amp; Environment <span class="badge muted" id="tallyBadge"></span></h2>
+        <div class="actions" style="margin-bottom:12px;">
+            <button class="secondary" onclick="refreshEnvironment()" title="Re-check Tally reachability, config, disk usage, and uptime">Refresh</button>
+        </div>
+        <table class="kv-table">
+            <tr><td>Tally reachable</td><td id="tallyReachable">-</td></tr>
+            <tr><td>Tally instances running</td><td id="tallyInstances">-</td></tr>
+            <tr><td>Tally URL</td><td id="envTallyUrl">-</td></tr>
+            <tr><td>Database path</td><td id="envDbPath">-</td></tr>
+            <tr><td>Log file</td><td id="envLogFile">-</td></tr>
+            <tr><td>Image scan root</td><td id="envImageRoot">-</td></tr>
+            <tr><td>Session cookie secure</td><td id="envCookieSecure">-</td></tr>
+            <tr><td>Flask debug</td><td id="envDebug">-</td></tr>
+            <tr><td>Database size</td><td id="diskDbSize">-</td></tr>
+            <tr><td>Image folder size</td><td id="diskImageSize">-</td></tr>
+            <tr><td>Free disk space</td><td id="diskFree">-</td></tr>
+            <tr><td>Server uptime</td><td id="serverUptime">-</td></tr>
+        </table>
+    </div>
+
+    <div class="panel">
+        <h2>Recent Logs</h2>
+        <div class="actions" style="margin-bottom:6px;">
+            <button class="secondary" onclick="loadLogs()" title="Reload the last 200 lines of the application log">Refresh Logs</button>
+        </div>
+        <div class="output-box" id="logsBox">Click "Refresh Logs" to load.</div>
+    </div>
+</div>
+
+<script>
+function escapeHtml(value) {
+    return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+async function fetchJson(url, options) {
+    const response = await fetch(url, options);
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (err) {
+        payload = null;
+    }
+    if (!response.ok) {
+        const message = (payload && payload.error) || `Request failed (HTTP ${response.status})`;
+        throw new Error(message);
+    }
+    return payload;
+}
+
+function setBadge(el, text, level) {
+    el.textContent = text;
+    el.className = `badge ${level}`;
+}
+
+async function loadDeploymentStatus() {
+    const badge = document.getElementById("deployStatusBadge");
+    try {
+        const data = await fetchJson("/admin/system/status");
+        document.getElementById("localCommit").textContent = data.local_commit || "unknown";
+        document.getElementById("localCommitTime").textContent = data.local_commit_time || "unknown";
+        document.getElementById("remoteCommit").textContent = data.remote_commit || (data.offline ? "unavailable (offline)" : "unknown");
+
+        const recentEl = document.getElementById("recentCommits");
+        recentEl.innerHTML = "";
+        (data.recent_commits || []).forEach(commit => {
+            const row = document.createElement("div");
+            row.className = "commit-row";
+            row.innerHTML = `
+                <span class="commit-hash"></span>
+                <span class="commit-message"></span>
+                <span class="commit-time"></span>
+            `;
+            row.querySelector(".commit-hash").textContent = commit.hash;
+            row.querySelector(".commit-message").textContent = commit.message;
+            row.querySelector(".commit-time").textContent = commit.time;
+            recentEl.appendChild(row);
+        });
+
+        if (data.offline) {
+            setBadge(badge, "Offline", "warn");
+        } else if (data.up_to_date === true) {
+            setBadge(badge, "Up to date", "ok");
+        } else if (data.up_to_date === false) {
+            setBadge(badge, "Behind origin/main", "warn");
+        } else {
+            setBadge(badge, "Unknown", "muted");
+        }
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        document.getElementById("deployError").textContent = error.message;
+        document.getElementById("deployError").style.display = "block";
+    }
+}
+
+function showDeployOutput(text) {
+    const box = document.getElementById("deployOutput");
+    box.style.display = "block";
+    box.textContent = text || "(no output)";
+}
+
+function clearDeployNotices() {
+    document.getElementById("deploySuccess").style.display = "none";
+    document.getElementById("deployError").style.display = "none";
+}
+
+async function pollUntilBackUp() {
+    const maxAttempts = 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        try {
+            await fetchJson("/admin/system/status");
+            document.getElementById("deploySuccess").textContent = "Server is back up. Refreshing status...";
+            await loadDeploymentStatus();
+            return;
+        } catch (err) {
+            // still restarting; keep polling
+        }
+    }
+    document.getElementById("deploySuccess").textContent = "Server did not respond yet — refresh this page manually in a moment.";
+}
+
+async function pullAndRestart() {
+    if (!confirm("Pull the latest code from GitHub and restart the server now? The site will be briefly unavailable.")) {
+        return;
+    }
+    clearDeployNotices();
+    const btn = document.getElementById("pullRestartBtn");
+    btn.disabled = true;
+    btn.textContent = "Pulling...";
+
+    try {
+        const data = await fetchJson("/admin/system/pull_and_restart", { method: "POST" });
+        showDeployOutput(data.output);
+
+        if (!data.success) {
+            document.getElementById("deployError").textContent = "git pull failed — server was not restarted.";
+            document.getElementById("deployError").style.display = "block";
+            return;
+        }
+
+        if (!data.restarted) {
+            document.getElementById("deploySuccess").textContent = "Already up to date — nothing to restart.";
+            document.getElementById("deploySuccess").style.display = "block";
+            return;
+        }
+
+        document.getElementById("deploySuccess").textContent = "Restarting... refresh in 15 seconds.";
+        document.getElementById("deploySuccess").style.display = "block";
+        pollUntilBackUp();
+    } catch (error) {
+        document.getElementById("deployError").textContent = error.message;
+        document.getElementById("deployError").style.display = "block";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Pull Latest Code & Restart";
+    }
+}
+
+async function restartAppOnly() {
+    if (!confirm("Restart the server now (no code changes)? The site will be briefly unavailable.")) {
+        return;
+    }
+    clearDeployNotices();
+    const btn = document.getElementById("restartOnlyBtn");
+    btn.disabled = true;
+    btn.textContent = "Restarting...";
+
+    try {
+        await fetchJson("/admin/system/restart_app_only", { method: "POST" });
+        document.getElementById("deploySuccess").textContent = "Restarting... refresh in 15 seconds.";
+        document.getElementById("deploySuccess").style.display = "block";
+        pollUntilBackUp();
+    } catch (error) {
+        document.getElementById("deployError").textContent = error.message;
+        document.getElementById("deployError").style.display = "block";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Restart App Only";
+    }
+}
+
+async function checkDuplicateImages() {
+    const badge = document.getElementById("dupBadge");
+    const results = document.getElementById("dupResults");
+    badge.textContent = "Scanning...";
+    badge.className = "badge muted";
+    results.innerHTML = "";
+
+    try {
+        const data = await fetchJson("/admin/system/find_duplicate_images");
+        if (!data.group_count) {
+            setBadge(badge, "0 found", "ok");
+            results.innerHTML = "<p class=\"muted\">No confirmed duplicate images found.</p>";
+            return;
+        }
+
+        setBadge(badge, `${data.group_count} group(s), ${data.total_extra_rows} extra row(s)`, "warn");
+        data.groups.forEach(group => {
+            const el = document.createElement("div");
+            el.className = "dup-group";
+            const rowsHtml = group.rows.map(row => `
+                <div class="dup-row">#${row.id} — ${escapeHtml(row.filepath)}${row.mapped ? ` (linked to "${escapeHtml(row.stock_item_name)}")` : ""}</div>
+            `).join("");
+            el.innerHTML = `
+                <div class="dup-head">${escapeHtml(group.car_folder)} / ${escapeHtml(group.filename_stem)} — ${group.count} identical files</div>
+                ${rowsHtml}
+            `;
+            results.appendChild(el);
+        });
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        results.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+    }
+}
+
+async function refreshEnvironment() {
+    const tallyBadge = document.getElementById("tallyBadge");
+    try {
+        const [tally, env, disk, uptime] = await Promise.all([
+            fetchJson("/admin/system/tally_status"),
+            fetchJson("/admin/system/env_summary"),
+            fetchJson("/admin/system/disk_usage"),
+            fetchJson("/admin/system/uptime"),
+        ]);
+
+        document.getElementById("tallyReachable").textContent = tally.reachable ? "Yes" : "No";
+        document.getElementById("tallyInstances").textContent = tally.instance_count;
+        if (tally.warning) {
+            setBadge(tallyBadge, tally.warning, tally.reachable ? "warn" : "bad");
+        } else {
+            setBadge(tallyBadge, "OK", "ok");
+        }
+
+        document.getElementById("envTallyUrl").textContent = env.TALLY_URL;
+        document.getElementById("envDbPath").textContent = env.DB_PATH;
+        document.getElementById("envLogFile").textContent = env.LOG_FILE;
+        document.getElementById("envImageRoot").textContent = env.IMAGE_SCAN_ROOT;
+        document.getElementById("envCookieSecure").textContent = env.SESSION_COOKIE_SECURE ? "Yes" : "No";
+        document.getElementById("envDebug").textContent = env.FLASK_DEBUG ? "Yes" : "No";
+
+        document.getElementById("diskDbSize").textContent = `${disk.mappings_db_size_mb} MB`;
+        document.getElementById("diskImageSize").textContent = `${disk.image_folder_size_mb} MB`;
+        document.getElementById("diskFree").textContent = `${disk.free_disk_space_gb} GB`;
+
+        document.getElementById("serverUptime").textContent = uptime.uptime_human;
+    } catch (error) {
+        setBadge(tallyBadge, "Error", "bad");
+    }
+}
+
+async function loadLogs() {
+    const box = document.getElementById("logsBox");
+    box.textContent = "Loading...";
+    try {
+        const response = await fetch("/admin/system/logs?lines=200");
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || `Failed to load logs (HTTP ${response.status})`);
+        }
+        const text = await response.text();
+        box.textContent = text || "(log file is empty)";
+    } catch (error) {
+        box.textContent = `Error: ${error.message}`;
+    }
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    loadDeploymentStatus();
+    refreshEnvironment();
+    loadLogs();
+});
+</script>
+</body>
+</html>

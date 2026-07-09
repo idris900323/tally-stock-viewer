@@ -1,6 +1,15 @@
 import os
 from datetime import timedelta
 
+try:
+    # .env is written by first_time_setup.bat but nothing previously loaded
+    # it into the process environment — os.environ.get() below only ever
+    # saw real OS env vars. Load it here so .env actually takes effect.
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 
 class Config:
     # Flask
@@ -39,6 +48,10 @@ class Config:
     ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
     # Can be plaintext (legacy) or werkzeug pbkdf2 hash
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "idris123")
+
+    # System panel (remote deployment/admin panel) — deliberately has no
+    # default. If unset, the entire /admin/system* panel stays disabled.
+    SYSTEM_ACCESS_TOKEN = os.environ.get("SYSTEM_ACCESS_TOKEN", "").strip()
 
     # Logging
     LOG_DIR = os.environ.get("LOG_DIR", "logs")

@@ -15,7 +15,7 @@ No Copilot prompt or code-generation step is required before going public.
 Public traffic should flow like this:
 
 ```text
-stock.carxone.com
+superseatings.carxone.com
     -> Cloudflare
     -> Cloudflare Tunnel
     -> office PC on localhost:5000
@@ -120,14 +120,14 @@ tunnel: YOUR_TUNNEL_ID
 credentials-file: C:\Users\<your-windows-user>\.cloudflared\YOUR_TUNNEL_ID.json
 
 ingress:
-  - hostname: stock.carxone.com
+  - hostname: superseatings.carxone.com
     service: http://localhost:5000
   - service: http_status:404
 ```
 
 ## 5. DNS
 
-Point the stock subdomain to the tunnel.
+Point the superseatings subdomain to the tunnel.
 
 Use the tunnel hostname:
 
@@ -138,7 +138,7 @@ YOUR_TUNNEL_ID.cfargotunnel.com
 Create a `CNAME` record for:
 
 ```text
-stock.carxone.com -> YOUR_TUNNEL_ID.cfargotunnel.com
+superseatings.carxone.com -> YOUR_TUNNEL_ID.cfargotunnel.com
 ```
 
 Keep all existing records for the main website unchanged.
@@ -152,8 +152,8 @@ Run this manually first:
 ```
 
 Then test:
-- `https://stock.carxone.com`
-- `https://stock.carxone.com/health`
+- `https://superseatings.carxone.com`
+- `https://superseatings.carxone.com/health`
 
 If both work, stop the manual test and return to the normal launcher-driven workflow.
 
@@ -186,8 +186,8 @@ This document is the public deployment guide.
 
 - `http://localhost:5000` works on the office PC
 - `http://localhost:5000/health` works on the office PC
-- `https://stock.carxone.com` loads externally
-- `https://stock.carxone.com/health` loads externally
+- `https://superseatings.carxone.com` loads externally
+- `https://superseatings.carxone.com/health` loads externally
 - Tally refresh still works on the office PC
 - images still load after public access is enabled
 - `.env` has `FLASK_DEBUG=0`
@@ -203,7 +203,7 @@ Check these in order:
 3. `http://localhost:5000` still works locally
 4. `C:\tally_stock\cloudflared.exe` still exists
 5. `C:\tally_stock\logs\app.log` has no startup failure
-6. Cloudflare DNS still points `stock.carxone.com` at the tunnel
+6. Cloudflare DNS still points `superseatings.carxone.com` at the tunnel
 
 If local access works but public access fails, the problem is usually:
 - the tunnel is not running

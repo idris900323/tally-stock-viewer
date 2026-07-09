@@ -104,7 +104,7 @@ echo   SECTION 4 - Cloudflare tunnel setup (optional)
 echo =====================================================
 echo --- Cloudflare Tunnel Setup (optional, press Enter to skip each step) ---
 set "SETUP_TUNNEL="
-set /p "SETUP_TUNNEL=Do you want to set up stock.carxone.com tunnel now? (Y/N):"
+set /p "SETUP_TUNNEL=Do you want to set up superseatings.carxone.com tunnel now? (Y/N):"
 if /I not "%SETUP_TUNNEL%"=="Y" exit /b 0
 
 echo.
@@ -135,7 +135,7 @@ if not exist "%CLOUDFLARED_DIR%" mkdir "%CLOUDFLARED_DIR%" 2>nul
     echo tunnel: %TUNNEL_ID%
     echo credentials-file: "%CLOUDFLARED_DIR%\%TUNNEL_ID%.json"
     echo ingress:
-    echo   - hostname: stock.carxone.com
+    echo   - hostname: superseatings.carxone.com
     echo     service: http://localhost:5000
     echo   - service: http_status:404
 ) > "%CLOUDFLARED_DIR%\config.yml"
@@ -145,19 +145,19 @@ echo.
 echo Step E - Add DNS CNAME
 echo Now go to Cloudflare dashboard -^> carxone.com -^> DNS -^> Add record:
 echo   Type: CNAME
-echo   Name: stock
+echo   Name: superseatings
 echo   Target: %TUNNEL_ID%.cfargotunnel.com
 echo   Proxy: Proxied (orange cloud)
 set /p "DNS_DONE=Press Enter when DNS record is saved:"
 
-set "PUBLIC_URL=https://stock.carxone.com"
+set "PUBLIC_URL=https://superseatings.carxone.com"
 echo.
 echo Step F - Test tunnel
 start "" "%PYTHONW_EXE%" "%TARGET_DIR%\serve.py"
 timeout /t 8 /nobreak >nul
 "%CLOUDFLARED_EXE%" tunnel run tally-stock
 if errorlevel 1 call :fail cloudflared tunnel run tally-stock failed.
-echo Tunnel running. Test https://stock.carxone.com in your browser.
+echo Tunnel running. Test https://superseatings.carxone.com in your browser.
 echo Press Ctrl+C here when done testing.
 exit /b 0
 

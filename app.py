@@ -4,6 +4,8 @@ import os
 import requests
 import xml.etree.ElementTree as ET
 import re
+import shutil
+import subprocess
 import threading
 import time
 import glob
@@ -18,6 +20,8 @@ from functools import wraps
 from logging.handlers import RotatingFileHandler
 import zipfile
 from urllib.parse import quote
+
+from itsdangerous import TimestampSigner, BadSignature, SignatureExpired
 
 import database as db
 import image_scanner
@@ -67,6 +71,7 @@ full_refresh_status = {
     "timestamp": None,
 }
 LOGIN_ATTEMPTS = {}
+START_TIME = time.time()
 
 PROJECT_ROOT = BASE_DIR
 PROJECT_IMAGE_ROOT = os.path.join(BASE_DIR, "data", "S.S IMAGE")
@@ -149,6 +154,67 @@ def admin_required(view_func):
     def wrapper(*args, **kwargs):
         if _current_role() != "admin":
             return _admin_denied()
+        return view_func(*args, **kwargs)
+
+    return wrapper
+
+
+# ============================================================
+# SYSTEM PANEL — device-locked remote admin/deployment panel
+# ============================================================
+# One-time setup:
+#   1. Add a line to .env:
+#        SYSTEM_ACCESS_TOKEN=<a long random secret you choose>
+#      Nothing is auto-generated here — you must set this deliberately.
+#      If it's missing, every /admin/system* route returns 403 and the
+#      panel is effectively disabled.
+#   2. Restart the app so the new .env value is picked up
+#      (config.py now calls load_dotenv() at import time).
+#   3. From each browser/device you want to pair, while logged in as
+#      admin, visit ONCE:
+#        /admin/system/authorize-device?token=<that same SYSTEM_ACCESS_TOKEN>
+#      This sets a signed, httponly, 400-day cookie on that browser only.
+#      Every /admin/system* route requires BOTH a valid admin session AND
+#      this cookie — a stolen admin password alone is not enough to reach
+#      this panel from an unpaired device.
+# ============================================================
+SYSTEM_DEVICE_COOKIE_NAME = "system_device_key"
+SYSTEM_DEVICE_COOKIE_VALUE = "system-device-authorized"
+SYSTEM_DEVICE_COOKIE_MAX_AGE = 400 * 24 * 3600  # 400 days
+
+
+def _system_panel_configured():
+    return bool(str(Config.SYSTEM_ACCESS_TOKEN or "").strip())
+
+
+def _system_device_signer():
+    return TimestampSigner(app.secret_key)
+
+
+def _is_system_device_authorized():
+    cookie_value = request.cookies.get(SYSTEM_DEVICE_COOKIE_NAME)
+    if not cookie_value:
+        return False
+    try:
+        unsigned = _system_device_signer().unsign(cookie_value, max_age=SYSTEM_DEVICE_COOKIE_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return False
+    return unsigned.decode("utf-8") == SYSTEM_DEVICE_COOKIE_VALUE
+
+
+def system_device_required(view_func):
+    """Stack alongside @admin_required on every /admin/system* route."""
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        if not _system_panel_configured():
+            return jsonify({
+                "error": "System panel is not configured. Set SYSTEM_ACCESS_TOKEN in .env to enable it."
+            }), 403
+        if not _is_system_device_authorized():
+            return jsonify({
+                "error": "This device is not authorized for System Panel access. "
+                         "Visit /admin/system/authorize-device?token=YOUR_TOKEN once from this browser to pair it."
+            }), 403
         return view_func(*args, **kwargs)
 
     return wrapper
@@ -2589,6 +2655,304 @@ def refresh_stock():
     """Legacy alias for manual item stock refresh."""
     result = _refresh_stock_data()
     return jsonify(result), 200
+
+
+# ----------------------------
+# System panel routes (see the SYSTEM PANEL block above admin_required
+# for the SYSTEM_ACCESS_TOKEN / device-pairing setup this all depends on)
+# ----------------------------
+
+@app.route("/admin/system/authorize-device")
+@admin_required
+def system_authorize_device():
+    if not _system_panel_configured():
+        return jsonify({
+            "error": "System panel is not configured. Set SYSTEM_ACCESS_TOKEN in .env to enable it."
+        }), 403
+
+    token = request.args.get("token", "")
+    if not token or token != Config.SYSTEM_ACCESS_TOKEN:
+        return jsonify({"error": "Invalid access token."}), 403
+
+    signed_value = _system_device_signer().sign(SYSTEM_DEVICE_COOKIE_VALUE).decode("utf-8")
+    response = redirect(url_for("system_panel"))
+    response.set_cookie(
+        SYSTEM_DEVICE_COOKIE_NAME,
+        signed_value,
+        max_age=SYSTEM_DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=Config.SESSION_COOKIE_SECURE,
+        samesite="Strict",
+    )
+    return response
+
+
+@app.route("/admin/system")
+@admin_required
+@system_device_required
+def system_panel():
+    return render_template("system.html")
+
+
+def _run_git_command(args, timeout=10):
+    try:
+        result = subprocess.run(
+            ["git"] + list(args),
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except Exception as exc:
+        return -1, "", str(exc)
+
+
+@app.route("/admin/system/status")
+@admin_required
+@system_device_required
+def system_status():
+    _, local_commit, _ = _run_git_command(["log", "-1", "--format=%h %s"])
+    _, local_commit_time, _ = _run_git_command(["log", "-1", "--format=%ci"])
+
+    recent_code, recent_out, _ = _run_git_command(["log", "-10", "--format=%h|%s|%ci"])
+    recent_commits = []
+    if recent_code == 0:
+        for line in recent_out.splitlines():
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                recent_commits.append({"hash": parts[0], "message": parts[1], "time": parts[2]})
+
+    remote_commit = None
+    up_to_date = None
+    offline = False
+    try:
+        fetch_code, _, fetch_err = _run_git_command(["fetch", "origin", "main"], timeout=15)
+        if fetch_code != 0:
+            raise RuntimeError(fetch_err or "git fetch failed")
+        rev_code, rev_out, _ = _run_git_command(["rev-parse", "origin/main"])
+        if rev_code == 0:
+            remote_commit = rev_out
+    except Exception:
+        offline = True
+
+    if remote_commit:
+        head_code, head_out, _ = _run_git_command(["rev-parse", "HEAD"])
+        if head_code == 0:
+            up_to_date = (head_out == remote_commit)
+
+    return jsonify({
+        "local_commit": local_commit or None,
+        "local_commit_time": local_commit_time or None,
+        "recent_commits": recent_commits,
+        "remote_commit": remote_commit,
+        "up_to_date": up_to_date,
+        "offline": offline,
+    })
+
+
+@app.route("/admin/system/logs")
+@admin_required
+@system_device_required
+def system_logs():
+    lines = request.args.get("lines", default=200, type=int) or 200
+    lines = max(1, min(lines, 1000))
+
+    log_path = Config.LOG_FILE
+    if not os.path.isabs(log_path):
+        log_path = os.path.join(BASE_DIR, log_path)
+
+    if not os.path.exists(log_path):
+        return Response("(log file not found)", mimetype="text/plain")
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+            all_lines = handle.readlines()
+    except OSError as exc:
+        return Response(f"(log file could not be read right now: {exc})", mimetype="text/plain")
+
+    return Response("".join(all_lines[-lines:]), mimetype="text/plain")
+
+
+def _trigger_self_restart(reason):
+    def _do_restart():
+        time.sleep(1.5)
+        logger.info(reason)
+        os._exit(0)
+
+    threading.Thread(target=_do_restart, daemon=True).start()
+
+
+@app.route("/admin/system/pull_and_restart", methods=["POST"])
+@admin_required
+@system_device_required
+def system_pull_and_restart():
+    code, out, err = _run_git_command(["pull", "origin", "main"], timeout=30)
+    output = (out + ("\n" + err if err else "")).strip()
+
+    if code != 0:
+        return jsonify({"success": False, "restarted": False, "output": output or "git pull failed"})
+
+    if "Already up to date" in out or "Already up-to-date" in out:
+        return jsonify({"success": True, "restarted": False, "output": output or "Already up to date."})
+
+    _trigger_self_restart("Restarting after code update via admin panel")
+    return jsonify({"success": True, "restarted": True, "output": output})
+
+
+@app.route("/admin/system/restart_app_only", methods=["POST"])
+@admin_required
+@system_device_required
+def system_restart_app_only():
+    _trigger_self_restart("Restarting via admin panel (no code pull)")
+    return jsonify({"success": True, "restarted": True})
+
+
+@app.route("/admin/system/download_backup")
+@admin_required
+@system_device_required
+def system_download_backup():
+    main_file_path = get_main_file_path()
+    backup_targets = [
+        (db.DB_PATH, "mappings.db"),
+        (main_file_path, os.path.basename(main_file_path) if main_file_path else None),
+        (CAR_FILE, os.path.basename(CAR_FILE)),
+        (os.path.join(BASE_DIR, MAIN_HIERARCHY_CACHE_JSON), "main_hierarchy.json"),
+        (os.path.join(BASE_DIR, CAR_MASTER_CACHE_JSON), "car_master.json"),
+        (ITEM_STOCK_CACHE_JSON, "item stock list.auto.json"),
+    ]
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for source_path, archive_name in backup_targets:
+            if source_path and archive_name and os.path.exists(source_path):
+                archive.write(source_path, arcname=archive_name)
+    buffer.seek(0)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(
+        buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"backup_{timestamp}.zip",
+    )
+
+
+@app.route("/admin/system/find_duplicate_images")
+@admin_required
+@system_device_required
+def system_find_duplicate_images():
+    groups = db.find_duplicate_image_rows()
+    total_extra_rows = sum(group["count"] - 1 for group in groups)
+    return jsonify({
+        "groups": groups,
+        "group_count": len(groups),
+        "total_extra_rows": total_extra_rows,
+    })
+
+
+def _tally_is_reachable(timeout=3):
+    try:
+        requests.get(TALLY_URL, timeout=timeout)
+        return True
+    except requests.RequestException:
+        return False
+
+
+@app.route("/admin/system/tally_status")
+@admin_required
+@system_device_required
+def system_tally_status():
+    reachable = _tally_is_reachable()
+    instance_count = _check_multiple_tally_instances()
+
+    warning = None
+    if not reachable:
+        warning = f"Tally is not reachable at {TALLY_URL}."
+    elif instance_count > 1:
+        warning = f"Multiple Tally instances detected ({instance_count} running). Close the duplicates and keep only one open."
+
+    return jsonify({
+        "reachable": reachable,
+        "instance_count": instance_count,
+        "warning": warning,
+    })
+
+
+@app.route("/admin/system/env_summary")
+@admin_required
+@system_device_required
+def system_env_summary():
+    # Deliberately excluded from this summary and never sent to the
+    # browser: FLASK_SECRET_KEY, ADMIN_PASSWORD, SYSTEM_ACCESS_TOKEN.
+    return jsonify({
+        "TALLY_URL": Config.TALLY_URL,
+        "DB_PATH": db.DB_PATH,
+        "LOG_FILE": Config.LOG_FILE,
+        "IMAGE_SCAN_ROOT": IMAGE_SCAN_ROOT,
+        "SESSION_COOKIE_SECURE": Config.SESSION_COOKIE_SECURE,
+        "FLASK_DEBUG": Config.DEBUG,
+    })
+
+
+DISK_USAGE_CACHE = {"timestamp": 0.0, "image_folder_size_mb": None}
+
+
+def _get_image_folder_size_mb():
+    now = time.time()
+    if DISK_USAGE_CACHE["image_folder_size_mb"] is not None and now - DISK_USAGE_CACHE["timestamp"] < 60:
+        return DISK_USAGE_CACHE["image_folder_size_mb"]
+
+    total_bytes = 0
+    for root, _dirs, files in os.walk(IMAGE_SCAN_ROOT):
+        for filename in files:
+            try:
+                total_bytes += os.path.getsize(os.path.join(root, filename))
+            except OSError:
+                continue
+
+    size_mb = round(total_bytes / (1024 * 1024), 2)
+    DISK_USAGE_CACHE["timestamp"] = now
+    DISK_USAGE_CACHE["image_folder_size_mb"] = size_mb
+    return size_mb
+
+
+@app.route("/admin/system/disk_usage")
+@admin_required
+@system_device_required
+def system_disk_usage():
+    db_size_mb = round(os.path.getsize(db.DB_PATH) / (1024 * 1024), 2) if os.path.exists(db.DB_PATH) else 0.0
+    free_bytes = shutil.disk_usage(BASE_DIR).free
+    return jsonify({
+        "mappings_db_size_mb": db_size_mb,
+        "image_folder_size_mb": _get_image_folder_size_mb(),
+        "free_disk_space_gb": round(free_bytes / (1024 ** 3), 2),
+    })
+
+
+def _format_uptime(seconds):
+    seconds = int(seconds)
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if days or hours:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+@app.route("/admin/system/uptime")
+@admin_required
+@system_device_required
+def system_uptime():
+    elapsed = time.time() - START_TIME
+    return jsonify({
+        "uptime_seconds": round(elapsed, 1),
+        "uptime_human": _format_uptime(elapsed),
+    })
 
 
 set_search_dependencies(

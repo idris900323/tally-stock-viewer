@@ -32,7 +32,6 @@ Main project folder after setup:
 
 Important files and folders:
 - `C:\tally_stock\first_time_setup.bat` - use this for a new office PC
-- `C:\tally_stock\setup_office_pc.bat` - older legacy setup script
 - `C:\tally_stock\update_app.bat` - pulls code updates from Git
 - `C:\tally_stock\.env` - local settings
 - `C:\tally_stock\logs\app.log` - application log
@@ -304,7 +303,7 @@ Use `MASTER_SETUP.md` for:
 - local troubleshooting
 
 Use `GOING_PUBLIC.md` for:
-- `stock.carxone.com`
+- `superseatings.carxone.com`
 - Cloudflare tunnel
 - DNS and public checks
 

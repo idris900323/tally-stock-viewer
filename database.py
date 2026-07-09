@@ -1,6 +1,8 @@
+import hashlib
 import os
 import sqlite3
 import logging
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -849,6 +851,89 @@ def get_image_folders():
             """
         ).fetchall()
     return [row["car_folder"] for row in rows]
+
+
+def _hash_file(file_path, chunk_size=65536):
+    hasher = hashlib.sha256()
+    with open(file_path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _resolve_image_root_path(stored_path):
+    value = str(stored_path or "").strip().replace("\\", "/")
+    if not value:
+        return None
+    if os.path.isabs(value):
+        return value
+    return os.path.normpath(os.path.join(IMAGE_ROOT, value))
+
+
+def find_duplicate_image_rows():
+    """Find image rows that are very likely visible duplicates.
+
+    Candidate grouping is (car_folder, filename with extension stripped and
+    lowercased) — e.g. "BLK-DKTAN" and "BLK-DKTAN.jpg" land in the same
+    candidate group. Candidates are only reported as duplicates once
+    confirmed by content hash, so two different photos that happen to share
+    a generic base name (e.g. "1.jfif" reused across unrelated subfolders)
+    are never wrongly flagged.
+
+    Read-only: does not delete or modify anything.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                i.id, i.car_folder, i.filename, i.filepath, i.scan_date,
+                CASE WHEN m.image_id IS NULL THEN 0 ELSE 1 END AS mapped,
+                m.stock_item_name
+            FROM images i
+            LEFT JOIN mappings m ON m.image_id = i.id
+            """
+        ).fetchall()
+
+    candidates = defaultdict(list)
+    for row in rows:
+        stem = os.path.splitext(str(row["filename"] or ""))[0].strip().lower()
+        folder_key = str(row["car_folder"] or "").strip().lower()
+        if not stem:
+            continue
+        candidates[(folder_key, stem)].append(_row_to_dict(row))
+
+    duplicate_groups = []
+    for (_folder_key, stem), group_rows in candidates.items():
+        if len(group_rows) < 2:
+            continue
+
+        by_hash = defaultdict(list)
+        for row in group_rows:
+            file_path = _resolve_image_root_path(row.get("filepath"))
+            if not file_path or not os.path.exists(file_path):
+                continue
+            try:
+                file_hash = _hash_file(file_path)
+            except OSError:
+                continue
+            by_hash[file_hash].append(row)
+
+        for file_hash, hashed_rows in by_hash.items():
+            if len(hashed_rows) < 2:
+                continue
+            duplicate_groups.append({
+                "car_folder": hashed_rows[0].get("car_folder"),
+                "filename_stem": stem,
+                "content_hash": file_hash,
+                "count": len(hashed_rows),
+                "rows": sorted(hashed_rows, key=lambda r: r["id"]),
+            })
+
+    duplicate_groups.sort(key=lambda group: group["count"], reverse=True)
+    return duplicate_groups
 
 
 def authenticate_user(username, access_code):

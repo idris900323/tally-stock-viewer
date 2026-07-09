@@ -32,7 +32,7 @@ The runtime has four main layers:
 ### Windows hosting layer
 - `serve.py` runs the Flask app under `waitress`
 - `launcher.pyw` runs in the tray, starts the server, monitors it, and optionally starts `cloudflared.exe`
-- `first_time_setup.bat`, `setup_office_pc.bat`, `update_app.bat`, and `stop_server.py` support deployment and operations
+- `first_time_setup.bat`, `update_app.bat`, and `stop_server.py` support deployment and operations
 
 ## 3. Startup flow
 
@@ -417,11 +417,6 @@ It:
 - creates Desktop shortcuts
 - writes Windows auto-start
 
-### `setup_office_pc.bat`
-
-Older in-place setup helper.
-It is simpler than `first_time_setup.bat` and does not replace the new-machine flow.
-
 ### `update_app.bat`
 
 Operational update path for Git-connected installs:
@@ -477,4 +472,4 @@ If you need to change a behavior, start here:
 - login/session settings: `config.py`, `app.py`
 - tray startup and tunnel behavior: `launcher.pyw`, `serve.py`
 - admin and customer UI: `templates/`
-- install/update scripts: `first_time_setup.bat`, `setup_office_pc.bat`, `update_app.bat`
+- install/update scripts: `first_time_setup.bat`, `update_app.bat`
