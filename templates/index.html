@@ -602,7 +602,7 @@
                 <option value="">Search for a car...</option>
             </select>
             {% if is_admin %}
-            <button id="selectModeBtn" class="secondary" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
+            <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
             <button id="updateStockBtn" class="secondary" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
             <button id="fullRefreshBtn" class="secondary" onclick="startFullRefresh()" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">
                 Full Refresh
@@ -857,8 +857,11 @@ function updateSelectModeUI() {
     const btn = document.getElementById("selectModeBtn");
     const toolbar = document.getElementById("selectionToolbar");
     const list = document.getElementById("designsList");
+    const carSelect = document.getElementById("carSelect");
+    const hasCarSelected = Boolean(carSelect && carSelect.value);
 
     if (btn) {
+        btn.style.display = hasCarSelected ? "" : "none";
         btn.textContent = selectMode ? "Cancel" : "Select Images";
     }
     if (toolbar) {
@@ -1071,6 +1074,10 @@ function initializeCarSelect() {
     select.on("select2:select", function () {
         exitSelectMode();
         loadDesigns();
+    });
+
+    select.on("select2:clear", function () {
+        exitSelectMode();
     });
 }
 
