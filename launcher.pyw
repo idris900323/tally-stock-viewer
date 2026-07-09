@@ -1,3 +1,16 @@
+import os
+import sys
+import time
+import socket
+import threading
+import subprocess
+import webbrowser
+from pathlib import Path
+
+import psutil
+import pystray
+from PIL import Image, ImageDraw, ImageFont
+
 APP_DIR = str(Path(__file__).resolve().parent)
 APP_ENTRY = str(Path(APP_DIR) / "app.py")
 PYTHON_EXE = str(Path(APP_DIR) / ".venv" / "Scripts" / "python.exe")
@@ -13,20 +26,6 @@ SERVE_SCRIPT = str(Path(APP_DIR) / "serve.py")
 CLOUDFLARED_EXE = str(Path(APP_DIR) / "cloudflared.exe")
 TUNNEL_NAME = "tally-stock"
 TUNNEL_PID_FILE = str(Path(APP_DIR) / "tunnel.pid")
-# NOTE: evaluate existence at runtime to avoid referencing os before imports
-
-import os
-import sys
-import time
-import socket
-import threading
-import subprocess
-import webbrowser
-from pathlib import Path
-
-import psutil
-import pystray
-from PIL import Image, ImageDraw, ImageFont
 
 
 def _write_log(message: str):
