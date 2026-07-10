@@ -628,6 +628,7 @@
         {% if is_admin %}
         <div class="meta-row">
             <div id="lastUpdate">Last updated: loading...</div>
+            <span id="autoRefreshHint" style="font-size:12px; color:#94a3b8; align-self:center;"></span>
             <div id="statusMessage" class="status-line"></div>
         </div>
         {% else %}
@@ -1168,13 +1169,33 @@ async function updateTimestamp() {
         const statusRes = await fetch("/refresh_status");
         if (statusRes.ok) {
             const status = await statusRes.json();
+            const hintEl = document.getElementById("autoRefreshHint");
             if (status.success === false) {
                 const details = status.error_code ? ` [${status.error_code}]` : "";
                 statusEl.textContent = `Last error: ${status.message}${details}`;
                 statusEl.style.color = "#b42318";
+                if (hintEl) {
+                    // Scheduled exports store only message text (no error_code),
+                    // so match the same keywords _classify_tally_exception uses.
+                    const text = `${status.message || ""} ${status.raw_error || ""}`.toLowerCase();
+                    let hint = "Auto-refresh issue: see System panel for details";
+                    if (text.includes("multiple tally")) {
+                        hint = "Auto-refresh issue: multiple Tally windows open";
+                    } else if (status.error_code === "TALLY_UNREACHABLE" || text.includes("unreachable") || text.includes("not reachable") || text.includes("connection refused") || text.includes("failed to establish") || text.includes("max retries")) {
+                        hint = "Auto-refresh issue: Tally appears closed";
+                    } else if (status.error_code === "TALLY_TIMEOUT" || text.includes("timed out")) {
+                        hint = "Auto-refresh issue: Tally is slow to respond";
+                    }
+                    hintEl.textContent = hint;
+                    hintEl.title = hint;
+                }
             } else if (status.success === true) {
                 statusEl.textContent = `Last update: ${status.message}`;
                 statusEl.style.color = "#475569";
+                if (hintEl) {
+                    hintEl.textContent = "";
+                    hintEl.removeAttribute("title");
+                }
             }
         }
     } catch (error) {
