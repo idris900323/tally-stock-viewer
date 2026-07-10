@@ -271,7 +271,7 @@ def run_tray():
         _create_menu(None),
     )
 
-    def on_icon_setup():
+    def on_icon_setup(icon):
         threading.Thread(target=_watchdog, args=(icon,), daemon=True).start()
 
     icon.run(on_icon_setup)
