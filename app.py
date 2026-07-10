@@ -292,6 +292,9 @@ def _file_fingerprint(file_path):
     return (os.path.abspath(file_path), stats.st_mtime_ns, stats.st_size)
 
 
+MULTIPLE_TALLY_MESSAGE = "Multiple Tally windows are open. Close the extra Tally and keep only one."
+
+
 def _check_multiple_tally_instances():
     count = 0
     for process in psutil.process_iter(["name", "exe"]):
@@ -811,7 +814,9 @@ def _refresh_stock_data():
     except Exception as exc:
         raw_error = str(exc)
         error_code = _classify_tally_exception(exc)
-        if error_code == "TALLY_UNREACHABLE":
+        if raw_error == MULTIPLE_TALLY_MESSAGE:
+            fallback_message = raw_error
+        elif error_code == "TALLY_UNREACHABLE":
             fallback_message = f"Tally unreachable at {TALLY_URL}; using the last saved upload. ({raw_error})"
         elif error_code == "TALLY_TIMEOUT":
             fallback_message = f"Tally request timed out; using the last saved upload. ({raw_error})"
@@ -849,10 +854,7 @@ def fetch_item_stock_flat():
     """
     tally_instance_count = _check_multiple_tally_instances()
     if tally_instance_count > 1:
-        raise Exception(
-            f"Multiple Tally instances detected ({tally_instance_count} running). "
-            "Close duplicate Tally windows and keep only one open, then try again."
-        )
+        raise Exception(MULTIPLE_TALLY_MESSAGE)
 
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
@@ -2649,12 +2651,6 @@ def last_update():
 def refresh_status():
     """Return the status of the last automatic or manual refresh."""
     return jsonify(last_refresh_status)
-
-
-@app.route("/tally_instances")
-def tally_instances():
-    """Return how many Tally processes are running, for the on-screen warning."""
-    return jsonify({"count": _check_multiple_tally_instances()})
 
 
 @app.route("/refresh_stock", methods=["POST"])
