@@ -635,7 +635,6 @@
         {% endif %}
     </div>
 
-    <div id="tallyInstanceWarning" class="notice error" style="display:none;">More than one Tally is open. Close the extra Tally windows.</div>
     <div id="errorMsg" class="notice error"></div>
     <div id="infoMsg" class="notice success"></div>
 
@@ -704,18 +703,6 @@ function escapeHtml(value) {
 function clearMessages() {
     document.getElementById("errorMsg").style.display = "none";
     document.getElementById("infoMsg").style.display = "none";
-}
-
-async function checkTallyInstances() {
-    try {
-        const res = await fetch("/tally_instances");
-        if (!res.ok) return;
-        const data = await res.json();
-        const el = document.getElementById("tallyInstanceWarning");
-        if (el) el.style.display = data.count > 1 ? "block" : "none";
-    } catch (error) {
-        console.log("Could not check Tally instances", error);
-    }
 }
 
 function showError(msg) {
@@ -1473,8 +1460,6 @@ window.addEventListener("DOMContentLoaded", () => {
         }, 30000);
     }
     setInterval(checkTimestampFreshness, 10000);
-    checkTallyInstances();
-    setInterval(checkTallyInstances, 60000);
 
     const designsList = document.getElementById("designsList");
     if (designsList) {
