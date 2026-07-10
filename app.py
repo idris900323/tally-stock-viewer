@@ -848,9 +848,16 @@ def _refresh_stock_data():
 # ---------- Tally export logic ----------
 
 def fetch_item_stock_flat():
-    """Export item stock from Tally Stock Summary and save as clean Excel.
+    """Export item stock from Tally and save as clean Excel.
 
-    This avoids writing Tally XML error text into the spreadsheet file.
+    Uses a single TDL collection walk over StockItem masters (NAME +
+    CLOSINGBALANCE). This replaced a three-request approach whose
+    detailed+exploded Stock Summary made Tally render its entire stock
+    tree on every cycle (~15-20s of engine work on production data,
+    measured via the System panel's Tally Performance Test), visibly
+    stalling Tally Prime. A collection returns only items -- never
+    group rows -- so the old group-name filtering requests are
+    unnecessary. Output format is unchanged.
     """
     tally_instance_count = _check_multiple_tally_instances()
     if tally_instance_count > 1:
@@ -859,85 +866,49 @@ def fetch_item_stock_flat():
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
-    def _fetch_stock_item_master_names():
+    def _fetch_item_rows():
         xml_req = '''<ENVELOPE>
     <HEADER>
         <VERSION>1</VERSION>
         <TALLYREQUEST>Export Data</TALLYREQUEST>
         <TYPE>Collection</TYPE>
-        <ID>List of Stock Items</ID>
+        <ID>Item Names With Closing</ID>
     </HEADER>
     <BODY>
         <DESC>
             <STATICVARIABLES>
                 <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
             </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="Item Names With Closing" ISMODIFY="No">
+                        <TYPE>StockItem</TYPE>
+                        <FETCH>NAME, CLOSINGBALANCE</FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
         </DESC>
     </BODY>
 </ENVELOPE>'''.strip()
 
         text = _post_tally_with_retry(xml_req)
         if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
-            raise Exception(f"Tally returned error for stock item collection: {text[:300]}")
+            raise Exception(f"Tally returned error for item stock collection: {text[:300]}")
 
         text = _sanitize_tally_xml(text)
         root = ET.fromstring(text)
-        master_names = set()
+        parsed_rows = []
         for item_node in root.findall('.//COLLECTION/STOCKITEM'):
-            raw_name = item_node.attrib.get('NAME', '')
+            raw_name = item_node.attrib.get('NAME', '').strip()
             if not raw_name:
                 name_node = item_node.find('.//NAME')
-                raw_name = name_node.text if (name_node is not None and name_node.text) else ''
-            norm_name = _norm(raw_name)
-            if norm_name:
-                master_names.add(norm_name)
-        return master_names
-
-    def _fetch_rows(detailed: bool):
-        detailed_vars = """
-                <SVSTOCKGROUP>Primary</SVSTOCKGROUP>
-                <ISDETAILED>Yes</ISDETAILED>
-                <EXPLODEFLAG>Yes</EXPLODEFLAG>
-                <SVSHOWALLITEMS>Yes</SVSHOWALLITEMS>
-                <SVSHOWZEROBALANCES>Yes</SVSHOWZEROBALANCES>
-        """ if detailed else ""
-
-        xml_req = f'''<ENVELOPE>
-    <HEADER>
-        <VERSION>1</VERSION>
-        <TALLYREQUEST>Export</TALLYREQUEST>
-        <TYPE>Data</TYPE>
-        <ID>Stock Summary</ID>
-    </HEADER>
-    <BODY>
-        <DESC>
-            <STATICVARIABLES>
-                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-{detailed_vars}
-            </STATICVARIABLES>
-        </DESC>
-    </BODY>
-</ENVELOPE>'''.strip()
-
-        text = _post_tally_with_retry(xml_req)
-        if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
-            raise Exception(f"Tally returned error: {text[:300]}")
-
-        text = _sanitize_tally_xml(text)
-        root = ET.fromstring(text)
-        names = root.findall(".//DSPACCNAME")
-        stocks = root.findall(".//DSPSTKINFO")
-
-        parsed_rows = []
-        for name_node, stock_node in zip(names, stocks):
-            display_node = name_node.find("DSPDISPNAME")
-            qty_node = stock_node.find(".//DSPCLQTY")
-            item_name = display_node.text.strip() if (display_node is not None and display_node.text) else ""
-            qty_text = qty_node.text if (qty_node is not None and qty_node.text) else "0"
+                raw_name = name_node.text.strip() if (name_node is not None and name_node.text) else ''
+            bal_node = item_node.find('.//CLOSINGBALANCE')
+            qty_text = bal_node.text if (bal_node is not None and bal_node.text) else "0"
             match = re.search(r"-?\d+", qty_text)
             qty = int(match.group()) if match else 0
-            if item_name and qty > 0:
-                parsed_rows.append({"item_name": item_name, "qty": qty, "upper_name": _norm(item_name)})
+            if raw_name and qty > 0:
+                parsed_rows.append({"item_name": raw_name, "qty": qty})
         return parsed_rows
 
     def _load_main_name_set():
@@ -959,21 +930,9 @@ def fetch_item_stock_flat():
 
     print("requesting flat item stock list from Tally...")
     try:
-        master_name_set = _fetch_stock_item_master_names()
+        export_started = time.perf_counter()
+        rows = _fetch_item_rows()
         main_name_set = _load_main_name_set()
-        summary_rows = _fetch_rows(detailed=False)
-        detailed_rows = _fetch_rows(detailed=True)
-
-        # Primary filter: keep only names that exist in Stock Item master.
-        rows = [
-            {"item_name": r["item_name"], "qty": r["qty"]}
-            for r in detailed_rows
-            if r["upper_name"] in master_name_set
-        ]
-
-        # Secondary filter: remove obvious group names by subtracting summary rows.
-        group_name_set = {r["upper_name"] for r in summary_rows}
-        rows = [r for r in rows if _norm(r["item_name"]) not in group_name_set]
 
         # Optional strict alignment with main hierarchy names, when available.
         if main_name_set:
@@ -981,12 +940,8 @@ def fetch_item_stock_flat():
             if aligned_rows:
                 rows = aligned_rows
 
-        # fallback: if strict filtering yields nothing, keep detailed rows as-is
         if not rows:
-            rows = [{"item_name": r["item_name"], "qty": r["qty"]} for r in detailed_rows]
-
-        if not rows:
-            raise Exception("No stock rows parsed from Tally Stock Summary")
+            raise Exception("No stock rows parsed from Tally item collection")
 
         seen = {}
         for r in rows:
@@ -1000,6 +955,10 @@ def fetch_item_stock_flat():
             pass
 
         threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
+        logger.info(
+            "Item stock export completed in %.1fs across 1 Tally request (%d items)",
+            time.perf_counter() - export_started, len(deduped),
+        )
         return {"rows": len(deduped), "file": ITEM_STOCK_FILE_AUTO, "warning": None}
     except Exception as exc:
         print(f"item stock export failed: {str(exc)}")
