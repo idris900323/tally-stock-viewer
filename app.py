@@ -2651,6 +2651,12 @@ def refresh_status():
     return jsonify(last_refresh_status)
 
 
+@app.route("/tally_instances")
+def tally_instances():
+    """Return how many Tally processes are running, for the on-screen warning."""
+    return jsonify({"count": _check_multiple_tally_instances()})
+
+
 @app.route("/refresh_stock", methods=["POST"])
 @admin_required
 def refresh_stock():
