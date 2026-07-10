@@ -2905,6 +2905,150 @@ def system_tally_status():
     })
 
 
+# The same requests fetch_item_stock_flat() sends on every export cycle
+# (A, B, C), plus the proposed lighter single-request replacement (D).
+# Mirrors scripts/measure_tally.ps1 so browser and PowerShell runs are
+# directly comparable. Read-only: export/collection requests only.
+_TALLY_PERF_REQUESTS = [
+    ("A. Item master collection (current)", "collection", '''<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export Data</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>List of Stock Items</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>'''),
+    ("B. Stock Summary non-detailed (current)", "summary", '''<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Stock Summary</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>'''),
+    ("C. Stock Summary detailed+exploded (current)", "summary", '''<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export</TALLYREQUEST>
+        <TYPE>Data</TYPE>
+        <ID>Stock Summary</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+                <SVSTOCKGROUP>Primary</SVSTOCKGROUP>
+                <ISDETAILED>Yes</ISDETAILED>
+                <EXPLODEFLAG>Yes</EXPLODEFLAG>
+                <SVSHOWALLITEMS>Yes</SVSHOWALLITEMS>
+                <SVSHOWZEROBALANCES>Yes</SVSHOWZEROBALANCES>
+            </STATICVARIABLES>
+        </DESC>
+    </BODY>
+</ENVELOPE>'''),
+    ("D. Item collection with closing balance (candidate)", "collection", '''<ENVELOPE>
+    <HEADER>
+        <VERSION>1</VERSION>
+        <TALLYREQUEST>Export Data</TALLYREQUEST>
+        <TYPE>Collection</TYPE>
+        <ID>Item Names With Closing</ID>
+    </HEADER>
+    <BODY>
+        <DESC>
+            <STATICVARIABLES>
+                <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+            </STATICVARIABLES>
+            <TDL>
+                <TDLMESSAGE>
+                    <COLLECTION NAME="Item Names With Closing" ISMODIFY="No">
+                        <TYPE>StockItem</TYPE>
+                        <FETCH>NAME, CLOSINGBALANCE</FETCH>
+                    </COLLECTION>
+                </TDLMESSAGE>
+            </TDL>
+        </DESC>
+    </BODY>
+</ENVELOPE>'''),
+]
+
+
+@app.route("/admin/system/tally_perf_test")
+@admin_required
+@system_device_required
+def system_tally_perf_test():
+    if not _tally_is_reachable():
+        return jsonify({"ok": False, "error": f"Tally is not reachable at {TALLY_URL}."})
+    if _check_multiple_tally_instances() > 1:
+        return jsonify({"ok": False, "error": MULTIPLE_TALLY_MESSAGE})
+
+    def _parse_collection(text):
+        root = ET.fromstring(_sanitize_tally_xml(text))
+        nodes = root.findall(".//COLLECTION/STOCKITEM")
+        samples = []
+        for node in nodes[:3]:
+            name = node.attrib.get("NAME", "").strip()
+            if not name:
+                name_node = node.find(".//NAME")
+                name = name_node.text.strip() if (name_node is not None and name_node.text) else ""
+            bal_node = node.find(".//CLOSINGBALANCE")
+            qty = bal_node.text.strip() if (bal_node is not None and bal_node.text) else ""
+            samples.append({"name": name, "qty": qty})
+        return len(nodes), samples
+
+    def _parse_summary(text):
+        root = ET.fromstring(_sanitize_tally_xml(text))
+        names = root.findall(".//DSPACCNAME")
+        stocks = root.findall(".//DSPSTKINFO")
+        samples = []
+        for name_node, stock_node in list(zip(names, stocks))[:3]:
+            display_node = name_node.find("DSPDISPNAME")
+            qty_node = stock_node.find(".//DSPCLQTY")
+            name = display_node.text.strip() if (display_node is not None and display_node.text) else ""
+            qty = qty_node.text.strip() if (qty_node is not None and qty_node.text) else ""
+            samples.append({"name": name, "qty": qty})
+        return len(names), samples
+
+    parsers = {"collection": _parse_collection, "summary": _parse_summary}
+
+    results = []
+    for label, kind, xml_req in _TALLY_PERF_REQUESTS:
+        start = time.perf_counter()
+        try:
+            text = _post_tally_with_retry(xml_req)
+            elapsed = time.perf_counter() - start
+            if "<LINEERROR>" in text or "<RESPONSE>Error" in text or "Unknown Request" in text:
+                results.append({"label": label, "time_seconds": round(elapsed, 2),
+                                "status": f"Tally error: {text[:200]}", "row_count": None, "samples": []})
+                continue
+            try:
+                row_count, samples = parsers[kind](text)
+                results.append({"label": label, "time_seconds": round(elapsed, 2),
+                                "status": "ok", "row_count": row_count, "samples": samples})
+            except Exception as parse_exc:
+                results.append({"label": label, "time_seconds": round(elapsed, 2),
+                                "status": f"parse error: {parse_exc}", "row_count": None, "samples": []})
+        except Exception as exc:
+            elapsed = time.perf_counter() - start
+            results.append({"label": label, "time_seconds": round(elapsed, 2),
+                            "status": str(exc), "row_count": None, "samples": []})
+
+    return jsonify({"ok": True, "results": results})
+
+
 @app.route("/admin/system/env_summary")
 @admin_required
 @system_device_required

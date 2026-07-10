@@ -343,6 +343,15 @@
     </div>
 
     <div class="panel">
+        <h2>Tally Performance Test <span class="badge muted" id="perfTestBadge"></span></h2>
+        <p class="muted">Times the exact Tally requests the stock export sends every cycle, plus a proposed lighter replacement, so slow ones can be identified with real numbers.</p>
+        <div class="actions">
+            <button class="secondary" id="perfTestBtn" onclick="runTallyPerfTest()" title="Sends 4 real test requests to Tally and times each one, to help diagnose why Tally slows down during stock refresh. Safe to run anytime — read-only, changes nothing.">Run Test</button>
+        </div>
+        <div id="perfTestResults" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
         <h2>Recent Logs</h2>
         <div class="actions" style="margin-bottom:6px;">
             <button class="secondary" onclick="loadLogs()" title="Reload the last 200 lines of the application log">Refresh Logs</button>
@@ -588,6 +597,46 @@ async function loadLogs() {
         box.textContent = text || "(log file is empty)";
     } catch (error) {
         box.textContent = `Error: ${error.message}`;
+    }
+}
+
+async function runTallyPerfTest() {
+    const btn = document.getElementById("perfTestBtn");
+    const badge = document.getElementById("perfTestBadge");
+    const box = document.getElementById("perfTestResults");
+    btn.disabled = true;
+    btn.textContent = "Running...";
+    setBadge(badge, "Running...", "muted");
+    box.innerHTML = '<span class="muted">Sending 4 test requests to Tally and timing each one. This can take a while if Tally is busy...</span>';
+    try {
+        const data = await fetchJson("/admin/system/tally_perf_test");
+        if (!data || data.ok === false) {
+            setBadge(badge, "Failed", "bad");
+            box.innerHTML = `<div class="notice error" style="display:block;">${escapeHtml((data && data.error) || "Test failed")}</div>`;
+            return;
+        }
+        let html = '<table class="kv-table"><tr><td><strong>Request</strong></td><td><strong>Time</strong></td><td><strong>Rows</strong></td><td><strong>Sample data</strong></td></tr>';
+        let allOk = true;
+        for (const r of data.results || []) {
+            if (r.status !== "ok") allOk = false;
+            const sample = (r.samples || [])
+                .map(s => s.qty ? `${s.name} = ${s.qty}` : s.name)
+                .join("; ");
+            const statusNote = r.status === "ok" ? "" : ` — ${r.status}`;
+            html += `<tr><td>${escapeHtml(r.label)}${escapeHtml(statusNote)}</td>`
+                + `<td>${escapeHtml(r.time_seconds)}s</td>`
+                + `<td>${r.row_count == null ? "-" : escapeHtml(r.row_count)}</td>`
+                + `<td>${escapeHtml(sample) || "-"}</td></tr>`;
+        }
+        html += "</table>";
+        box.innerHTML = html;
+        setBadge(badge, allOk ? "Done" : "Done (with errors)", allOk ? "ok" : "bad");
+    } catch (error) {
+        setBadge(badge, "Failed", "bad");
+        box.innerHTML = `<div class="notice error" style="display:block;">${escapeHtml(error.message)}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Run Test";
     }
 }
 
