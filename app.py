@@ -2706,6 +2706,7 @@ def _run_git_command(args, timeout=10):
             capture_output=True,
             text=True,
             timeout=timeout,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except Exception as exc:
