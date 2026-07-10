@@ -240,8 +240,10 @@ def _create_icon_image() -> Image.Image:
     return image
 
 
-def _watchdog(icon: pystray.Icon):
-    while icon.visible:
+def _watchdog():
+    _write_log("Watchdog thread started")
+    while True:
+        _write_log("Watchdog poll cycle")
         pid = _read_pid()
         if pid is not None:
             if not _is_process_alive(pid) or not _is_port_open():
@@ -271,8 +273,15 @@ def run_tray():
         _create_menu(None),
     )
 
+    # Started unconditionally, before icon.run(), so the safety-net watchdog
+    # can never be blocked by tray icon initialization failing or being
+    # slow (see on_icon_setup below, which pystray requires to explicitly
+    # set icon.visible = True since it replaces the default setup callback).
+    threading.Thread(target=_watchdog, daemon=True).start()
+
     def on_icon_setup(icon):
-        threading.Thread(target=_watchdog, args=(icon,), daemon=True).start()
+        _write_log("Tray icon setup callback started")
+        icon.visible = True
 
     icon.run(on_icon_setup)
 
