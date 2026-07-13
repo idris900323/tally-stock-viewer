@@ -1336,7 +1336,8 @@ function renderDesignItem(item) {
     const stockItem = item.design || item.raw || "Unknown";
     const mapped = Boolean(item.mapped);
     const thumbnailUrl = item.thumbnail_url || `/get_stock_image?stock_item=${encodeURIComponent(stockItem)}`;
-    const fixUrl = item.fix_url || `/train?stock_item=${encodeURIComponent(stockItem)}`;
+    const currentCar = document.getElementById("carSelect").value || "";
+    const addImageUrl = `/train?car=${encodeURIComponent(currentCar)}&stock_item=${encodeURIComponent(stockItem)}`;
     const confidence = typeof item.confidence === "number" ? Math.round(item.confidence * 100) : 0;
     const escapedTitle = escapeHtml(stockItem);
     const safeThumbnail = escapeHtml(thumbnailUrl);
@@ -1358,7 +1359,7 @@ function renderDesignItem(item) {
                     <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? 'Linked' : 'Needs link'}</div>
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
-                    ${mapped ? '' : `<a href="${fixUrl}" class="fix-link">Fix Link</a>`}
+                    ${isAdmin ? `<a href="${addImageUrl}" class="fix-link" title="Find or upload a photo for this specific item">Add Image</a>` : ''}
                     <div class="thumbnail-actions">
                         <button class="secondary" data-src="${safeThumbnail}" onclick="copyImageToClipboard(this.dataset.src)">Copy Image</button>
                     </div>
