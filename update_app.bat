@@ -62,6 +62,20 @@ if errorlevel 1 (
     pause
 )
 
+echo [INFO] Checking autostart entry...
+set "AUTOSTART_PYTHONW=C:\tally_stock\.venv\Scripts\pythonw.exe"
+set "AUTOSTART_LAUNCHER=C:\tally_stock\launcher.pyw"
+set "AUTOSTART_EXPECTED=""%AUTOSTART_PYTHONW%"" ""%AUTOSTART_LAUNCHER%"""
+set "AUTOSTART_EXPECTED=%AUTOSTART_EXPECTED:""="%"
+set "AUTOSTART_CURRENT="
+for /f "tokens=1,2,*" %%A in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v TallyStockViewer 2^>nul ^| findstr /I "REG_SZ"') do set "AUTOSTART_CURRENT=%%C"
+if "%AUTOSTART_CURRENT%"=="%AUTOSTART_EXPECTED%" (
+    echo [INFO] Autostart entry OK.
+) else (
+    reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "TallyStockViewer" /t REG_SZ /d "\"%AUTOSTART_PYTHONW%\" \"%AUTOSTART_LAUNCHER%\"" /f >nul
+    echo [INFO] Autostart entry repaired.
+)
+
 echo [INFO] Starting app...
 start "" "C:\tally_stock\.venv\Scripts\pythonw.exe" "C:\tally_stock\launcher.pyw"
 timeout /t 5 /nobreak >nul
