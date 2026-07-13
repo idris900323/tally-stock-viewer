@@ -828,6 +828,25 @@ function normalize(value) {
     return String(value || "").trim().toUpperCase();
 }
 
+// Display-only cleanup of a trailing Tally shelf-location code (e.g.
+// "* M-20", "****H-4****", "***G-4)"). Mirrors utils/normalize.py's
+// strip_shelf_code_for_display() -- never use this on a value sent to the
+// backend, only on text shown to the user.
+function stripShelfCodeForDisplay(name) {
+    const text = String(name || "");
+    const idx = text.indexOf("*");
+    if (idx === -1) {
+        return text.trim();
+    }
+    let before = text.slice(0, idx);
+    before = before.replace(/[\s.\-,]+$/, "");
+    while (before.endsWith(")") && (before.split("(").length - 1) < (before.split(")").length - 1)) {
+        before = before.slice(0, -1).replace(/\s+$/, "");
+    }
+    const cleaned = before.trim();
+    return cleaned || text.trim();
+}
+
 function showNotice(type, message) {
     const notice = document.getElementById(type === "error" ? "errorNotice" : "successNotice");
     notice.textContent = message;
@@ -1259,12 +1278,14 @@ function updateItemCount(count, baseCar = "") {
         return;
     }
 
+    const displayCar = baseCar ? stripShelfCodeForDisplay(baseCar) : "";
+
     if (!count) {
-        itemCount.textContent = baseCar ? `No stock items found for ${baseCar}.` : "Select a car to load stock items.";
+        itemCount.textContent = displayCar ? `No stock items found for ${displayCar}.` : "Select a car to load stock items.";
         return;
     }
 
-    itemCount.textContent = `${count} stock items available${baseCar ? ` for ${baseCar}` : ""}.`;
+    itemCount.textContent = `${count} stock items available${displayCar ? ` for ${displayCar}` : ""}.`;
 }
 
 function selectPreferredStockItem(preferredStockItem = "") {
