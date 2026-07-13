@@ -811,6 +811,7 @@
 <script>
 const initialImage = {{ initial_image | tojson }};
 const targetStockItem = {{ target_stock_item | tojson }};
+const targetCar = {{ target_car | tojson }};
 const ssImageFolders = {{ ss_image_folders | tojson }};
 const isAdmin = {{ is_admin|tojson }};
 const MAX_UPLOAD_SIZE = {{ max_image_size|tojson }};
@@ -821,6 +822,7 @@ let currentImage = null;
 let selectedQueueFolder = "";
 let currentCarFilter = "";
 let suppressQueueLoad = false;
+let suppressCarFilterLoad = false;
 
 function normalize(value) {
     return String(value || "").trim().toUpperCase();
@@ -1011,6 +1013,9 @@ function initializeCarFilter() {
     select.on("change", function () {
         const selectedCar = this.value || "";
         currentCarFilter = selectedCar;
+        if (suppressCarFilterLoad) {
+            return;
+        }
         loadStockItemsForCar(selectedCar).catch(error => {
             showNotice("error", error.message);
         });
@@ -1666,6 +1671,30 @@ async function initializePage() {
         loadExistingFoldersList();
     }
     await loadImageQueue(selectedFolder);
+
+    // Pre-selection from index.html's "Add Image" link (?car=&stock_item=).
+    // Reuses the exact same car-change -> loadStockItemsForCar ->
+    // selectPreferredStockItem -> "change" dispatch -> handleStockItemSelection
+    // chain a manual selection triggers; suppressCarFilterLoad only prevents
+    // the car's own change handler from also firing loadStockItemsForCar
+    // without the target stock item, since we call it ourselves right below
+    // with that value so it can be auto-selected in the same pass.
+    if (targetCar && targetStockItem) {
+        suppressCarFilterLoad = true;
+        setSelect2Value("#carModelFilter", targetCar);
+        suppressCarFilterLoad = false;
+        try {
+            await loadStockItemsForCar(targetCar, targetStockItem);
+            const normalizedTarget = normalize(targetStockItem);
+            const stockSelect = document.getElementById("stockItemSelect");
+            const matched = Array.from(stockSelect.options).some(option => normalize(option.value) === normalizedTarget);
+            if (!matched) {
+                showNotice("error", "Could not find that exact item — please select manually");
+            }
+        } catch (error) {
+            showNotice("error", error.message);
+        }
+    }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
