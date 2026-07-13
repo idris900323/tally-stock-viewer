@@ -32,7 +32,8 @@ from api.search import search_bp, set_search_dependencies
 from config import Config
 from tally.sync import fetch_from_tally_with_retry
 from utils.excel_helpers import load_excel_column, load_excel_rows
-from utils.normalize import extract_car_base_name, normalize_text
+from utils.normalize import extract_car_base_name, normalize_text, normalize_lookup_key
+from utils.product_normalize import extract_type_and_color
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -265,7 +266,7 @@ def _normalize_text(text):
 
 
 def _normalize_lookup_key(text):
-    return _normalize_text(text).lower()
+    return normalize_lookup_key(text)
 
 
 def _sanitize_tally_xml(text):
@@ -325,15 +326,46 @@ def _check_multiple_tally_instances():
 STOCK_ITEMS_CACHE = []
 MAIN_ROWS_CACHE = {"fingerprint": None, "rows": [], "exact_index": {}}
 STOCK_QTY_CACHE = {"fingerprint": None, "qty_map": {}}
+PRODUCT_CATEGORY_CACHE = {"fingerprint": None, "categories": []}
 PARENT_NAME_SET = set()
 DATA_CACHE_LOCK = threading.Lock()
 
 
 def _invalidate_runtime_caches():
-    global STOCK_ITEMS_CACHE, MAIN_ROWS_CACHE, STOCK_QTY_CACHE
+    global STOCK_ITEMS_CACHE, MAIN_ROWS_CACHE, STOCK_QTY_CACHE, PRODUCT_CATEGORY_CACHE
     STOCK_ITEMS_CACHE = []
     MAIN_ROWS_CACHE = {"fingerprint": None, "rows": [], "exact_index": {}}
     STOCK_QTY_CACHE = {"fingerprint": None, "qty_map": {}}
+    PRODUCT_CATEGORY_CACHE = {"fingerprint": None, "categories": []}
+
+
+def _get_product_categories():
+    """Group every stock item across all cars by (type, color), cached until
+    main_hierarchy.json changes (mirrors MAIN_ROWS_CACHE's invalidation)."""
+    fingerprint = _file_fingerprint(MAIN_HIERARCHY_CACHE_JSON)
+    with DATA_CACHE_LOCK:
+        if fingerprint is not None and PRODUCT_CATEGORY_CACHE["fingerprint"] == fingerprint:
+            return PRODUCT_CATEGORY_CACHE["categories"]
+
+    items = _load_training_hierarchy_items()
+    counts = defaultdict(int)
+    for item in items:
+        type_label, colors = extract_type_and_color(item.get("stock_item_name", ""))
+        if not type_label:
+            continue
+        color_key = "-".join(colors)
+        counts[(type_label, color_key)] += 1
+
+    categories = [
+        {"type": type_label, "color": color_key, "count": count}
+        for (type_label, color_key), count in counts.items()
+    ]
+    categories.sort(key=lambda entry: entry["count"], reverse=True)
+
+    with DATA_CACHE_LOCK:
+        PRODUCT_CATEGORY_CACHE["fingerprint"] = fingerprint
+        PRODUCT_CATEGORY_CACHE["categories"] = categories
+    return categories
 
 
 def _all_stock_items():
@@ -2086,6 +2118,129 @@ def train():
         max_image_size=Config.MAX_IMAGE_SIZE,
         allowed_image_extensions=sorted(Config.ALLOWED_IMAGE_EXTENSIONS),
     )
+
+
+@app.route("/bulk_match")
+@admin_required
+def bulk_match():
+    return render_template("bulk_match.html")
+
+
+@app.route("/api/search_all_stock_items")
+@admin_required
+def search_all_stock_items():
+    load_error = ensure_data_loaded()
+    if load_error:
+        return jsonify({"error": load_error}), 500
+
+    query = (request.args.get("q") or "").strip()
+    type_filter = (request.args.get("type") or "").strip()
+    color_filter = (request.args.get("color") or "").strip()
+
+    items = _load_training_hierarchy_items()
+
+    if type_filter or color_filter:
+        type_norm = normalize_text(type_filter)
+        color_norm = normalize_text(color_filter)
+        matched = []
+        for item in items:
+            item_type, item_colors = extract_type_and_color(item.get("stock_item_name", ""))
+            if type_norm and normalize_text(item_type or "") != type_norm:
+                continue
+            if color_norm and normalize_text("-".join(item_colors)) != color_norm:
+                continue
+            matched.append(item)
+    else:
+        normalized_query = normalize_text(query)
+        matched = [
+            item for item in items
+            if normalized_query and normalized_query in normalize_text(item.get("stock_item_name", ""))
+        ]
+
+    seen = set()
+    deduped = []
+    for item in matched:
+        key = (normalize_text(item.get("car_model", "")), normalize_text(item.get("stock_item_name", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    result_limit = 500
+    truncated = len(deduped) > result_limit
+    limited = deduped[:result_limit]
+
+    # Reuses the same mapping lookup db.get_mappings_for_stock_items() that
+    # _build_design_payload() uses, batched instead of one query per item —
+    # same underlying query as db.get_mapping_for_stock_item() (used by
+    # /get_current_mapping_image), just the many-items form of it.
+    mapping_lookup = db.get_mappings_for_stock_items([item.get("stock_item_name", "") for item in limited])
+
+    results = []
+    for item in limited:
+        stock_item_name = item.get("stock_item_name", "")
+        mapping = mapping_lookup.get(stock_item_name.strip().lower())
+        results.append({
+            "stock_item_name": stock_item_name,
+            "car_model": item.get("car_model", ""),
+            "is_mapped": bool(mapping and mapping.get("image_id")),
+            "mapped_image_id": mapping.get("image_id") if mapping else None,
+        })
+
+    return jsonify({
+        "results": results,
+        "count": len(results),
+        "total_matches": len(deduped),
+        "truncated": truncated,
+    })
+
+
+@app.route("/api/list_product_categories")
+@admin_required
+def list_product_categories():
+    load_error = ensure_data_loaded()
+    if load_error:
+        return jsonify({"error": load_error}), 500
+    return jsonify(_get_product_categories())
+
+
+@app.route("/admin/bulk_confirm_mapping", methods=["POST"])
+@admin_required
+def bulk_confirm_mapping():
+    payload = request.get_json(silent=True) or {}
+    try:
+        image_id = int(payload.get("image_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "image_id is required"}), 400
+
+    stock_items = payload.get("stock_items")
+    if not isinstance(stock_items, list) or not stock_items:
+        return jsonify({"error": "stock_items must be a non-empty list"}), 400
+
+    confirmed_count = 0
+    failed = []
+    stats = db.get_mapping_stats()
+
+    for raw_stock_item in stock_items:
+        stock_item_name = str(raw_stock_item or "").strip()
+        if not stock_item_name:
+            failed.append({"stock_item": raw_stock_item, "reason": "empty stock item name"})
+            continue
+        try:
+            result = _confirm_mapping_core(image_id, stock_item_name, confirmed_by="human")
+            confirmed_count += 1
+            stats = result["stats"]
+        except ValueError as exc:
+            failed.append({"stock_item": stock_item_name, "reason": str(exc)})
+        except Exception as exc:
+            logger.exception("bulk_confirm_mapping failed for stock_item=%s", stock_item_name)
+            failed.append({"stock_item": stock_item_name, "reason": str(exc)})
+
+    return jsonify({
+        "confirmed_count": confirmed_count,
+        "failed": failed,
+        "stats": stats,
+    })
 
 
 @app.route("/get_unmapped_images")
