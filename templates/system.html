@@ -329,6 +329,7 @@
         <table class="kv-table">
             <tr><td>Tally reachable</td><td id="tallyReachable">-</td></tr>
             <tr><td>Tally instances running</td><td id="tallyInstances">-</td></tr>
+            <tr><td>Autostart</td><td id="autostartStatus">-</td></tr>
             <tr><td>Tally URL</td><td id="envTallyUrl">-</td></tr>
             <tr><td>Database path</td><td id="envDbPath">-</td></tr>
             <tr><td>Log file</td><td id="envLogFile">-</td></tr>
@@ -552,11 +553,12 @@ async function checkDuplicateImages() {
 async function refreshEnvironment() {
     const tallyBadge = document.getElementById("tallyBadge");
     try {
-        const [tally, env, disk, uptime] = await Promise.all([
+        const [tally, env, disk, uptime, autostart] = await Promise.all([
             fetchJson("/admin/system/tally_status"),
             fetchJson("/admin/system/env_summary"),
             fetchJson("/admin/system/disk_usage"),
             fetchJson("/admin/system/uptime"),
+            fetchJson("/admin/system/autostart_status"),
         ]);
 
         document.getElementById("tallyReachable").textContent = tally.reachable ? "Yes" : "No";
@@ -579,6 +581,10 @@ async function refreshEnvironment() {
         document.getElementById("diskFree").textContent = `${disk.free_disk_space_gb} GB`;
 
         document.getElementById("serverUptime").textContent = uptime.uptime_human;
+
+        const autostartEl = document.getElementById("autostartStatus");
+        autostartEl.textContent = autostart.matches ? "Configured correctly" : "Missing or incorrect";
+        autostartEl.style.color = autostart.matches ? "#166534" : "var(--danger)";
     } catch (error) {
         setBadge(tallyBadge, "Error", "bad");
     }

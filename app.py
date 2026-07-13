@@ -2865,6 +2865,52 @@ def system_tally_status():
     })
 
 
+AUTOSTART_REGISTRY_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_VALUE_NAME = "TallyStockViewer"
+
+
+def _expected_autostart_command():
+    pythonw_exe = os.path.join(BASE_DIR, ".venv", "Scripts", "pythonw.exe")
+    launcher_pyw = os.path.join(BASE_DIR, "launcher.pyw")
+    return f'"{pythonw_exe}" "{launcher_pyw}"'
+
+
+@app.route("/admin/system/autostart_status")
+@admin_required
+@system_device_required
+def system_autostart_status():
+    expected = _expected_autostart_command()
+    try:
+        result = subprocess.run(
+            ["reg", "query", AUTOSTART_REGISTRY_KEY, "/v", AUTOSTART_VALUE_NAME],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception as exc:
+        return jsonify({"exists": False, "matches": False, "error": str(exc)})
+
+    if result.returncode != 0:
+        return jsonify({"exists": False, "matches": False, "current": None, "expected": expected})
+
+    current = None
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(AUTOSTART_VALUE_NAME):
+            parts = stripped.split(None, 2)
+            if len(parts) == 3:
+                current = parts[2]
+            break
+
+    return jsonify({
+        "exists": True,
+        "matches": current == expected,
+        "current": current,
+        "expected": expected,
+    })
+
+
 # The same requests fetch_item_stock_flat() sends on every export cycle
 # (A, B, C), plus the proposed lighter single-request replacement (D).
 # Mirrors scripts/measure_tally.ps1 so browser and PowerShell runs are
