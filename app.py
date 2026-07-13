@@ -1043,6 +1043,40 @@ def fetch_car_master_from_tally():
     return sorted(car_names)
 
 
+def _car_names_with_real_children():
+    """Return the set of normalized car/parent names that have at least one
+    real child entry in main_hierarchy.json, or None if that file is
+    missing/unreadable/empty (in which case callers should skip filtering
+    rather than risk emptying the whole dropdown).
+
+    A car can appear in car_master.json's raw Tally Stock Group list (e.g.
+    fetched before a car was deleted from Tally, or simply outside the
+    hierarchy fetch for some other reason) while having no corresponding
+    entry here at all -- that car has zero real designs and must not show
+    in the dropdown. This is distinct from a car that DOES have real
+    children here but where every child currently has zero stock (e.g.
+    "ALCAZAR 8 ARMS 2024**** N1") -- that case must still show, so the
+    check below only requires a non-empty children list, not any qty > 0.
+    """
+    if not os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+        return None
+    try:
+        with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        return None
+    if not isinstance(payload, list):
+        return None
+
+    names = set()
+    for entry in payload:
+        parent_name = str(entry.get("parent") or "").strip()
+        children = entry.get("children")
+        if parent_name and isinstance(children, list) and children:
+            names.add(normalize_text(parent_name))
+    return names or None
+
+
 def _load_car_groups_from_cache_or_excel():
     car_groups = []
 
@@ -1536,8 +1570,22 @@ def load_data(refresh_first: bool = False):
 
     # ---- Load car groups from car master list ----
     try:
-        CAR_GROUPS = _load_car_groups_from_cache_or_excel()
-        PARENT_NAME_SET = {normalize_text(name) for name in CAR_GROUPS if str(name).strip()}
+        raw_car_groups = _load_car_groups_from_cache_or_excel()
+        # PARENT_NAME_SET stays built from the full, unfiltered list -- it's
+        # also used as a row-boundary marker when scanning main.xlsx (see
+        # _find_children_by_qty), which is unrelated to what shows in the
+        # dropdown and must not change here.
+        PARENT_NAME_SET = {normalize_text(name) for name in raw_car_groups if str(name).strip()}
+
+        real_children_names = _car_names_with_real_children()
+        if real_children_names is not None:
+            CAR_GROUPS = [
+                car for car in raw_car_groups
+                if normalize_text(car) in real_children_names
+            ]
+        else:
+            CAR_GROUPS = raw_car_groups
+
         print(f"[OK] Loaded {len(CAR_GROUPS)} car models from dropdown")
     except Exception as exc:
         print(f"[ERROR] Error loading car master list: {exc}")
@@ -1705,19 +1753,9 @@ def _find_children_by_qty(car_name: str):
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
-    def _live_designs_for_car():
-        if car_name in CAR_DESIGN_MAP and CAR_DESIGN_MAP[car_name]:
-            return [
-                design
-                for design in CAR_DESIGN_MAP[car_name]
-                if design.get("qty", 0) > 0
-            ]
-        return []
-
     if not PARENT_NAME_SET:
         logger.warning("Skipping child lookup because parent data has not loaded yet")
-        live_designs = _live_designs_for_car()
-        return (car_name in CAR_DESIGN_MAP), live_designs
+        return False, []
 
     def _to_int(value):
         if value is None:
@@ -1855,8 +1893,7 @@ def _find_children_by_qty(car_name: str):
 
     rows, exact_index = _load_main_rows_cached()
     if not rows:
-        live_designs = _live_designs_for_car()
-        return (car_name in CAR_DESIGN_MAP), live_designs
+        return False, []
 
     parent_idx = None
     car_upper = _norm(car_name)
@@ -1876,8 +1913,7 @@ def _find_children_by_qty(car_name: str):
                 break
 
     if parent_idx is None:
-        live_designs = _live_designs_for_car()
-        return (car_name in CAR_DESIGN_MAP), live_designs
+        return False, []
 
     stock_qty_map = _load_stock_qty_map_cached()
 
@@ -1904,12 +1940,12 @@ def _find_children_by_qty(car_name: str):
 
             if parent_qty_total > 0 and running_qty >= parent_qty_total:
                 break
-    if children:
-        return True, children
-
-    live_designs = _live_designs_for_car()
-    if live_designs:
-        return True, live_designs
+    # Car was found as a real parent row (matched exactly or by substring
+    # above), just its own listed children summed to zero currently-in-stock
+    # items -- this is the same honest "found, but empty" state as a car
+    # with real hierarchy children that all happen to be zero-stock right
+    # now (e.g. "ALCAZAR 8 ARMS 2024**** N1"), not a "car doesn't exist"
+    # state, so found stays True.
     return True, children
 
 
@@ -1940,24 +1976,16 @@ def designs():
     if load_error:
         return jsonify({"error": load_error}), 500
 
-    # primary strategy: quantity-sum scanning of the export
-    found, children = _find_children_by_qty(car)
+    # quantity-sum scanning of the export. A car with no real hierarchy
+    # entry at all (deleted from Tally, never in the range fetch, etc.)
+    # and a car found with zero currently-in-stock children both return an
+    # honest empty list here -- CAR_DESIGN_MAP's loose token matching is no
+    # longer used as a fallback, since it silently matched unrelated cars
+    # sharing a generic word (e.g. "MAT") and returned hundreds of wrong
+    # designs for a genuinely empty car.
+    _found, children = _find_children_by_qty(car)
     if children:
         return jsonify(_build_design_payload(children))
-
-    if found:
-        # Car exists in hierarchy but has zero stock — return empty, do not fall back
-        return jsonify([])
-
-    # Car not in main hierarchy - check CAR_DESIGN_MAP as fallback
-    # but only return designs that have qty > 0 in the stock cache
-    if car in CAR_DESIGN_MAP and CAR_DESIGN_MAP[car]:
-        live_designs = [
-            d for d in CAR_DESIGN_MAP[car]
-            if d.get("qty", 0) > 0
-        ]
-        if live_designs:
-            return jsonify(_build_design_payload(live_designs))
 
     return jsonify([])
 
