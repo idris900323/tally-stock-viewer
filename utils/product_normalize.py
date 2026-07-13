@@ -8,12 +8,21 @@ from utils.normalize import normalize_text
 # variations seen in the stock item catalog (e.g. "7D", "7'D", "7 D").
 TYPE_PATTERNS = [
     ("FOOT MAT", re.compile(r"\bFOOT\s*MAT\b", re.IGNORECASE)),
-    ("7D MAT", re.compile(r"\b7\s*'?\s*D\s*MAT\b", re.IGNORECASE)),
+    # MAT is optional on 7D/9X/GRASS/NOODLE: confirmed against the real catalog
+    # that many genuine mat items omit it entirely (e.g. "ALCAZAR 2021-24
+    # BLACK 7D", "ALTROZ BLACK 7D") and, checked against the full catalog,
+    # making it optional here doesn't reclassify anything that already had a
+    # real type. SPLIT and DICKY are deliberately NOT made optional -- unlike
+    # the others, bare "SPLIT"/"DICKY" without "MAT" produced real false
+    # positives in this catalog (e.g. "JAC BLACK GREY SPLIT BEAT" under a
+    # CHEVROLET seat-cover-style listing, "WITH OUT DICKY" explicitly meaning
+    # the item lacks one), so those two keep requiring the literal "MAT".
+    ("7D MAT", re.compile(r"\b7\s*'?\s*D(?:\s*MAT)?\b", re.IGNORECASE)),
     ("SPLIT MAT", re.compile(r"\bSPLIT\s*MAT\b", re.IGNORECASE)),
-    ("9X MAT", re.compile(r"\b9\s*X\s*MAT\b", re.IGNORECASE)),
-    ("GRASS MAT", re.compile(r"\bGRASS\s*MAT\b", re.IGNORECASE)),
+    ("9X MAT", re.compile(r"\b9\s*X(?:\s*MAT)?\b", re.IGNORECASE)),
+    ("GRASS MAT", re.compile(r"\bGRASS(?:\s*MAT)?\b", re.IGNORECASE)),
     ("DICKY MAT", re.compile(r"\bDICKY\s*MAT\b", re.IGNORECASE)),
-    ("NOODLE MAT", re.compile(r"\bNOODLE\s*MAT\b", re.IGNORECASE)),
+    ("NOODLE MAT", re.compile(r"\bNOODLE(?:\s*MAT)?\b", re.IGNORECASE)),
     ("MATERIAL", re.compile(r"\bMATERIAL\b", re.IGNORECASE)),
     ("CURTAINS", re.compile(r"\bCURTAINS?\b", re.IGNORECASE)),
     ("NECK REST", re.compile(r"\bNECK\s*REST\b", re.IGNORECASE)),
