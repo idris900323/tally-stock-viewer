@@ -2068,6 +2068,7 @@ def train():
     initial_image = None
     image_id = request.args.get("image_id", type=int)
     stock_item = request.args.get("stock_item", default="")
+    car = request.args.get("car", default="")
 
     if image_id:
         initial_image = db.get_image_by_id(image_id)
@@ -2078,6 +2079,7 @@ def train():
         "train.html",
         initial_image=initial_image,
         target_stock_item=stock_item,
+        target_car=car,
         ss_image_folders=db.get_image_folders(),
         mapping_stats=db.get_mapping_stats(),
         selected_role=_current_role(),
