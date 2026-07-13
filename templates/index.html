@@ -370,6 +370,24 @@
             touch-action: manipulation;
         }
 
+        .add-image-link {
+            display: inline-block;
+            text-decoration: none;
+            color: var(--accent-dark);
+            font-weight: 700;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
+            border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .add-image-link:hover {
+            background: color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+
         .thumbnail-button,
         .design-thumbnail {
             -webkit-tap-highlight-color: transparent;
@@ -555,7 +573,8 @@
                 min-height: 44px;
             }
 
-            .fix-link {
+            .fix-link,
+            .add-image-link {
                 min-height: 44px;
                 display: inline-flex;
                 align-items: center;
@@ -1359,7 +1378,7 @@ function renderDesignItem(item) {
                     <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? 'Linked' : 'Needs link'}</div>
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
-                    ${isAdmin ? `<a href="${addImageUrl}" class="fix-link" title="Find or upload a photo for this specific item">Add Image</a>` : ''}
+                    ${isAdmin ? `<a href="${addImageUrl}" class="add-image-link" title="Find or upload a photo for this specific item">Add Image</a>` : ''}
                     <div class="thumbnail-actions">
                         <button class="secondary" data-src="${safeThumbnail}" onclick="copyImageToClipboard(this.dataset.src)">Copy Image</button>
                     </div>
