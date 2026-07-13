@@ -5,6 +5,16 @@ def normalize_text(text):
     return re.sub(r"\s+", " ", str(text or "")).strip().upper()
 
 
+def normalize_lookup_key(text):
+    """Collapse-whitespace + strip + lowercase key for dict/DB lookups.
+
+    Single source of truth so a stock item name with irregular internal
+    whitespace (common in Tally exports) always maps to the same key on
+    both the app-side lookup builder and the database query side.
+    """
+    return normalize_text(text).lower()
+
+
 def extract_car_base_name(full_name):
     """Extract the searchable base car name from a noisy dropdown label."""
     value = str(full_name or "").strip()
