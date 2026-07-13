@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 import sqlite3
 import logging
 from collections import defaultdict
@@ -7,6 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from config import Config
+from utils.normalize import normalize_lookup_key
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -142,7 +144,7 @@ def _normalize_legacy_absolute_image_paths(conn):
                 """
                 INSERT INTO mappings (image_id, stock_item_name, car_model, confidence, confirmed_by, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(image_id) DO UPDATE SET
+                ON CONFLICT(image_id, stock_item_name) DO UPDATE SET
                     stock_item_name=excluded.stock_item_name,
                     car_model=excluded.car_model,
                     confidence=excluded.confidence,
@@ -201,7 +203,7 @@ def init_database():
             """
             CREATE TABLE IF NOT EXISTS mappings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                image_id INTEGER NOT NULL UNIQUE,
+                image_id INTEGER NOT NULL,
                 stock_item_name TEXT,
                 car_model TEXT,
                 confidence REAL NOT NULL DEFAULT 1.0,
@@ -273,6 +275,7 @@ def init_database():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_stock_item ON mappings(stock_item_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_stock_item_lower ON mappings(LOWER(stock_item_name), id DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_image_id ON mappings(image_id)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mappings_image_stock_unique ON mappings(image_id, stock_item_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_images_filepath ON images(filepath)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_folder_car_mapping ON folder_car_mapping(folder_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
@@ -287,6 +290,91 @@ def init_database():
                 logger.info("Normalized %s legacy absolute image paths to relative paths", normalized_count)
         except Exception:
             logger.exception("Failed to normalize legacy image paths")
+
+    _migrate_remove_image_id_unique()
+
+
+def _backup_database_file():
+    """Copy the live DB file, matching the timestamp convention used by
+    the System panel's /admin/system/download_backup (backup_TIMESTAMP)."""
+    if not os.path.exists(DB_PATH):
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = f"{DB_PATH}.backup_{timestamp}"
+    shutil.copy2(DB_PATH, backup_path)
+    return backup_path
+
+
+def _migrate_remove_image_id_unique():
+    """One-time migration: rebuild mappings without UNIQUE(image_id).
+
+    The UNIQUE constraint made add_mapping()'s ON CONFLICT(image_id) upsert
+    silently overwrite the existing row whenever the same image was confirmed
+    against a second stock item, instead of creating a second row -- one
+    image could never be linked to more than one stock item at a time.
+    SQLite can't drop a column constraint via ALTER TABLE, so this rebuilds
+    the table in a transaction, guarded to run only while the old unique
+    auto-index is still present. Recreates a compound UNIQUE(image_id,
+    stock_item_name) index so add_mapping()'s upsert still has a real
+    constraint to target -- this only dedupes the exact same pair and does
+    not restrict how many stock items a single image can map to.
+    """
+    conn = _connect()
+    try:
+        still_has_unique_image_id = False
+        for row in conn.execute("PRAGMA index_list('mappings')").fetchall():
+            if not row["unique"] or row["origin"] != "u":
+                continue
+            cols = conn.execute(f"PRAGMA index_info('{row['name']}')").fetchall()
+            if [c["name"] for c in cols] == ["image_id"]:
+                still_has_unique_image_id = True
+                break
+
+        if not still_has_unique_image_id:
+            return
+
+        backup_path = _backup_database_file()
+        logger.info("Migrating mappings table to remove UNIQUE(image_id); backup at %s", backup_path)
+
+        conn.execute("BEGIN")
+        try:
+            conn.execute(
+                """
+                CREATE TABLE mappings_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    image_id INTEGER NOT NULL,
+                    stock_item_name TEXT,
+                    car_model TEXT,
+                    confidence REAL NOT NULL DEFAULT 1.0,
+                    confirmed_by TEXT NOT NULL DEFAULT 'human',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO mappings_new (id, image_id, stock_item_name, car_model, confidence, confirmed_by, created_at)
+                SELECT id, image_id, stock_item_name, car_model, confidence, confirmed_by, created_at FROM mappings
+                """
+            )
+            conn.execute("DROP TABLE mappings")
+            conn.execute("ALTER TABLE mappings_new RENAME TO mappings")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_stock_item ON mappings(stock_item_name)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_stock_item_lower ON mappings(LOWER(stock_item_name), id DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_image_id ON mappings(image_id)")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mappings_image_stock_unique ON mappings(image_id, stock_item_name)")
+            conn.commit()
+            logger.info("Migration succeeded: mappings.image_id UNIQUE constraint removed.")
+        except Exception:
+            conn.rollback()
+            logger.exception(
+                "Migration failed removing UNIQUE(image_id); rolled back. Backup preserved at %s",
+                backup_path,
+            )
+            raise
+    finally:
+        conn.close()
 
 
 def _ensure_users_schema(conn):
@@ -415,7 +503,7 @@ def add_mapping(image_id, stock_item_name, car_model, confidence, confirmed_by="
                 """
                 INSERT INTO mappings (image_id, stock_item_name, car_model, confidence, confirmed_by, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(image_id) DO UPDATE SET
+                ON CONFLICT(image_id, stock_item_name) DO UPDATE SET
                     stock_item_name=excluded.stock_item_name,
                     car_model=excluded.car_model,
                     confidence=excluded.confidence,
@@ -550,26 +638,26 @@ def get_mapping_for_stock_item(stock_item_name):
 
 
 def get_mappings_for_stock_items(stock_item_names):
-    cleaned = []
-    seen = set()
+    cleaned_keys = set()
     for stock_item_name in stock_item_names or []:
         try:
-            value = _validate_stock_item_name(stock_item_name).strip()
+            value = _validate_stock_item_name(stock_item_name)
         except ValueError:
             continue
-        if not value:
-            continue
-        lookup_key = value.lower()
-        if lookup_key in seen:
-            continue
-        seen.add(lookup_key)
-        cleaned.append(lookup_key)
+        key = normalize_lookup_key(value)
+        if key:
+            cleaned_keys.add(key)
 
-    if not cleaned:
+    if not cleaned_keys:
         return {}
 
-    placeholders = ", ".join(["?"] * len(cleaned))
-    query = f"""
+    # Matching is done in Python (not SQL LOWER()) because stock item names
+    # commonly carry irregular internal whitespace from Tally exports, and
+    # normalize_lookup_key() collapses those runs -- something plain SQL
+    # LOWER() cannot replicate. Using the same shared key on both the input
+    # names and the stored rows is what keeps this in sync with the app-side
+    # lookup builder (see _normalize_lookup_key in app.py).
+    query = """
         SELECT
             m.id,
             m.image_id,
@@ -584,23 +672,20 @@ def get_mappings_for_stock_items(stock_item_names):
             i.scan_date
         FROM mappings m
         JOIN images i ON i.id = m.image_id
-        WHERE LOWER(m.stock_item_name) IN ({placeholders})
-          AND m.id = (
-              SELECT m2.id
-              FROM mappings m2
-              WHERE LOWER(m2.stock_item_name) = LOWER(m.stock_item_name)
-              ORDER BY m2.created_at DESC, m2.id DESC
-              LIMIT 1
-          )
     """
     with _connect() as conn:
-        rows = conn.execute(query, cleaned).fetchall()
+        rows = conn.execute(query).fetchall()
 
     result = {}
     for row in rows:
         record = _row_to_dict(row)
-        key = str(record.get("stock_item_name") or "").strip().lower()
-        if key:
+        key = normalize_lookup_key(record.get("stock_item_name"))
+        if key not in cleaned_keys:
+            continue
+        existing = result.get(key)
+        candidate_rank = (record.get("created_at") or "", record.get("id") or 0)
+        existing_rank = (existing.get("created_at") or "", existing.get("id") or 0) if existing else None
+        if existing is None or candidate_rank > existing_rank:
             result[key] = record
     return result
 
