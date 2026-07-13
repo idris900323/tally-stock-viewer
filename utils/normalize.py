@@ -15,6 +15,31 @@ def normalize_lookup_key(text):
     return normalize_text(text).lower()
 
 
+def strip_shelf_code_for_display(name):
+    """Strip a trailing Tally shelf-location code (e.g. "* M-20",
+    "****H-4****", "***G-4)", "**E-1,2, G-8") from a car name for DISPLAY
+    only. Truncates at the first "*", then trims trailing separator
+    punctuation (whitespace, ".", "-", ",") and a dangling unbalanced
+    trailing ")" left over from the cut.
+
+    Callers must keep using the original, unmodified `name` for anything
+    sent to the backend (?car= query params, matching against
+    car_master.json/main_hierarchy.json) -- this is presentation-only.
+    """
+    text = str(name or "")
+    idx = text.find("*")
+    if idx == -1:
+        return text.strip()
+
+    before = text[:idx]
+    before = re.sub(r"[\s.\-,]+$", "", before)
+    while before.endswith(")") and before.count("(") < before.count(")"):
+        before = before[:-1].rstrip()
+
+    cleaned = before.strip()
+    return cleaned or text.strip()
+
+
 def extract_car_base_name(full_name):
     """Extract the searchable base car name from a noisy dropdown label."""
     value = str(full_name or "").strip()

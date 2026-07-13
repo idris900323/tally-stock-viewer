@@ -1,0 +1,1100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bulk Match - Training Mode</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <style>
+        :root {
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --text: #14213d;
+            --muted: #607086;
+            --border: #d6e0ea;
+            --accent: #0f766e;
+            --accent-2: #1d4ed8;
+            --warning: #b45309;
+            --danger: #b91c1c;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 26%),
+                radial-gradient(circle at top right, rgba(29, 78, 216, 0.12), transparent 22%),
+                var(--bg);
+            color: var(--text);
+        }
+
+        .page {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 28px 20px 40px;
+        }
+
+        .header {
+            margin-bottom: 18px;
+        }
+
+        .header h1 {
+            margin: 0 0 8px;
+            font-size: 34px;
+        }
+
+        .header p {
+            margin: 0;
+            color: var(--muted);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            align-items: start;
+        }
+
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: 0 14px 40px rgba(20, 33, 61, 0.08);
+            padding: 20px;
+        }
+
+        .panel h2 {
+            margin: 0 0 14px;
+            font-size: 18px;
+        }
+
+        .image-frame {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: #eef2f7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .image-frame img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: linear-gradient(180deg, #ffffff, #eef4fb);
+        }
+
+        .image-overlay {
+            position: absolute;
+            inset: auto 12px 12px 12px;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            background: rgba(255, 255, 255, 0.88);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(214, 224, 234, 0.8);
+            border-radius: 12px;
+            padding: 10px 12px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 6px 10px;
+            background: #edf2f7;
+            color: #334155;
+        }
+
+        .field {
+            margin-bottom: 14px;
+        }
+
+        .field label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: #fff;
+            font-size: 14px;
+        }
+
+        .select2-container {
+            width: 100% !important;
+        }
+
+        .select2-container .select2-selection--single {
+            min-height: 42px;
+            border: 1px solid var(--border) !important;
+            border-radius: 12px !important;
+            padding: 6px 36px 6px 10px;
+            display: flex;
+            align-items: center;
+            background: #fff;
+        }
+
+        .select2-container .select2-selection__rendered {
+            line-height: 1.4 !important;
+            padding-left: 0 !important;
+            padding-right: 28px !important;
+            color: var(--text) !important;
+        }
+
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            display: block !important;
+            position: absolute;
+            top: 50%;
+            right: 10px;
+            width: 20px;
+            height: 20px;
+            transform: translateY(-50%);
+        }
+
+        .select2-container--default .select2-selection--single .select2-selection__arrow b {
+            border-color: #64748b transparent transparent transparent;
+            border-style: solid;
+            border-width: 6px 6px 0 6px;
+            height: 0;
+            left: 50%;
+            margin-left: -6px;
+            margin-top: -3px;
+            position: absolute;
+            top: 50%;
+            width: 0;
+        }
+
+        .select2-container--default.select2-container--open .select2-selection__arrow b {
+            border-color: transparent transparent #64748b transparent;
+            border-width: 0 6px 6px 6px;
+        }
+
+        button, .link-button {
+            padding: 11px 14px;
+            border-radius: 12px;
+            border: 0;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.12s ease, background-color 0.12s ease, box-shadow 0.12s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        button:hover, .link-button:hover {
+            transform: translateY(-1px);
+        }
+
+        button:active, .link-button:active {
+            transform: translateY(0);
+        }
+
+        button:focus-visible, .link-button:focus-visible, select:focus-visible, input:focus-visible {
+            outline: 2px solid var(--accent-2);
+            outline-offset: 2px;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button.primary {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        button.primary:hover {
+            background: #0c5c54;
+        }
+
+        button.secondary {
+            background: #e8eef7;
+            color: var(--text);
+        }
+
+        button.secondary:hover {
+            background: #dbe4f0;
+        }
+
+        button.ghost {
+            background: #f3f4f6;
+            color: var(--text);
+        }
+
+        button.ghost:hover {
+            background: #e5e7eb;
+        }
+
+        .rescan-btn {
+            background: #dbeafe;
+            color: var(--accent-2);
+        }
+
+        .rescan-btn:hover {
+            background: #c7ddfc;
+        }
+
+        .link-button {
+            background: #f8fafc;
+            color: var(--accent-2);
+            border: 1px solid var(--border);
+        }
+
+        .link-button:hover {
+            background: #eef2f7;
+        }
+
+        .notice {
+            display: none;
+            margin-top: 14px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+        }
+
+        .notice.success {
+            display: none;
+            background: #ecfdf3;
+            color: #166534;
+        }
+
+        .notice.error {
+            display: none;
+            background: #fef2f2;
+            color: var(--danger);
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            position: sticky;
+            top: 8px;
+            z-index: 40;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 10px 14px;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 24px rgba(20, 33, 61, 0.08);
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .topbar-left > .link-button {
+            margin-right: 20px;
+        }
+
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .role-indicator {
+            display: inline-flex;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--muted);
+            padding: 0 2px;
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        #currentMatchImg {
+            max-width: 280px;
+            max-height: 280px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            object-fit: cover;
+        }
+
+        .selected-image-empty {
+            color: #94a3b8;
+            font-size: 13px;
+        }
+
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 14px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: #f8fafc;
+            border: 1px solid var(--border);
+        }
+
+        .mode-toggle label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        .category-grid {
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 8px;
+            margin-bottom: 14px;
+            background: #fbfdff;
+        }
+
+        .category-grid.open {
+            display: flex;
+        }
+
+        .category-bucket {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            text-align: left;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .category-bucket:hover {
+            background: #eef2f7;
+        }
+
+        .category-bucket.active {
+            border-color: var(--accent-2);
+            background: #eef2ff;
+        }
+
+        .category-bucket .count {
+            color: var(--muted);
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .selection-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .selection-toolbar button {
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+
+        .selected-count {
+            margin-left: auto;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .results-list {
+            max-height: 420px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: #fff;
+        }
+
+        .result-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .result-row:last-child {
+            border-bottom: 0;
+        }
+
+        .result-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            flex: none;
+            cursor: pointer;
+        }
+
+        .result-row .result-text {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .result-row .result-name {
+            font-size: 13px;
+            font-weight: 700;
+            word-break: break-word;
+        }
+
+        .result-row .result-car {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .status-badge {
+            flex: none;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 4px 9px;
+            white-space: nowrap;
+        }
+
+        .status-badge.linked {
+            background: #ecfdf3;
+            color: #166534;
+        }
+
+        .status-badge.pending {
+            background: #edf2f7;
+            color: #475569;
+        }
+
+        .results-empty {
+            padding: 18px 14px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .truncated-note {
+            padding: 8px 12px;
+            font-size: 12px;
+            color: var(--warning);
+            background: #fffbeb;
+            border-top: 1px solid var(--border);
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        @media (max-width: 980px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .page {
+                padding: 18px 12px 28px;
+            }
+
+            .header h1 {
+                font-size: 24px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            button, .link-button {
+                width: 100%;
+                min-height: 44px;
+            }
+
+            select,
+            input[type="text"] {
+                font-size: 16px;
+                min-height: 44px;
+            }
+
+            .actions {
+                flex-direction: column;
+            }
+
+            .selection-toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .selection-toolbar button {
+                width: 100%;
+                min-height: 44px;
+            }
+
+            .selected-count {
+                margin-left: 0;
+                text-align: center;
+            }
+
+            .result-row {
+                min-height: 44px;
+            }
+
+            .topbar {
+                position: sticky;
+                top: 0;
+                margin: -18px -12px 14px;
+                padding: 10px 12px;
+                border-radius: 0;
+                border-left: 0;
+                border-right: 0;
+                border-top: 0;
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .topbar-left,
+            .topbar-right {
+                width: 100%;
+            }
+
+            .topbar-left > .link-button {
+                margin-right: 0;
+            }
+
+            .topbar-right {
+                justify-content: space-between;
+            }
+
+            .select2-results__options {
+                max-height: 60vh !important;
+            }
+
+            #currentMatchImg {
+                max-width: 200px;
+                max-height: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <div class="header">
+        <h1>Bulk Match</h1>
+        <p>Match one shared image (e.g. a generic "Black Foot Mat" photo) against many stock items at once, across every car.</p>
+    </div>
+
+    <div class="topbar">
+        <div class="topbar-left">
+            <a href="/train" class="link-button" title="Return to single-image Training Mode">Back to Training</a>
+        </div>
+        <div class="topbar-right">
+            <span class="role-indicator">{{ current_role|default('admin')|title }} mode</span>
+            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>1. Choose the shared image</h2>
+
+            <div class="field">
+                <label for="bulkCarFolderSelect">SS Car Folder</label>
+                <div id="bulkCarFolderContainer" title="Browse to the folder where the shared image lives">
+                    <select id="bulkCarFolderSelect"></select>
+                </div>
+            </div>
+
+            <div class="field">
+                <label for="bulkImageSelect">Images in Selected Folder</label>
+                <select id="bulkImageSelect" onchange="handleBulkImageSelection()" title="Pick the shared image you want to apply to many stock items" disabled></select>
+            </div>
+
+            <div class="image-frame">
+                <img id="bulkImagePreview" alt="Selected image preview">
+                <div class="image-overlay">
+                    <span class="pill" id="bulkImageIdPill">No image selected</span>
+                </div>
+            </div>
+
+            <div class="field" style="margin-top:14px;">
+                <label>Selected Image</label>
+                <div id="selectedImageWrap">
+                    <img id="currentMatchImg" style="display:none;" alt="Selected image">
+                    <div class="selected-image-empty" id="selectedImageEmpty">No image selected yet. Choose a car folder and an image above.</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>2. Search and select stock items</h2>
+
+            <div class="mode-toggle">
+                <label for="categoryModeToggle" title="Switch between free-text search and browsing pre-grouped type/color buckets">
+                    <input type="checkbox" id="categoryModeToggle" onchange="toggleCategoryMode()">
+                    Browse by Category
+                </label>
+            </div>
+
+            <div class="field" id="searchInputWrap">
+                <label for="bulkSearchInput">Search Stock Items</label>
+                <input type="text" id="bulkSearchInput"
+                    placeholder="Search by keyword (e.g. FOOT MAT, 7D MAT, CURTAINS BLACK)"
+                    title="Type any part of the stock item name — searches across every car, not just one"
+                    oninput="handleSearchInput()">
+            </div>
+
+            <div class="category-grid" id="categoryGrid" title="Click a bucket to load every stock item matching that type/color combination"></div>
+
+            <div class="selection-toolbar">
+                <button class="secondary" onclick="selectAllVisible()" title="Select every stock item currently shown below">Select All</button>
+                <button class="secondary" onclick="deselectAllVisible()" title="Clear selection for every stock item currently shown below">Deselect All</button>
+                <button class="secondary" onclick="selectAllUnmatched()" title="Select only items shown below that don't already have a different image mapped">Select All Unmatched Only</button>
+                <span class="selected-count" id="selectedCount">0 selected</span>
+            </div>
+
+            <div class="results-list" id="resultsList">
+                <div class="results-empty">Type a keyword above, or switch to Browse by Category.</div>
+            </div>
+
+            <div class="actions">
+                <button class="primary" id="confirmBulkBtn" onclick="confirmBulkMatch()" disabled title="Save the selected image as matched to every checked stock item">Confirm Match for Selected</button>
+            </div>
+
+            <div class="notice success" id="successNotice"></div>
+            <div class="notice error" id="errorNotice"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedImage = null;
+let selectedQueueFolder = "";
+let imageQueue = [];
+
+// Persisted across searches so an admin can accumulate selections from
+// several keyword/category searches before confirming once.
+const selectedStockItems = new Map();
+let visibleResults = [];
+let categoryModeOn = false;
+let searchDebounceTimer = null;
+
+function showNotice(type, message) {
+    const notice = document.getElementById(type === "error" ? "errorNotice" : "successNotice");
+    notice.textContent = message;
+    notice.style.display = "block";
+}
+
+// Display-only cleanup of a trailing Tally shelf-location code (e.g.
+// "* M-20", "****H-4****", "***G-4)"). Mirrors utils/normalize.py's
+// strip_shelf_code_for_display() -- never use this on a value sent to the
+// backend, only on text shown to the user.
+function stripShelfCodeForDisplay(name) {
+    const text = String(name || "");
+    const idx = text.indexOf("*");
+    if (idx === -1) {
+        return text.trim();
+    }
+    let before = text.slice(0, idx);
+    before = before.replace(/[\s.\-,]+$/, "");
+    while (before.endsWith(")") && (before.split("(").length - 1) < (before.split(")").length - 1)) {
+        before = before.slice(0, -1).replace(/\s+$/, "");
+    }
+    const cleaned = before.trim();
+    return cleaned || text.trim();
+}
+
+function clearNotices() {
+    document.getElementById("successNotice").style.display = "none";
+    document.getElementById("errorNotice").style.display = "none";
+}
+
+function getPlaceholderImage() {
+    return "data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMjAgMzIwJz48cmVjdCB3aWR0aD0nMzIwJyBoZWlnaHQ9JzMyMCcgcng9JzI0JyBmaWxsPScjZWVmMmY3Jy8+PHRleHQgeD0nMTYwJyB5PScxNjgnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZvbnQtZmFtaWx5PSdBcmlhbCcgc3R5bGU9J2ZvbnQtc2l6ZToxOHB4O2ZpbGw6IzU2Njk4MCc+Tm8gaW1hZ2U8L3RleHQ+PC9zdmc+";
+}
+
+function updateConfirmButtonState() {
+    const btn = document.getElementById("confirmBulkBtn");
+    btn.disabled = !selectedImage || selectedStockItems.size === 0;
+}
+
+function updateSelectedCount() {
+    document.getElementById("selectedCount").textContent = `${selectedStockItems.size} selected`;
+    updateConfirmButtonState();
+}
+
+function initializeCarFolderSelect() {
+    const select = $("#bulkCarFolderSelect");
+    select.select2({
+        ajax: {
+            url: "/api/search_car_folders",
+            dataType: "json",
+            delay: 150,
+            data: params => ({
+                q: params.term || "",
+                page: params.page || 1,
+            }),
+            processResults: data => ({
+                results: data.results || [],
+                pagination: { more: Boolean(data.pagination && data.pagination.more) },
+            }),
+            cache: true,
+        },
+        placeholder: "Search SS car folders or click arrow",
+        minimumInputLength: 0,
+        allowClear: true,
+        dropdownParent: $("#bulkCarFolderContainer"),
+        width: "100%",
+    });
+
+    select.on("select2:open", function () {
+        setTimeout(() => {
+            const search = document.querySelector(".select2-container--open .select2-search__field");
+            if (search) {
+                search.focus();
+            }
+        }, 0);
+    });
+
+    select.on("change", function () {
+        loadBulkImageQueue(this.value || "").catch(error => {
+            showNotice("error", error.message);
+        });
+    });
+}
+
+function populateBulkImageDropdown() {
+    const select = document.getElementById("bulkImageSelect");
+    select.innerHTML = "";
+
+    if (!imageQueue.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No SS images available in this folder";
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+    }
+
+    select.disabled = false;
+    imageQueue.forEach((image, index) => {
+        const option = document.createElement("option");
+        option.value = String(image.id);
+        const statusLabel = image.mapped ? "Linked" : "Pending";
+        option.textContent = `${String(index + 1).padStart(4, "0")} | ${image.filename || "Unnamed"} | ${statusLabel}`;
+        select.appendChild(option);
+    });
+    select.selectedIndex = -1;
+}
+
+async function loadBulkImageQueue(folderName) {
+    selectedQueueFolder = folderName || "";
+    setSelectedImage(null);
+
+    if (!selectedQueueFolder) {
+        imageQueue = [];
+        populateBulkImageDropdown();
+        return;
+    }
+
+    const response = await fetch(`/train_images?folder=${encodeURIComponent(selectedQueueFolder)}`);
+    if (!response.ok) {
+        throw new Error(`Could not load images (HTTP ${response.status})`);
+    }
+    const payload = await response.json();
+    imageQueue = payload.images || [];
+    populateBulkImageDropdown();
+}
+
+function setSelectedImage(imageRecord) {
+    selectedImage = imageRecord;
+    const preview = document.getElementById("bulkImagePreview");
+    const idPill = document.getElementById("bulkImageIdPill");
+    const bigImg = document.getElementById("currentMatchImg");
+    const emptyNote = document.getElementById("selectedImageEmpty");
+
+    if (!imageRecord) {
+        preview.src = getPlaceholderImage();
+        idPill.textContent = "No image selected";
+        bigImg.style.display = "none";
+        bigImg.src = "";
+        emptyNote.style.display = "block";
+        updateConfirmButtonState();
+        return;
+    }
+
+    preview.src = `/get_image/${imageRecord.id}`;
+    idPill.textContent = `Image #${imageRecord.id}`;
+    bigImg.src = `/get_image/${imageRecord.id}`;
+    bigImg.style.display = "block";
+    emptyNote.style.display = "none";
+    updateConfirmButtonState();
+}
+
+function handleBulkImageSelection() {
+    const select = document.getElementById("bulkImageSelect");
+    const imageId = Number(select.value);
+    if (!select.value || !Number.isFinite(imageId)) {
+        setSelectedImage(null);
+        return;
+    }
+    const imageRecord = imageQueue.find(image => Number(image.id) === imageId);
+    setSelectedImage(imageRecord || null);
+}
+
+function toggleCategoryMode() {
+    categoryModeOn = document.getElementById("categoryModeToggle").checked;
+    const searchWrap = document.getElementById("searchInputWrap");
+    const grid = document.getElementById("categoryGrid");
+
+    if (categoryModeOn) {
+        searchWrap.style.display = "none";
+        grid.classList.add("open");
+        loadProductCategories().catch(error => showNotice("error", error.message));
+    } else {
+        searchWrap.style.display = "block";
+        grid.classList.remove("open");
+    }
+
+    renderResults([]);
+}
+
+async function loadProductCategories() {
+    const grid = document.getElementById("categoryGrid");
+    grid.innerHTML = "<div class=\"results-empty\">Loading categories...</div>";
+
+    const response = await fetch("/api/list_product_categories");
+    if (!response.ok) {
+        throw new Error(`Could not load categories (HTTP ${response.status})`);
+    }
+    const categories = await response.json();
+
+    if (!Array.isArray(categories) || categories.length === 0) {
+        grid.innerHTML = "<div class=\"results-empty\">No categories detected yet.</div>";
+        return;
+    }
+
+    grid.innerHTML = "";
+    categories.forEach(category => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "category-bucket";
+        const colorLabel = category.color ? ` — ${category.color}` : "";
+        btn.innerHTML = `<span>${category.type}${colorLabel}</span><span class="count">${category.count} items</span>`;
+        btn.addEventListener("click", () => {
+            document.querySelectorAll(".category-bucket.active").forEach(el => el.classList.remove("active"));
+            btn.classList.add("active");
+            runCategorySearch(category.type, category.color || "");
+        });
+        grid.appendChild(btn);
+    });
+}
+
+function handleSearchInput() {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+        const query = document.getElementById("bulkSearchInput").value.trim();
+        if (!query) {
+            renderResults([]);
+            return;
+        }
+        runFreeTextSearch(query).catch(error => showNotice("error", error.message));
+    }, 300);
+}
+
+async function runFreeTextSearch(query) {
+    const response = await fetch(`/api/search_all_stock_items?q=${encodeURIComponent(query)}`);
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Search failed (HTTP ${response.status})`);
+    }
+    const data = await response.json();
+    renderResults(data.results || [], data.truncated, data.total_matches);
+}
+
+async function runCategorySearch(type, color) {
+    const params = new URLSearchParams({ type: type || "" });
+    if (color) {
+        params.set("color", color);
+    }
+    const response = await fetch(`/api/search_all_stock_items?${params.toString()}`);
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Search failed (HTTP ${response.status})`);
+    }
+    const data = await response.json();
+    renderResults(data.results || [], data.truncated, data.total_matches);
+}
+
+function rerunCurrentSearch() {
+    if (categoryModeOn) {
+        const active = document.querySelector(".category-bucket.active");
+        if (active) {
+            active.click();
+        }
+        return;
+    }
+    const query = document.getElementById("bulkSearchInput").value.trim();
+    if (query) {
+        runFreeTextSearch(query).catch(error => showNotice("error", error.message));
+    }
+}
+
+function renderResults(results, truncated = false, totalMatches = null) {
+    visibleResults = results || [];
+    const list = document.getElementById("resultsList");
+    list.innerHTML = "";
+
+    if (!visibleResults.length) {
+        list.innerHTML = "<div class=\"results-empty\">No stock items found. Try a different keyword or category.</div>";
+        return;
+    }
+
+    visibleResults.forEach(item => {
+        const row = document.createElement("label");
+        row.className = "result-row";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = selectedStockItems.has(item.stock_item_name);
+        checkbox.addEventListener("change", () => {
+            if (checkbox.checked) {
+                selectedStockItems.set(item.stock_item_name, item);
+            } else {
+                selectedStockItems.delete(item.stock_item_name);
+            }
+            updateSelectedCount();
+        });
+
+        const text = document.createElement("div");
+        text.className = "result-text";
+        text.innerHTML = `
+            <div class="result-name"></div>
+            <div class="result-car"></div>
+        `;
+        text.querySelector(".result-name").textContent = item.stock_item_name;
+        text.querySelector(".result-car").textContent = stripShelfCodeForDisplay(item.car_model);
+
+        const badge = document.createElement("span");
+        badge.className = `status-badge ${item.is_mapped ? "linked" : "pending"}`;
+        badge.textContent = item.is_mapped ? "Linked" : "Pending";
+
+        row.appendChild(checkbox);
+        row.appendChild(text);
+        row.appendChild(badge);
+        list.appendChild(row);
+    });
+
+    if (truncated) {
+        const note = document.createElement("div");
+        note.className = "truncated-note";
+        const total = totalMatches != null ? totalMatches : visibleResults.length;
+        note.textContent = `Showing first ${visibleResults.length} of ${total} matches. Narrow your search to see the rest.`;
+        list.appendChild(note);
+    }
+
+    updateSelectedCount();
+}
+
+function selectAllVisible() {
+    visibleResults.forEach(item => selectedStockItems.set(item.stock_item_name, item));
+    renderResults(visibleResults);
+}
+
+function deselectAllVisible() {
+    visibleResults.forEach(item => selectedStockItems.delete(item.stock_item_name));
+    renderResults(visibleResults);
+}
+
+function selectAllUnmatched() {
+    visibleResults.filter(item => !item.is_mapped).forEach(item => selectedStockItems.set(item.stock_item_name, item));
+    renderResults(visibleResults);
+}
+
+async function confirmBulkMatch() {
+    clearNotices();
+    if (!selectedImage || selectedStockItems.size === 0) {
+        return;
+    }
+
+    const btn = document.getElementById("confirmBulkBtn");
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+
+    try {
+        const stockItems = Array.from(selectedStockItems.keys());
+        const response = await fetch("/admin/bulk_confirm_mapping", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                image_id: selectedImage.id,
+                stock_items: stockItems,
+            }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error || `Bulk confirm failed (HTTP ${response.status})`);
+        }
+
+        if (payload.failed && payload.failed.length) {
+            const details = payload.failed.map(f => `${f.stock_item}: ${f.reason}`).join("; ");
+            showNotice("error", `Confirmed ${payload.confirmed_count}, but ${payload.failed.length} failed — ${details}`);
+        } else {
+            showNotice("success", `Confirmed match for ${payload.confirmed_count} stock item(s).`);
+        }
+
+        selectedStockItems.clear();
+        rerunCurrentSearch();
+        updateSelectedCount();
+    } catch (error) {
+        showNotice("error", error.message);
+    } finally {
+        btn.textContent = originalText;
+        updateConfirmButtonState();
+    }
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    initializeCarFolderSelect();
+    updateConfirmButtonState();
+});
+</script>
+</body>
+</html>

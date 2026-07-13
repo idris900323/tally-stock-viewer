@@ -720,6 +720,25 @@ function escapeHtml(value) {
         .replaceAll("'", "&#39;");
 }
 
+// Display-only cleanup of a trailing Tally shelf-location code (e.g.
+// "* M-20", "****H-4****", "***G-4)"). Mirrors utils/normalize.py's
+// strip_shelf_code_for_display() -- never use this on a value sent to the
+// backend, only on text shown to the user.
+function stripShelfCodeForDisplay(name) {
+    const text = String(name || "");
+    const idx = text.indexOf("*");
+    if (idx === -1) {
+        return text.trim();
+    }
+    let before = text.slice(0, idx);
+    before = before.replace(/[\s.\-,]+$/, "");
+    while (before.endsWith(")") && (before.split("(").length - 1) < (before.split(")").length - 1)) {
+        before = before.slice(0, -1).replace(/\s+$/, "");
+    }
+    const cleaned = before.trim();
+    return cleaned || text.trim();
+}
+
 function clearMessages() {
     document.getElementById("errorMsg").style.display = "none";
     document.getElementById("infoMsg").style.display = "none";
@@ -1416,11 +1435,11 @@ async function loadDesigns() {
         list.innerHTML = "";
 
         if (Array.isArray(data) && data.length > 0) {
-            document.getElementById("selectedCarName").textContent = car;
+            document.getElementById("selectedCarName").textContent = stripShelfCodeForDisplay(car);
             list.innerHTML = data.map(renderDesignItem).join("");
             document.getElementById("designCount").textContent = `Total: ${data.length} designs with stock`;
             container.classList.add("show");
-            showInfo(`Showing ${data.length} designs for ${car}`);
+            showInfo(`Showing ${data.length} designs for ${stripShelfCodeForDisplay(car)}`);
         } else {
             list.innerHTML = '<li><div class="empty-state">No designs found for this car.</div></li>';
             container.classList.add("show");

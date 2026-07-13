@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 
-from utils.normalize import extract_car_base_name, normalize_text
+from utils.normalize import extract_car_base_name, normalize_text, strip_shelf_code_for_display
 
 
 search_bp = Blueprint("search", __name__)
@@ -47,7 +47,10 @@ def search_cars():
     car_models = _get_dependency("get_car_models")()
     matches, has_more = _paginate_matches(car_models, query, page, per_page)
     return jsonify({
-        "results": [{"id": value, "text": value} for value in matches],
+        # "id" stays the exact raw name -- that's what gets sent back as the
+        # ?car= param and matched against car_master.json/main_hierarchy.json.
+        # Only "text" (what the user reads in the dropdown) is cleaned up.
+        "results": [{"id": value, "text": strip_shelf_code_for_display(value)} for value in matches],
         "pagination": {"more": has_more},
     })
 
