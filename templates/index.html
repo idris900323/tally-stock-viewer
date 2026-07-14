@@ -102,9 +102,46 @@
         }
 
         .select2-container .select2-selection__rendered {
-            padding-right: 28px !important;
+            padding-right: 54px !important;
             color: var(--text) !important;
             line-height: 1.4 !important;
+        }
+
+        .car-select-wrap {
+            position: relative;
+            display: inline-block;
+            min-width: 260px;
+        }
+
+        /* Custom clear control -- Select2's built-in allowClear button was
+           tried first (see initializeCarSelect()) but reopened the dropdown
+           on click and used tabindex="-1" (unreachable via Tab), so it's
+           replaced with this real, keyboard-focusable <button> instead. */
+        .car-clear-btn {
+            position: absolute;
+            top: 50%;
+            right: 32px;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            background: transparent;
+            color: #64748b;
+            font-size: 16px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+        }
+
+        .car-clear-btn:hover {
+            background: #e9eef6;
+            color: var(--text);
+            transform: translateY(-50%);
         }
 
         .select2-container--default .select2-selection--single .select2-selection__arrow {
@@ -617,9 +654,12 @@
     <div class="panel">
         <div class="toolbar">
             <label for="carSelect">Select Car Model:</label>
-            <select id="carSelect" title="Choose a car model to see its stock designs and linked images">
-                <option value="">Search for a car...</option>
-            </select>
+            <div class="car-select-wrap">
+                <select id="carSelect" title="Choose a car model to see its stock designs and linked images">
+                    <option value="">Search for a car...</option>
+                </select>
+                <button type="button" id="carClearBtn" class="car-clear-btn" style="display:none;" onclick="clearCarSelection()" title="Clear selected car" aria-label="Clear selected car">&times;</button>
+            </div>
             {% if is_admin %}
             <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
             <button id="updateStockBtn" class="secondary" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
@@ -1126,10 +1166,11 @@ function setSelect2Value(selector, value, displayText) {
 // the first page of results in alphabetical order, so a car selected further
 // down the list (e.g. "I-10 GRAND...") always reopens scrolled back to
 // "ACCESSORIES" at the top -- the selected option isn't even loaded into the
-// DOM yet. Seeding the search box with the first word of the selected car's
-// raw name makes the AJAX call naturally return that car (and its close
-// neighbors, e.g. every other "I-10..." variant), so the already-selected
-// option Select2 marks aria-selected="true" is both present and visible.
+// DOM yet. The first word of the selected car's raw name is used to fetch
+// the page that actually contains it (and its close neighbors, e.g. every
+// other "I-10..." variant) -- see initializeCarSelect()'s ajax.data below,
+// which sends this ONLY to the backend query, never into the visible search
+// box, so the box stays blank and immediately usable for a fresh search.
 function firstWordSeedTerm(rawValue) {
     const trimmed = String(rawValue || "").trim();
     if (!trimmed) {
@@ -1155,17 +1196,49 @@ function scrollSelectedOptionIntoView(attemptsLeft) {
     }
 }
 
+function updateClearButtonVisibility() {
+    const btn = document.getElementById("carClearBtn");
+    if (btn) {
+        btn.style.display = $("#carSelect").val() ? "flex" : "none";
+    }
+}
+
+// Select2's own allowClear button was tried first and rejected: clicking it
+// reopened the dropdown as a side effect, and it renders with tabindex="-1"
+// so it's unreachable via Tab. #carClearBtn (a real <button>, keyboard-
+// focusable by default) replaces it as the ONLY way to clear the selection --
+// this is the one place that does so; nothing else calls setUrlCarParam("").
+function clearCarSelection() {
+    setSelect2Value("#carSelect", null);
+    exitSelectMode();
+    setUrlCarParam("");
+    updateClearButtonVisibility();
+}
+
 function initializeCarSelect() {
     const select = $("#carSelect");
+    // Set on select2:open, consumed by ajax.data below for the query that
+    // fires immediately on open (before any keystroke), then cleared the
+    // instant the user actually types -- see the "input" listener further
+    // down, which makes that clearing permanent for the rest of this open
+    // session even if they later backspace back to an empty box.
+    let pendingReopenSeedTerm = null;
+
     select.select2({
         ajax: {
             url: "/api/search_cars",
             dataType: "json",
             delay: 150,
-            data: params => ({
-                q: params.term || "",
-                page: params.page || 1,
-            }),
+            data: params => {
+                let term = params.term || "";
+                if (!term && pendingReopenSeedTerm) {
+                    term = pendingReopenSeedTerm;
+                }
+                return {
+                    q: term,
+                    page: params.page || 1,
+                };
+            },
             processResults: data => ({
                 results: data.results || [],
                 pagination: { more: Boolean(data.pagination && data.pagination.more) },
@@ -1174,23 +1247,20 @@ function initializeCarSelect() {
         },
         placeholder: "Type car model or click arrow to browse",
         minimumInputLength: 0,
-        allowClear: true,
+        allowClear: false,
         width: "260px",
     });
 
     select.on("select2:open", function () {
         const currentValue = select.val();
+        pendingReopenSeedTerm = currentValue ? firstWordSeedTerm(currentValue) : null;
         setTimeout(() => {
             const search = document.querySelector(".select2-container--open .select2-search__field");
             if (search) {
-                if (currentValue && !search.value) {
-                    const seedTerm = firstWordSeedTerm(currentValue);
-                    if (seedTerm) {
-                        search.value = seedTerm;
-                        search.dispatchEvent(new Event("input", { bubbles: true }));
-                    }
-                }
                 search.focus();
+                search.addEventListener("input", () => {
+                    pendingReopenSeedTerm = null;
+                }, { once: true });
             }
             scrollSelectedOptionIntoView();
         }, 0);
@@ -1200,11 +1270,7 @@ function initializeCarSelect() {
         exitSelectMode();
         setUrlCarParam(this.value || "");
         loadDesigns();
-    });
-
-    select.on("select2:clear", function () {
-        exitSelectMode();
-        setUrlCarParam("");
+        updateClearButtonVisibility();
     });
 }
 
@@ -1227,6 +1293,7 @@ function restoreCarFromUrl() {
     // /designs honestly returns an empty list -- loadDesigns() already
     // renders that as "No designs found for this car."
     loadDesigns();
+    updateClearButtonVisibility();
 }
 
 async function loadCars() {

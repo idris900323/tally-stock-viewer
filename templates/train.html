@@ -196,8 +196,43 @@
         .select2-container .select2-selection__rendered {
             line-height: 1.4 !important;
             padding-left: 0 !important;
-            padding-right: 28px !important;
+            padding-right: 54px !important;
             color: var(--text) !important;
+        }
+
+        .car-select-wrap {
+            position: relative;
+        }
+
+        /* Custom clear control -- Select2's built-in allowClear button was
+           tried first (see initializeCarFilter()) but reopened the dropdown
+           on click and used tabindex="-1" (unreachable via Tab), so it's
+           replaced with this real, keyboard-focusable <button> instead. */
+        .car-clear-btn {
+            position: absolute;
+            top: 50%;
+            right: 32px;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            background: transparent;
+            color: #64748b;
+            font-size: 16px;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+        }
+
+        .car-clear-btn:hover {
+            background: #e9eef6;
+            color: var(--text);
+            transform: translateY(-50%);
         }
 
         .select2-container--default .select2-selection--single .select2-selection__arrow {
@@ -726,8 +761,9 @@
             <div class="form-grid">
                 <div class="field">
                     <label for="carModelFilter">Search Stock By Car</label>
-                    <div id="carFilterContainer" title="Choose which car's stock items to search when picking a match">
+                    <div id="carFilterContainer" class="car-select-wrap" title="Choose which car's stock items to search when picking a match">
                         <select id="carModelFilter"></select>
+                        <button type="button" id="carModelFilterClearBtn" class="car-clear-btn" style="display:none;" onclick="clearCarModelFilter()" title="Clear selected car" aria-label="Clear selected car">&times;</button>
                     </div>
                 </div>
 
@@ -1002,11 +1038,12 @@ function setSelect2Value(selector, value) {
 // Reopening an AJAX-paginated Select2 with an empty search term only shows
 // the first page of results in alphabetical order, so a car selected further
 // down the list always reopens scrolled back to the top of the alphabet --
-// the selected option isn't even loaded into the DOM yet. Seeding the search
-// box with the first word of the selected car's raw name makes the AJAX call
-// naturally return that car (and its close neighbors, e.g. every other
-// similarly-prefixed variant), so the option Select2 already marks
-// aria-selected="true" is both present and visible.
+// the selected option isn't even loaded into the DOM yet. The first word of
+// the selected car's raw name is used to fetch the page that actually
+// contains it (and its close neighbors, e.g. every other similarly-prefixed
+// variant) -- see initializeCarFilter()'s ajax.data below, which sends this
+// ONLY to the backend query, never into the visible search box, so the box
+// stays blank and immediately usable for a fresh search.
 function firstWordSeedTerm(rawValue) {
     const trimmed = String(rawValue || "").trim();
     if (!trimmed) {
@@ -1032,17 +1069,46 @@ function scrollSelectedOptionIntoView(attemptsLeft) {
     }
 }
 
+function updateCarModelFilterClearVisibility() {
+    const btn = document.getElementById("carModelFilterClearBtn");
+    if (btn) {
+        btn.style.display = $("#carModelFilter").val() ? "flex" : "none";
+    }
+}
+
+// Select2's own allowClear button was tried first and rejected: clicking it
+// reopened the dropdown as a side effect, and it renders with tabindex="-1"
+// so it's unreachable via Tab. #carModelFilterClearBtn (a real <button>,
+// keyboard-focusable by default) replaces it as the ONLY way to clear this
+// filter -- this is the one place that does so.
+function clearCarModelFilter() {
+    setSelect2Value("#carModelFilter", null);
+}
+
 function initializeCarFilter() {
     const select = $("#carModelFilter");
+    // Set on select2:open, consumed by ajax.data below for the query that
+    // fires immediately on open (before any keystroke), then cleared the
+    // instant the user actually types -- see the "input" listener further
+    // down, which makes that clearing permanent for the rest of this open
+    // session even if they later backspace back to an empty box.
+    let pendingReopenSeedTerm = null;
+
     select.select2({
         ajax: {
             url: "/api/search_cars",
             dataType: "json",
             delay: 150,
-            data: params => ({
-                q: params.term || "",
-                page: params.page || 1,
-            }),
+            data: params => {
+                let term = params.term || "";
+                if (!term && pendingReopenSeedTerm) {
+                    term = pendingReopenSeedTerm;
+                }
+                return {
+                    q: term,
+                    page: params.page || 1,
+                };
+            },
             processResults: data => ({
                 results: data.results || [],
                 pagination: { more: Boolean(data.pagination && data.pagination.more) },
@@ -1051,24 +1117,21 @@ function initializeCarFilter() {
         },
         placeholder: "Type car master name or click arrow to browse",
         minimumInputLength: 0,
-        allowClear: true,
+        allowClear: false,
         dropdownParent: $("#carFilterContainer"),
         width: "100%",
     });
 
     select.on("select2:open", function () {
         const currentValue = select.val();
+        pendingReopenSeedTerm = currentValue ? firstWordSeedTerm(currentValue) : null;
         setTimeout(() => {
             const search = document.querySelector(".select2-container--open .select2-search__field");
             if (search) {
-                if (currentValue && !search.value) {
-                    const seedTerm = firstWordSeedTerm(currentValue);
-                    if (seedTerm) {
-                        search.value = seedTerm;
-                        search.dispatchEvent(new Event("input", { bubbles: true }));
-                    }
-                }
                 search.focus();
+                search.addEventListener("input", () => {
+                    pendingReopenSeedTerm = null;
+                }, { once: true });
             }
             scrollSelectedOptionIntoView();
         }, 0);
@@ -1077,6 +1140,7 @@ function initializeCarFilter() {
     select.on("change", function () {
         const selectedCar = this.value || "";
         currentCarFilter = selectedCar;
+        updateCarModelFilterClearVisibility();
         if (suppressCarFilterLoad) {
             return;
         }
