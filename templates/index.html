@@ -1078,6 +1078,83 @@ async function copyModalImage() {
     }
 }
 
+// Selected-car state is kept in the URL's ?car= param (not sessionStorage/
+// localStorage) specifically so a car's page is copyable/bookmarkable and
+// survives a refresh -- see setUrlCarParam()/restoreCarFromUrl() below.
+const CAR_QUERY_PARAM = "car";
+
+function getUrlCarParam() {
+    return new URLSearchParams(window.location.search).get(CAR_QUERY_PARAM) || "";
+}
+
+function setUrlCarParam(carValue) {
+    const url = new URL(window.location.href);
+    if (carValue) {
+        url.searchParams.set(CAR_QUERY_PARAM, carValue);
+    } else {
+        url.searchParams.delete(CAR_QUERY_PARAM);
+    }
+    history.replaceState(null, "", url.toString());
+}
+
+// Programmatically select a Select2 value the same way a user's click would.
+// Mirrors templates/train.html's setSelect2Value() (this codebase has no
+// shared frontend module, so small helpers like this are duplicated per
+// template rather than imported).
+function setSelect2Value(selector, value, displayText) {
+    const select = $(selector);
+    const nextValue = String(value || "").trim();
+    if (!nextValue) {
+        select.val(null).trigger("change");
+        return;
+    }
+
+    let found = false;
+    select.find("option").each(function () {
+        if (String(this.value) === nextValue) {
+            found = true;
+            return false;
+        }
+    });
+    if (!found) {
+        select.append(new Option(displayText || nextValue, nextValue, true, true));
+    }
+    select.val(nextValue).trigger("change");
+}
+
+// Reopening an AJAX-paginated Select2 with an empty search term only shows
+// the first page of results in alphabetical order, so a car selected further
+// down the list (e.g. "I-10 GRAND...") always reopens scrolled back to
+// "ACCESSORIES" at the top -- the selected option isn't even loaded into the
+// DOM yet. Seeding the search box with the first word of the selected car's
+// raw name makes the AJAX call naturally return that car (and its close
+// neighbors, e.g. every other "I-10..." variant), so the already-selected
+// option Select2 marks aria-selected="true" is both present and visible.
+function firstWordSeedTerm(rawValue) {
+    const trimmed = String(rawValue || "").trim();
+    if (!trimmed) {
+        return "";
+    }
+    const match = trimmed.match(/\S+/);
+    return match ? match[0] : "";
+}
+
+function scrollSelectedOptionIntoView(attemptsLeft) {
+    if (attemptsLeft === undefined) {
+        attemptsLeft = 12;
+    }
+    const selectedOption = document.querySelector(
+        '.select2-container--open .select2-results__option[aria-selected="true"]'
+    );
+    if (selectedOption) {
+        selectedOption.scrollIntoView({ block: "center" });
+        return;
+    }
+    if (attemptsLeft > 0) {
+        setTimeout(() => scrollSelectedOptionIntoView(attemptsLeft - 1), 60);
+    }
+}
+
 function initializeCarSelect() {
     const select = $("#carSelect");
     select.select2({
@@ -1102,28 +1179,61 @@ function initializeCarSelect() {
     });
 
     select.on("select2:open", function () {
+        const currentValue = select.val();
         setTimeout(() => {
             const search = document.querySelector(".select2-container--open .select2-search__field");
             if (search) {
+                if (currentValue && !search.value) {
+                    const seedTerm = firstWordSeedTerm(currentValue);
+                    if (seedTerm) {
+                        search.value = seedTerm;
+                        search.dispatchEvent(new Event("input", { bubbles: true }));
+                    }
+                }
                 search.focus();
             }
+            scrollSelectedOptionIntoView();
         }, 0);
     });
 
     select.on("select2:select", function () {
         exitSelectMode();
+        setUrlCarParam(this.value || "");
         loadDesigns();
     });
 
     select.on("select2:clear", function () {
         exitSelectMode();
+        setUrlCarParam("");
     });
+}
+
+function restoreCarFromUrl() {
+    const carFromUrl = getUrlCarParam();
+    if (!carFromUrl) {
+        return;
+    }
+    const select = $("#carSelect");
+    if (select.val() === carFromUrl) {
+        // loadCars() re-runs after every stock refresh; nothing to do if
+        // this car is already selected (e.g. from a prior restore).
+        return;
+    }
+    setSelect2Value("#carSelect", carFromUrl, stripShelfCodeForDisplay(carFromUrl));
+    // Reuses the exact same load path a manual selection uses (see
+    // select2:select above) rather than a separate one, so a car reached by
+    // refresh, direct URL entry, a bookmark, or a shared link all behave
+    // identically. If the car no longer exists in Tally's hierarchy,
+    // /designs honestly returns an empty list -- loadDesigns() already
+    // renders that as "No designs found for this car."
+    loadDesigns();
 }
 
 async function loadCars() {
     try {
         clearMessages();
         initializeCarSelect();
+        restoreCarFromUrl();
     } catch (error) {
         showError(`Error preparing car search: ${error.message}`);
     }
