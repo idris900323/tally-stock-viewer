@@ -925,6 +925,68 @@ def get_all_images():
     return [_row_to_dict(row) for row in rows]
 
 
+def get_all_images_with_link_status():
+    """Return every image row plus whether it currently has a confirmed stock-item mapping.
+
+    Uses an EXISTS subquery rather than a LEFT JOIN because a single image can
+    have more than one mapping row (the UNIQUE(image_id) constraint was
+    removed -- see _migrate_remove_image_id_unique), so a join would return
+    one row per mapping and inflate counts for anything that iterates this.
+    "Confirmed" mirrors get_mapped_image_count()'s definition: a non-empty
+    stock_item_name that isn't the '__UNMATCHABLE__' sentinel.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                i.id, i.car_folder, i.filename, i.filepath, i.scan_date,
+                EXISTS (
+                    SELECT 1 FROM mappings m
+                    WHERE m.image_id = i.id
+                      AND TRIM(COALESCE(m.stock_item_name, '')) <> ''
+                      AND m.stock_item_name <> '__UNMATCHABLE__'
+                ) AS mapped
+            FROM images i
+            ORDER BY i.id ASC
+            """
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def get_stock_item_names_for_images(image_ids):
+    """Return {image_id: [stock_item_name, ...]} of confirmed mappings for the given ids.
+
+    Scoped to a specific id set (rather than joining onto every image) so
+    callers who only need this for a small subset -- e.g. the missing-images
+    list -- don't pay for a catalog-wide GROUP_CONCAT. An image can have more
+    than one mapping row (bulk match links one image to many stock items),
+    so this returns a list per image rather than a single name. "Confirmed"
+    mirrors get_mapped_image_count()'s definition.
+    """
+    ids = sorted({int(image_id) for image_id in (image_ids or [])})
+    if not ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in ids)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT image_id, stock_item_name
+            FROM mappings
+            WHERE image_id IN ({placeholders})
+              AND TRIM(COALESCE(stock_item_name, '')) <> ''
+              AND stock_item_name <> '__UNMATCHABLE__'
+            ORDER BY image_id ASC, created_at DESC, id DESC
+            """,
+            ids,
+        ).fetchall()
+
+    result = defaultdict(list)
+    for row in rows:
+        result[int(row["image_id"])].append(row["stock_item_name"])
+    return dict(result)
+
+
 def get_image_folders():
     with _connect() as conn:
         rows = conn.execute(
@@ -1019,6 +1081,37 @@ def find_duplicate_image_rows():
 
     duplicate_groups.sort(key=lambda group: group["count"], reverse=True)
     return duplicate_groups
+
+
+def remove_missing_image_rows(image_ids):
+    """Delete the given image rows (and their mappings, via ON DELETE CASCADE).
+
+    Callers are responsible for having already re-verified each id is still
+    actually missing on disk right before calling this -- this function just
+    performs the delete. Returns (images_removed, mappings_removed).
+    """
+    ids = sorted({int(image_id) for image_id in (image_ids or [])})
+    if not ids:
+        return 0, 0
+
+    placeholders = ",".join("?" for _ in ids)
+    try:
+        with _connect() as conn:
+            mapping_row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM mappings WHERE image_id IN ({placeholders})",
+                ids,
+            ).fetchone()
+            mappings_removed = int(mapping_row["count"] if mapping_row else 0)
+
+            cursor = conn.execute(
+                f"DELETE FROM images WHERE id IN ({placeholders})",
+                ids,
+            )
+            images_removed = cursor.rowcount
+        return images_removed, mappings_removed
+    except Exception:
+        logger.exception("remove_missing_image_rows failed for ids=%s", ids)
+        raise
 
 
 def authenticate_user(username, access_code):
