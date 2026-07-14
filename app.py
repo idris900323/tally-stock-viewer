@@ -2653,7 +2653,58 @@ def suggest_match_route(image_id):
 @admin_required
 def scan_images():
     result = image_scanner.scan_ss_image_folder(IMAGE_SCAN_ROOT)
-    return jsonify({"status": "scanned", **result, "stats": db.get_mapping_stats()})
+    missing = image_scanner.find_missing_image_rows(IMAGE_SCAN_ROOT)
+    return jsonify({
+        "status": "scanned",
+        **result,
+        "missing_count": missing["missing_count"],
+        "missing_mapped_count": missing["missing_mapped_count"],
+        "over_threshold_warning": missing["over_threshold_warning"],
+        "missing_image_ids": [row["id"] for row in missing["rows"]],
+        "missing_images": [
+            {
+                "id": row["id"],
+                "car_folder": row.get("car_folder"),
+                "filename": row.get("filename"),
+                "filepath": row.get("filepath"),
+                "mapped": bool(row.get("mapped")),
+                "stock_item_names": row.get("stock_item_names") or [],
+            }
+            for row in missing["rows"]
+        ],
+        "stats": db.get_mapping_stats(),
+    })
+
+
+@app.route("/admin/remove_missing_images", methods=["POST"])
+@admin_required
+def remove_missing_images():
+    payload = request.get_json(silent=True) or {}
+    raw_ids = payload.get("image_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return jsonify({"error": "image_ids is required"}), 400
+
+    try:
+        requested_ids = {int(image_id) for image_id in raw_ids}
+    except (TypeError, ValueError):
+        return jsonify({"error": "image_ids must be a list of integers"}), 400
+
+    # Re-verify from scratch rather than trusting the earlier scan result --
+    # a file may have reappeared (drive reconnected, folder restored)
+    # between the scan and this confirm click.
+    missing = image_scanner.find_missing_image_rows(IMAGE_SCAN_ROOT)
+    still_missing_ids = {row["id"] for row in missing["rows"]} & requested_ids
+
+    images_removed, mappings_removed = db.remove_missing_image_rows(still_missing_ids)
+
+    return jsonify({
+        "status": "removed",
+        "images_removed": images_removed,
+        "mappings_removed": mappings_removed,
+        "requested_count": len(requested_ids),
+        "skipped_count": len(requested_ids) - len(still_missing_ids),
+        "stats": db.get_mapping_stats(),
+    })
 
 
 @app.route("/mapping_stats")

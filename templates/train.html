@@ -490,6 +490,70 @@
             display: none;
         }
 
+        .missing-images-prompt {
+            margin-top: 10px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            color: var(--warning);
+            font-size: 13px;
+            display: none;
+        }
+
+        .missing-images-prompt.severe {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: var(--danger);
+        }
+
+        .missing-images-prompt .actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .missing-images-prompt .actions button {
+            padding: 6px 14px;
+            font-size: 13px;
+        }
+
+        .missing-images-list {
+            margin-top: 10px;
+            max-height: 240px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: #ffffff;
+            padding: 4px 10px;
+            display: none;
+        }
+
+        .missing-images-list-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 7px 0;
+            font-size: 13px;
+            color: var(--text);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .missing-images-list-row:last-child {
+            border-bottom: none;
+        }
+
+        .missing-images-list-path {
+            overflow-wrap: anywhere;
+        }
+
+        .missing-images-list .pill {
+            flex-shrink: 0;
+            background: #fef3c7;
+            color: var(--warning);
+        }
+
         .role-indicator {
             display: inline-flex;
             align-items: center;
@@ -691,6 +755,15 @@
         <p>Confirm which stock item belongs to each scanned image. Confirmed matches are saved directly to the local database.</p>
         {% if is_admin %}
         <div id="rescanStatus" class="rescan-status"></div>
+        <div id="missingImagesPrompt" class="missing-images-prompt">
+            <div id="missingImagesText"></div>
+            <div class="actions" id="missingImagesActions">
+                <button class="primary" id="removeMissingBtn" onclick="removeMissingImages()">Remove</button>
+                <button class="secondary" id="keepMissingBtn" onclick="dismissMissingImagesPrompt()">Keep</button>
+                <button class="secondary" id="viewMissingListBtn" onclick="toggleMissingImagesList()">View List</button>
+            </div>
+            <div id="missingImagesList" class="missing-images-list"></div>
+        </div>
         {% endif %}
     </div>
 
@@ -872,6 +945,8 @@ let selectedQueueFolder = "";
 let currentCarFilter = "";
 let suppressQueueLoad = false;
 let suppressCarFilterLoad = false;
+let pendingMissingImageIds = [];
+let currentMissingImages = [];
 
 function normalize(value) {
     return String(value || "").trim().toUpperCase();
@@ -910,6 +985,7 @@ function clearNotices() {
 async function rescanImages() {
     const btn = document.getElementById("rescanImagesBtn");
     const status = document.getElementById("rescanStatus");
+    hideMissingImagesPrompt();
 
     btn.disabled = true;
     btn.textContent = "Scanning...";
@@ -939,6 +1015,8 @@ async function rescanImages() {
         if (typeof loadImageQueue === "function") {
             await loadImageQueue(selectedQueueFolder || "");
         }
+
+        showMissingImagesPrompt(data);
     } catch (error) {
         status.textContent = "Scan failed: " + error.message;
         status.style.background = "#fef2f2";
@@ -948,6 +1026,163 @@ async function rescanImages() {
         btn.disabled = false;
         btn.textContent = "Rescan Images";
         setTimeout(() => { status.style.display = "none"; }, 6000);
+    }
+}
+
+function hideMissingImagesPrompt() {
+    const prompt = document.getElementById("missingImagesPrompt");
+    prompt.style.display = "none";
+    prompt.classList.remove("severe");
+    pendingMissingImageIds = [];
+    currentMissingImages = [];
+    collapseMissingImagesList();
+}
+
+function dismissMissingImagesPrompt() {
+    hideMissingImagesPrompt();
+}
+
+function showMissingImagesPrompt(data) {
+    const missingCount = data.missing_count || 0;
+    if (!missingCount) {
+        hideMissingImagesPrompt();
+        return;
+    }
+
+    const prompt = document.getElementById("missingImagesPrompt");
+    const text = document.getElementById("missingImagesText");
+    const removeBtn = document.getElementById("removeMissingBtn");
+    const keepBtn = document.getElementById("keepMissingBtn");
+    pendingMissingImageIds = data.missing_image_ids || [];
+    currentMissingImages = data.missing_images || [];
+    collapseMissingImagesList();
+
+    if (data.over_threshold_warning) {
+        const totalImages = data.total_images || 0;
+        const percent = totalImages ? Math.round((missingCount / totalImages) * 1000) / 10 : 0;
+        prompt.classList.add("severe");
+        text.textContent = `A large number of images (${missingCount}, ${percent}% of the total) appear to be missing. This usually means the image folder is temporarily unreachable rather than genuinely deleted. Check that S.S IMAGE folder is connected before removing anything.`;
+        // The list is still worth seeing here -- whole folders missing at
+        // once makes a disconnected drive obvious -- but Remove/Keep stay
+        // hidden; re-running Rescan is the only way out of this warning.
+        removeBtn.style.display = "none";
+        keepBtn.style.display = "none";
+    } else {
+        prompt.classList.remove("severe");
+        const mapped = data.missing_mapped_count || 0;
+        text.textContent = `Found ${missingCount} image(s) that no longer exist on disk (${mapped} of them were linked to stock items). Remove them from the system?`;
+        removeBtn.style.display = "";
+        keepBtn.style.display = "";
+    }
+
+    prompt.style.display = "block";
+}
+
+function collapseMissingImagesList() {
+    const listBox = document.getElementById("missingImagesList");
+    const viewBtn = document.getElementById("viewMissingListBtn");
+    listBox.style.display = "none";
+    listBox.innerHTML = "";
+    viewBtn.textContent = "View List";
+}
+
+function toggleMissingImagesList() {
+    const listBox = document.getElementById("missingImagesList");
+    const viewBtn = document.getElementById("viewMissingListBtn");
+
+    if (listBox.style.display === "block") {
+        collapseMissingImagesList();
+        return;
+    }
+
+    renderMissingImagesList();
+    listBox.style.display = "block";
+    viewBtn.textContent = "Hide List";
+}
+
+function renderMissingImagesList() {
+    const listBox = document.getElementById("missingImagesList");
+    listBox.innerHTML = "";
+
+    if (!currentMissingImages.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = "No file details available.";
+        listBox.appendChild(empty);
+        return;
+    }
+
+    currentMissingImages.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "missing-images-list-row";
+
+        const pathText = document.createElement("span");
+        pathText.className = "missing-images-list-path";
+        pathText.textContent = item.filepath || `${item.car_folder || ""}/${item.filename || ""}`;
+        row.appendChild(pathText);
+
+        const stockItemNames = item.stock_item_names || [];
+        if (stockItemNames.length) {
+            const pill = document.createElement("span");
+            pill.className = "pill";
+            pill.textContent = stockItemNames.length > 1
+                ? `Was linked to: ${stockItemNames[0]} (+${stockItemNames.length - 1} more)`
+                : `Was linked to: ${stockItemNames[0]}`;
+            row.appendChild(pill);
+        }
+
+        listBox.appendChild(row);
+    });
+}
+
+async function removeMissingImages() {
+    if (!pendingMissingImageIds.length) {
+        hideMissingImagesPrompt();
+        return;
+    }
+
+    const removeBtn = document.getElementById("removeMissingBtn");
+    const status = document.getElementById("rescanStatus");
+    const removeIds = pendingMissingImageIds;
+    removeBtn.disabled = true;
+    removeBtn.textContent = "Removing...";
+
+    try {
+        const res = await fetch("/admin/remove_missing_images", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image_ids: removeIds }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            throw new Error(data.error || "Remove failed");
+        }
+
+        hideMissingImagesPrompt();
+        status.style.display = "block";
+        status.textContent = `Removed ${data.images_removed} image(s) and ${data.mappings_removed} mapping(s) that no longer exist on disk.`;
+        status.style.background = "#f0fdf4";
+        status.style.borderColor = "#bbf7d0";
+        status.style.color = "#166534";
+        setTimeout(() => { status.style.display = "none"; }, 6000);
+
+        if (typeof updateProgress === "function") {
+            updateProgress(data.stats || null);
+        }
+        if (typeof loadImageQueue === "function") {
+            await loadImageQueue(selectedQueueFolder || "");
+        }
+    } catch (error) {
+        status.style.display = "block";
+        status.textContent = "Remove failed: " + error.message;
+        status.style.background = "#fef2f2";
+        status.style.borderColor = "#fecaca";
+        status.style.color = "#991b1b";
+        setTimeout(() => { status.style.display = "none"; }, 6000);
+    } finally {
+        removeBtn.disabled = false;
+        removeBtn.textContent = "Remove";
     }
 }
 
