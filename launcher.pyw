@@ -16,6 +16,7 @@ APP_ENTRY = str(Path(APP_DIR) / "app.py")
 PYTHON_EXE = str(Path(APP_DIR) / ".venv" / "Scripts" / "python.exe")
 PYTHONW_EXE = str(Path(APP_DIR) / ".venv" / "Scripts" / "pythonw.exe")
 PID_FILE = str(Path(APP_DIR) / "app.pid")
+LAUNCHER_PID_FILE = str(Path(APP_DIR) / "launcher.pid")
 LOG_FILE = str(Path(APP_DIR) / "logs" / "app.log")
 ICON_FILE = str(Path(APP_DIR) / "icon.png")
 APP_URL = "http://localhost:5000"
@@ -71,6 +72,65 @@ def _is_process_alive(pid: int) -> bool:
         return psutil.pid_exists(pid) and psutil.Process(pid).is_running()
     except Exception:
         return False
+
+
+def _is_live_launcher_process(pid: int) -> bool:
+    """True only if pid is a running python/pythonw process whose command
+    line references launcher.pyw — a plain aliveness check is not enough,
+    because after a crash/reboot the OS can hand the same PID number to an
+    unrelated process and a stale launcher.pid would then block startup
+    forever."""
+    if pid == os.getpid():
+        return False
+    try:
+        proc = psutil.Process(pid)
+        if not proc.is_running():
+            return False
+        name = (proc.name() or "").lower()
+        if not name.startswith("python"):
+            return False
+        cmdline = " ".join(proc.cmdline()).lower()
+        return "launcher.pyw" in cmdline
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    except Exception:
+        return False
+
+
+def _acquire_launcher_lock() -> bool:
+    """Single-instance guard. Returns False (caller must exit, touching
+    nothing) if another live launcher owns the lock; otherwise records this
+    process's PID in LAUNCHER_PID_FILE and returns True."""
+    lock_path = Path(LAUNCHER_PID_FILE)
+    if lock_path.exists():
+        try:
+            existing_pid = int(lock_path.read_text().strip())
+        except Exception:
+            existing_pid = None
+        if existing_pid is not None and _is_live_launcher_process(existing_pid):
+            _write_log(f"Another launcher instance is already running (pid={existing_pid}) — exiting.")
+            return False
+        _write_log(f"Stale launcher.pid found (pid={existing_pid}, no live launcher) — recovering and starting normally.")
+    else:
+        _write_log("No launcher.pid present — fresh launcher start.")
+    try:
+        lock_path.write_text(str(os.getpid()))
+        _write_log(f"Acquired launcher lock pid={os.getpid()}")
+    except Exception as exc:
+        _write_log(f"Failed to write launcher PID file: {exc}")
+    return True
+
+
+def _remove_launcher_pid_file():
+    # Only remove a lock this process owns, so an unlikely startup race can
+    # never delete the surviving instance's lock on the way out.
+    try:
+        lock_path = Path(LAUNCHER_PID_FILE)
+        if lock_path.exists() and lock_path.read_text().strip() == str(os.getpid()):
+            lock_path.unlink()
+            _write_log("Removed launcher.pid on clean exit.")
+    except Exception:
+        pass
 
 
 def _read_tunnel_pid() -> int | None:
@@ -256,11 +316,17 @@ def _watchdog():
 
 
 def _create_menu(icon: pystray.Icon):
+    # pystray passes the live icon as the callback's first argument; Stop &
+    # Exit must use that, not the _create_menu parameter — run_tray() builds
+    # the menu with _create_menu(None) before the icon exists, so the closure
+    # variable is always None and closure_icon.stop() raised AttributeError
+    # (Stop & Exit stopped the server but left the launcher + watchdog alive,
+    # which then auto-restarted the server ~30s later).
     return pystray.Menu(
         pystray.MenuItem("Open in Browser", lambda _: _open_browser()),
         pystray.MenuItem("View Logs", lambda _: os.startfile(LOG_FILE)),
         pystray.MenuItem("Restart Server", lambda _: _restart_server()),
-        pystray.MenuItem("Stop & Exit", lambda _: (_stop_server(), icon.stop())),
+        pystray.MenuItem("Stop & Exit", lambda live_icon: (_stop_server(), live_icon.stop())),
     )
 
 
@@ -287,4 +353,16 @@ def run_tray():
 
 
 if __name__ == "__main__":
-    run_tray()
+    # Single-instance guard must be the very first thing that runs: a blocked
+    # duplicate must exit before the server launch, tray icon, or watchdog
+    # thread ever start.
+    if not _acquire_launcher_lock():
+        sys.exit(0)
+    try:
+        run_tray()
+    finally:
+        # icon.run() returns when Stop & Exit calls icon.stop(); removing the
+        # lock here keeps the next start on the clean fresh-start path. A
+        # forced kill skips this, which is what the stale-lock recovery in
+        # _acquire_launcher_lock() is for.
+        _remove_launcher_pid_file()
