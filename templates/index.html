@@ -122,8 +122,19 @@
             top: 50%;
             right: 32px;
             transform: translateY(-50%);
-            width: 22px;
-            height: 22px;
+            /* !important: this codebase's mobile media query (below) sets
+               generic width/min-height rules on every <button>/<select> in
+               .toolbar for touch targets -- those rules outrank a plain
+               .car-clear-btn class selector (.toolbar button is more
+               specific) and stretched this icon button to the full search
+               bar width on phones. Pin the box size so it can never inherit
+               that regardless of what other button/select rules exist. */
+            width: 22px !important;
+            height: 22px !important;
+            min-width: 22px !important;
+            min-height: 22px !important;
+            max-width: 22px !important;
+            max-height: 22px !important;
             padding: 0;
             border: 0;
             border-radius: 50%;
@@ -1162,24 +1173,6 @@ function setSelect2Value(selector, value, displayText) {
     select.val(nextValue).trigger("change");
 }
 
-// Reopening an AJAX-paginated Select2 with an empty search term only shows
-// the first page of results in alphabetical order, so a car selected further
-// down the list (e.g. "I-10 GRAND...") always reopens scrolled back to
-// "ACCESSORIES" at the top -- the selected option isn't even loaded into the
-// DOM yet. The first word of the selected car's raw name is used to fetch
-// the page that actually contains it (and its close neighbors, e.g. every
-// other "I-10..." variant) -- see initializeCarSelect()'s ajax.data below,
-// which sends this ONLY to the backend query, never into the visible search
-// box, so the box stays blank and immediately usable for a fresh search.
-function firstWordSeedTerm(rawValue) {
-    const trimmed = String(rawValue || "").trim();
-    if (!trimmed) {
-        return "";
-    }
-    const match = trimmed.match(/\S+/);
-    return match ? match[0] : "";
-}
-
 function scrollSelectedOptionIntoView(attemptsLeft) {
     if (attemptsLeft === undefined) {
         attemptsLeft = 12;
@@ -1222,7 +1215,15 @@ function initializeCarSelect() {
     // instant the user actually types -- see the "input" listener further
     // down, which makes that clearing permanent for the rest of this open
     // session even if they later backspace back to an empty box.
-    let pendingReopenSeedTerm = null;
+    //
+    // This sends anchor_id (the selected car's raw id), NOT a name-derived
+    // search term -- /api/search_cars positions the returned page around
+    // that car's real position in the full alphabetical list, so reopening
+    // shows genuine neighbors of every name, not a name-filtered subset.
+    // An earlier version derived a text query from the car's name instead;
+    // that fetched real data but restricted the visible list to only
+    // similarly-named cars, which is exactly what this must NOT do.
+    let pendingReopenAnchorId = null;
 
     select.select2({
         ajax: {
@@ -1230,9 +1231,12 @@ function initializeCarSelect() {
             dataType: "json",
             delay: 150,
             data: params => {
-                let term = params.term || "";
-                if (!term && pendingReopenSeedTerm) {
-                    term = pendingReopenSeedTerm;
+                const term = params.term || "";
+                if (!term && pendingReopenAnchorId) {
+                    return {
+                        anchor_id: pendingReopenAnchorId,
+                        page: params.page || 1,
+                    };
                 }
                 return {
                     q: term,
@@ -1253,13 +1257,13 @@ function initializeCarSelect() {
 
     select.on("select2:open", function () {
         const currentValue = select.val();
-        pendingReopenSeedTerm = currentValue ? firstWordSeedTerm(currentValue) : null;
+        pendingReopenAnchorId = currentValue || null;
         setTimeout(() => {
             const search = document.querySelector(".select2-container--open .select2-search__field");
             if (search) {
                 search.focus();
                 search.addEventListener("input", () => {
-                    pendingReopenSeedTerm = null;
+                    pendingReopenAnchorId = null;
                 }, { once: true });
             }
             scrollSelectedOptionIntoView();
