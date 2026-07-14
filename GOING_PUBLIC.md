@@ -55,12 +55,15 @@ Also make sure:
 - the admin password is no longer the seeded default
 - customer access codes are no longer the seeded defaults if those accounts are still active
 - the Flask secret key is unique for this install
+- `SYSTEM_ACCESS_TOKEN` is set to a long random value if you want the remote System panel (see section 10); leave it unset to keep the panel disabled
 
-To generate a secret key:
+To generate a secret key (the same command works for `SYSTEM_ACCESS_TOKEN`):
 
 ```powershell
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
+
+Note: `.env` is deliberately NOT tracked in git, so a `git pull` never overwrites these values — but it also means `.env` must be backed up separately if the PC is rebuilt.
 
 ## 4. Cloudflare tunnel setup
 
@@ -194,7 +197,30 @@ This document is the public deployment guide.
 - `.env` has `SESSION_COOKIE_SECURE=1`
 - default seeded credentials are no longer in active use
 
-## 10. If the public site goes down
+## 10. Remote management with the System panel
+
+Once the site is public, most day-to-day maintenance can be done from anywhere through the System panel instead of remote desktop:
+
+```text
+https://superseatings.carxone.com/admin/system
+```
+
+Access requires two things:
+1. an admin login session
+2. a one-time device pairing per browser: open
+   `https://superseatings.carxone.com/admin/system/authorize-device?token=<SYSTEM_ACCESS_TOKEN>`
+   once with the token from the office PC's `.env`. This sets a long-lived cookie on that browser; the panel refuses unpaired devices even with a valid admin login.
+
+From the panel you can:
+- see the running code version and whether the office PC is behind `origin/main`
+- pull the latest code and restart (`Pull Latest Code & Restart` — the restart is self-contained and does not depend on the tray launcher being healthy)
+- restart the app without pulling
+- tail recent logs, download a database backup, check disk usage and uptime
+- check Tally status (including the multiple-instances warning), run the Tally Performance Test, and verify the Windows auto-start entry
+
+If `SYSTEM_ACCESS_TOKEN` is not set in `.env`, all of these routes return `403` and the panel is effectively off.
+
+## 11. If the public site goes down
 
 Check these in order:
 
