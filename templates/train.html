@@ -999,6 +999,39 @@ function setSelect2Value(selector, value) {
     select.val(nextValue).trigger("change");
 }
 
+// Reopening an AJAX-paginated Select2 with an empty search term only shows
+// the first page of results in alphabetical order, so a car selected further
+// down the list always reopens scrolled back to the top of the alphabet --
+// the selected option isn't even loaded into the DOM yet. Seeding the search
+// box with the first word of the selected car's raw name makes the AJAX call
+// naturally return that car (and its close neighbors, e.g. every other
+// similarly-prefixed variant), so the option Select2 already marks
+// aria-selected="true" is both present and visible.
+function firstWordSeedTerm(rawValue) {
+    const trimmed = String(rawValue || "").trim();
+    if (!trimmed) {
+        return "";
+    }
+    const match = trimmed.match(/\S+/);
+    return match ? match[0] : "";
+}
+
+function scrollSelectedOptionIntoView(attemptsLeft) {
+    if (attemptsLeft === undefined) {
+        attemptsLeft = 12;
+    }
+    const selectedOption = document.querySelector(
+        '.select2-container--open .select2-results__option[aria-selected="true"]'
+    );
+    if (selectedOption) {
+        selectedOption.scrollIntoView({ block: "center" });
+        return;
+    }
+    if (attemptsLeft > 0) {
+        setTimeout(() => scrollSelectedOptionIntoView(attemptsLeft - 1), 60);
+    }
+}
+
 function initializeCarFilter() {
     const select = $("#carModelFilter");
     select.select2({
@@ -1024,11 +1057,20 @@ function initializeCarFilter() {
     });
 
     select.on("select2:open", function () {
+        const currentValue = select.val();
         setTimeout(() => {
             const search = document.querySelector(".select2-container--open .select2-search__field");
             if (search) {
+                if (currentValue && !search.value) {
+                    const seedTerm = firstWordSeedTerm(currentValue);
+                    if (seedTerm) {
+                        search.value = seedTerm;
+                        search.dispatchEvent(new Event("input", { bubbles: true }));
+                    }
+                }
                 search.focus();
             }
+            scrollSelectedOptionIntoView();
         }, 0);
     });
 
