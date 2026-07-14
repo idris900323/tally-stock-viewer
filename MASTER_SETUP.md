@@ -35,7 +35,7 @@ Important files and folders:
 - `C:\tally_stock\update_app.bat` - pulls code updates from Git
 - `C:\tally_stock\.env` - local settings
 - `C:\tally_stock\logs\app.log` - application log
-- `C:\tally_stock\data\mappings.db` - image mappings, users, and pricing
+- `C:\tally_stock\data\mappings.db` - image mappings and users
 - `C:\tally_stock\data\S.S IMAGE\` - source image folders
 
 Desktop shortcuts created by setup:
@@ -134,7 +134,7 @@ If you are moving from an older PC, copy the `data\` contents before relying on 
 
 You should see the login page.
 
-Note: about 45 seconds after the app starts, it automatically pulls a fresh car master, hierarchy, and stock export from Tally on its own — the same thing the `Full Refresh` button does. As long as Tally Prime was already open at that point, most mornings nobody needs to click `Full Refresh` manually. If Tally was not open yet, this automatic attempt just fails quietly in the log and the `Full Refresh` button remains available to run once Tally is up.
+Note: about 45 seconds after the app starts, it automatically pulls a fresh car master, hierarchy, and stock export from Tally on its own — the same thing the `Full Refresh` button does. After that, stock quantities keep refreshing automatically every 3 minutes for as long as the app runs. As long as Tally Prime was already open at that point, most mornings nobody needs to click `Full Refresh` manually. If Tally was not open yet, this automatic attempt just fails quietly in the log and the `Full Refresh` button remains available to run once Tally is up.
 
 ### To stop the app
 
@@ -178,7 +178,11 @@ What happens:
 
 If Tally is offline, the app falls back to the last saved stock export instead of fully failing.
 
-A `Full Refresh` also runs automatically once, about 45 seconds after the app starts (see section 5) — the manual button is mainly for triggering it again later in the day, or if Tally wasn't open yet when the app started.
+Most of the time nobody needs to click anything: stock QUANTITIES refresh automatically every 3 minutes while the app is running, and a `Full Refresh` (car master + hierarchy + stock) also runs automatically once, about 45 seconds after the app starts (see section 5). The manual buttons are mainly for forcing an immediate update, or if Tally wasn't open yet when the app started.
+
+Important: only ONE Tally window may be open on the PC. If more than one Tally is running, stock refresh stops working and the main page shows "Multiple Tally windows are open. Close the extra Tally and keep only one." — close the duplicates and the next refresh will succeed on its own.
+
+If an automatic refresh fails for any reason, a small grey hint appears next to the "Last updated" time saying why in plain words (Tally closed, Tally slow, multiple Tally windows). It disappears once a refresh succeeds again.
 
 ### Train image matches
 
@@ -192,15 +196,9 @@ This saves image-to-stock mappings into `mappings.db`. Each stock item can only 
 
 If you have a photo that isn't in the `S.S IMAGE` folder yet, use `Upload Image` on the `Train Matches` page instead of copying it in manually and rescanning: pick the matching stock item first, click `Upload Image`, choose the file, confirm the car folder, and it is saved and matched in one step.
 
-### Manage pricing
-
-1. Log in as admin
-2. Click `Manage Pricing`
-3. Set either:
-- global prices for all customers
-- customer-specific override prices
-
-If no price exists, the customer-facing UI shows `Contact Us`.
+Two shortcuts that save time:
+- On the main stock page, every design card has an `Add Image` button. Clicking it opens Training Mode with that car and stock item already selected — no re-searching.
+- For products where ONE photo applies to many stock items (floor mats, curtains, and similar items that repeat across hundreds of car variants), use the `Bulk Match` button on the `Train Matches` page. Pick the shared photo, find the stock items by search or by product category (e.g. "7D MAT / BLACK"), tick all that apply, and confirm them in one go instead of one at a time.
 
 ### Manage customer accounts
 
@@ -237,9 +235,12 @@ C:\tally_stock\update_app.bat
 What it does:
 - stops the running app
 - runs `git pull origin main`
+- checks that the Windows auto-start entry is present and correct, and silently repairs it if not
 - starts the launcher again
 
 If Git was not connected, code updates must be copied in manually.
+
+If the office PC is hard to reach, updates can also be applied remotely: the System panel (`/admin/system`, admin login plus a one-time device pairing — see `GOING_PUBLIC.md`) has a `Pull Latest Code & Restart` button that does the pull and brings the app back up on its own.
 
 ## 10. Troubleshooting
 
@@ -255,8 +256,11 @@ Check:
 
 Most likely causes:
 - Tally Prime is closed
+- more than one Tally window is open (the page will say so — close the extras)
 - Tally is not listening on port `9000`
 - Tally responded too slowly
+
+The grey hint next to "Last updated" on the main page usually names the cause directly.
 
 The app can still run in read-only mode using the last saved stock export.
 
@@ -273,7 +277,7 @@ Run `first_time_setup.bat` again as administrator.
 
 ### Auto-start after Windows login is not working
 
-Run `first_time_setup.bat` again as administrator to recreate the Windows startup entry.
+Run `update_app.bat` — it verifies and repairs the Windows startup entry automatically on every run. If that is not possible, run `first_time_setup.bat` again as administrator to recreate it. The System panel's "Autostart" row also shows whether the entry is configured correctly.
 
 ## 11. Useful checks
 
@@ -282,6 +286,14 @@ Health check:
 ```powershell
 http://localhost:5000/health
 ```
+
+System panel (admin login + paired device required; pairing is a one-time link with the access token from `.env` — see `GOING_PUBLIC.md`):
+
+```powershell
+http://localhost:5000/admin/system
+```
+
+It shows the running code version, recent logs, disk usage, uptime, Tally status, and the auto-start check, and has buttons to restart the app or pull the latest code — useful before resorting to remote desktop.
 
 App log:
 
