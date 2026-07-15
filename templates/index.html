@@ -756,6 +756,7 @@ const STAGE_LABELS = {
 let fullRefreshPoller = null;
 let selectMode = false;
 let selectedImageIds = new Set();
+let selectedCardKeys = new Set();
 let longPressTimer = null;
 let longPressStartXY = null;
 let suppressNextClick = false;
@@ -911,35 +912,57 @@ function enterSelectMode() {
 function exitSelectMode() {
     selectMode = false;
     selectedImageIds.clear();
+    selectedCardKeys.clear();
     updateSelectModeUI();
 }
 
-function toggleImageSelection(imageId) {
-    if (!imageId) {
+// Selection is tracked per unique card (selectedCardKeys, keyed by each
+// card's render-order data-item-key) rather than per image_id, because
+// Bulk Match lets multiple stock-item cards legitimately share one
+// image_id -- keying the visual state off image_id alone would highlight
+// every card that shares it, not just the one actually clicked.
+// selectedImageIds is then derived from selectedCardKeys so the "N
+// selected" count and Share Images (which both read selectedImageIds)
+// keep working exactly as before, deduped to unique images.
+function syncSelectedImageIdsFromCardKeys() {
+    selectedImageIds.clear();
+    selectedCardKeys.forEach(key => {
+        const card = document.querySelector(`#designsList .design-item[data-item-key="${key}"]`);
+        const imageId = card && card.dataset.imageId;
+        if (imageId) {
+            selectedImageIds.add(imageId);
+        }
+    });
+}
+
+function toggleImageSelection(imageId, itemKey) {
+    if (!imageId || !itemKey) {
         return;
     }
-    if (selectedImageIds.has(imageId)) {
-        selectedImageIds.delete(imageId);
+    if (selectedCardKeys.has(itemKey)) {
+        selectedCardKeys.delete(itemKey);
     } else {
-        selectedImageIds.add(imageId);
+        selectedCardKeys.add(itemKey);
     }
+    syncSelectedImageIdsFromCardKeys();
     updateSelectModeUI();
 }
 
-function getSelectableImageIds() {
+function getSelectableCardKeys() {
     return Array.from(document.querySelectorAll("#designsList .design-item[data-image-id]"))
-        .map(item => item.dataset.imageId)
+        .map(item => item.dataset.itemKey)
         .filter(Boolean);
 }
 
 function toggleSelectAll() {
-    const allIds = getSelectableImageIds();
-    const allSelected = allIds.length > 0 && allIds.every(id => selectedImageIds.has(id));
+    const allKeys = getSelectableCardKeys();
+    const allSelected = allKeys.length > 0 && allKeys.every(key => selectedCardKeys.has(key));
     if (allSelected) {
-        selectedImageIds.clear();
+        selectedCardKeys.clear();
     } else {
-        allIds.forEach(id => selectedImageIds.add(id));
+        allKeys.forEach(key => selectedCardKeys.add(key));
     }
+    syncSelectedImageIdsFromCardKeys();
     updateSelectModeUI();
 }
 
@@ -960,8 +983,8 @@ function updateSelectModeUI() {
     if (list) {
         list.classList.toggle("select-mode", selectMode);
         list.querySelectorAll(".design-item").forEach(item => {
-            const imageId = item.dataset.imageId;
-            item.classList.toggle("selected", Boolean(selectMode && imageId && selectedImageIds.has(imageId)));
+            const itemKey = item.dataset.itemKey;
+            item.classList.toggle("selected", Boolean(selectMode && itemKey && selectedCardKeys.has(itemKey)));
         });
     }
 
@@ -977,8 +1000,8 @@ function updateSelectModeUI() {
 
     const selectAllBtn = document.getElementById("selectAllBtn");
     if (selectAllBtn) {
-        const allIds = getSelectableImageIds();
-        const allSelected = allIds.length > 0 && allIds.every(id => selectedImageIds.has(id));
+        const allKeys = getSelectableCardKeys();
+        const allSelected = allKeys.length > 0 && allKeys.every(key => selectedCardKeys.has(key));
         selectAllBtn.textContent = allSelected ? "Deselect All" : "Select All";
     }
 }
@@ -999,7 +1022,7 @@ function handleDesignsListClick(event) {
     }
     event.preventDefault();
     event.stopPropagation();
-    toggleImageSelection(card.dataset.imageId || "");
+    toggleImageSelection(card.dataset.imageId || "", card.dataset.itemKey || "");
 }
 
 function handleDesignsListTouchStart(event) {
@@ -1016,13 +1039,15 @@ function handleDesignsListTouchStart(event) {
     longPressTimer = setTimeout(() => {
         longPressTimer = null;
         const imageId = card.dataset.imageId;
-        if (!imageId) {
+        const itemKey = card.dataset.itemKey;
+        if (!imageId || !itemKey) {
             return;
         }
         if (!selectMode) {
             enterSelectMode();
         }
-        selectedImageIds.add(imageId);
+        selectedCardKeys.add(itemKey);
+        syncSelectedImageIdsFromCardKeys();
         updateSelectModeUI();
         suppressNextClick = true;
     }, LONG_PRESS_MS);
@@ -1551,7 +1576,7 @@ function startAutoRefresh() {
     }, 180000);
 }
 
-function renderDesignItem(item) {
+function renderDesignItem(item, index) {
     const stockItem = item.design || item.raw || "Unknown";
     const mapped = Boolean(item.mapped);
     const thumbnailUrl = item.thumbnail_url || `/get_stock_image?stock_item=${encodeURIComponent(stockItem)}`;
@@ -1561,6 +1586,7 @@ function renderDesignItem(item) {
     const escapedTitle = escapeHtml(stockItem);
     const safeThumbnail = escapeHtml(thumbnailUrl);
     const imageId = mapped && item.image_id ? String(item.image_id) : "";
+    const itemKey = `item-${index}`;
     const detailText = isCustomer
         ? ``
         : `
@@ -1569,7 +1595,7 @@ function renderDesignItem(item) {
 
     return `
         <li>
-            <div class="design-item" data-image-id="${imageId}">
+            <div class="design-item" data-image-id="${imageId}" data-item-key="${itemKey}">
                 <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this.dataset.src, this.dataset.label)">
                     <img src="${thumbnailUrl}" alt="${escapedTitle}" class="design-thumbnail">
                     <span class="select-check" aria-hidden="true">&#10003;</span>
@@ -1617,7 +1643,7 @@ async function loadDesigns() {
 
         if (Array.isArray(data) && data.length > 0) {
             document.getElementById("selectedCarName").textContent = stripShelfCodeForDisplay(car);
-            list.innerHTML = data.map(renderDesignItem).join("");
+            list.innerHTML = data.map((item, index) => renderDesignItem(item, index)).join("");
             document.getElementById("designCount").textContent = `Total: ${data.length} designs with stock`;
             container.classList.add("show");
             showInfo(`Showing ${data.length} designs for ${stripShelfCodeForDisplay(car)}`);

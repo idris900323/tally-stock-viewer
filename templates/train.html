@@ -1062,18 +1062,16 @@ function showMissingImagesPrompt(data) {
         const percent = totalImages ? Math.round((missingCount / totalImages) * 1000) / 10 : 0;
         prompt.classList.add("severe");
         text.textContent = `A large number of images (${missingCount}, ${percent}% of the total) appear to be missing. This usually means the image folder is temporarily unreachable rather than genuinely deleted. Check that S.S IMAGE folder is connected before removing anything.`;
-        // The list is still worth seeing here -- whole folders missing at
-        // once makes a disconnected drive obvious -- but Remove/Keep stay
-        // hidden; re-running Rescan is the only way out of this warning.
-        removeBtn.style.display = "none";
-        keepBtn.style.display = "none";
     } else {
         prompt.classList.remove("severe");
         const mapped = data.missing_mapped_count || 0;
         text.textContent = `Found ${missingCount} image(s) that no longer exist on disk (${mapped} of them were linked to stock items). Remove them from the system?`;
-        removeBtn.style.display = "";
-        keepBtn.style.display = "";
     }
+    // Remove/Keep are always available; View List lets the admin verify
+    // exactly what would be removed before deciding either way, and the
+    // remove endpoint re-verifies each file is still missing at delete time.
+    removeBtn.style.display = "";
+    keepBtn.style.display = "";
 
     prompt.style.display = "block";
 }
