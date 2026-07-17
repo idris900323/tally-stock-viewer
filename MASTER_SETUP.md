@@ -182,7 +182,7 @@ Most of the time nobody needs to click anything: stock QUANTITIES refresh automa
 
 Important: only ONE Tally window may be open on the PC. If more than one Tally is running, stock refresh stops working and the main page shows "Multiple Tally windows are open. Close the extra Tally and keep only one." — close the duplicates and the next refresh will succeed on its own.
 
-If an automatic refresh fails for any reason, a small grey hint appears next to the "Last updated" time saying why in plain words (Tally closed, Tally slow, multiple Tally windows). If the data stays stale for more than 3 minutes, a more visible banner also appears near the top of the page with the same reason. Both disappear once a refresh succeeds again.
+If the data stays stale for a full 15 minutes (not just a brief blip), a clear banner appears near the top of the page explaining the likely reason in plain words (Tally closed, Tally slow, multiple Tally windows open), plus a short matching note next to the "Last updated" time. Both disappear the moment a refresh succeeds again. A brief failure that recovers within 15 minutes does not raise this — only a genuinely stuck refresh does.
 
 ### Train image matches
 
@@ -271,7 +271,7 @@ Most likely causes:
 - Tally is not listening on port `9000`
 - Tally responded too slowly
 
-The grey hint next to "Last updated" on the main page usually names the cause directly, and once the data has been stale for more than 3 minutes a larger banner near the top of the page repeats the same reason.
+If the problem lasts more than 15 minutes, a banner near the top of the main page names the likely cause directly (plus a short matching note next to "Last updated"). Nothing appears for a shorter blip that clears on its own.
 
 The app can still run in read-only mode using the last saved stock export.
 
