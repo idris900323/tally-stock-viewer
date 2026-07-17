@@ -182,7 +182,7 @@ Most of the time nobody needs to click anything: stock QUANTITIES refresh automa
 
 Important: only ONE Tally window may be open on the PC. If more than one Tally is running, stock refresh stops working and the main page shows "Multiple Tally windows are open. Close the extra Tally and keep only one." — close the duplicates and the next refresh will succeed on its own.
 
-If an automatic refresh fails for any reason, a small grey hint appears next to the "Last updated" time saying why in plain words (Tally closed, Tally slow, multiple Tally windows). It disappears once a refresh succeeds again.
+If an automatic refresh fails for any reason, a small grey hint appears next to the "Last updated" time saying why in plain words (Tally closed, Tally slow, multiple Tally windows). If the data stays stale for more than 3 minutes, a more visible banner also appears near the top of the page with the same reason. Both disappear once a refresh succeeds again.
 
 ### Train image matches
 
@@ -204,10 +204,13 @@ Two shortcuts that save time:
 
 1. Log in as admin
 2. Click `Manage Accounts`
-3. Create, pause, resume, or delete customer accounts
-4. Each row shows the account's status (Active/Paused) and last login time; use `Resume All` or `Pause All` to change every customer account's access at once
+3. Enter the separate Accounts Password when prompted — this is different from your admin login and is asked again every time you start a new login session, even if you're already logged in as admin
+4. Create, pause, resume, or delete customer accounts
+5. Each row shows the account's status (Active/Paused) and last login time; use `Resume All` or `Pause All` to change every customer account's access at once
 
 A paused customer account cannot log in until it is resumed — the login page shows "This account has been paused. Contact the administrator."
+
+The Accounts Password is a separate value (`ACCOUNTS_ACCESS_PASSWORD` in `.env`) set by whoever manages the system — ask them if you don't have it. It exists specifically so that a compromised or shared admin login by itself still can't reach customer account data.
 
 ## 8. Image scanning
 
@@ -215,10 +218,18 @@ Run a scan when:
 - a new image folder is added
 - many new images are copied in
 - mapped images are not showing correctly after moving machines
+- images were deleted from the `S.S IMAGE` folder and should stop showing up in the app
 
 Current behavior:
 - the app automatically re-scans the image folder every time it starts (restarting the app is enough to pick up new images copied in while it was stopped)
 - while the app is running, click `Rescan Images` on the `Train Matches` page (admin only) to pick up new images without restarting
+
+`Rescan Images` is two-way: besides adding new images, it checks every image already in the database against the disk and reports any whose file no longer exists. If it finds any, a prompt appears with the count (and how many were linked to a stock item) plus three options:
+- **View List** — expands a scrollable list showing the exact folder/filename of each missing file, with a "Was linked to: ..." note for the ones that had a stock item mapped. Useful for telling a real deletion apart from, say, a whole subfolder disappearing at once (usually a sign the drive or folder itself is disconnected, not that the photos were actually deleted)
+- **Remove** — deletes those rows (and their stock-item link, if any) from the database, which goes back to "Needs link" for that stock item. Nothing is ever removed without this explicit click
+- **Keep** — dismisses the prompt without changing anything
+
+If an unusually large share of the whole catalog appears missing at once, the app shows a stronger warning instead, with Remove hidden — this almost always means the `S.S IMAGE` folder itself is temporarily unreachable (e.g. a disconnected network drive) rather than a genuine mass deletion. Reconnect/check the folder, then click `Rescan Images` again.
 
 For non-technical staff, treat image re-scan as a support task if a newly added image is not showing up yet — either restart the app or use the `Rescan Images` button.
 
@@ -260,9 +271,13 @@ Most likely causes:
 - Tally is not listening on port `9000`
 - Tally responded too slowly
 
-The grey hint next to "Last updated" on the main page usually names the cause directly.
+The grey hint next to "Last updated" on the main page usually names the cause directly, and once the data has been stale for more than 3 minutes a larger banner near the top of the page repeats the same reason.
 
 The app can still run in read-only mode using the last saved stock export.
+
+### Manage Accounts asks for a password I don't have
+
+This is a separate Accounts Password (`ACCOUNTS_ACCESS_PASSWORD` in `.env`), not your admin login — ask whoever manages the system for it. If it has never been set, `Manage Accounts` stays locked entirely (even to admin) until it is added to `.env` and the app is restarted.
 
 ### Images do not appear
 
@@ -270,6 +285,10 @@ Check:
 - the image files exist under `C:\tally_stock\data\S.S IMAGE\`
 - the database was moved over correctly
 - an image scan has been run after the move or after adding new files (restart the app, or click `Rescan Images` on the `Train Matches` page)
+
+### Deleted images still show up as mapped
+
+Click `Rescan Images` — it also checks for images whose file no longer exists on disk and offers to remove those database rows (see section 8). If the prompt warns that an unusually large share of images look missing instead of offering the normal Remove option, check that the `S.S IMAGE` folder/drive is actually connected before doing anything else — that warning almost always means the folder was unreachable during the scan, not that the photos were really deleted.
 
 ### Desktop shortcuts are missing
 
