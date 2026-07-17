@@ -260,6 +260,11 @@
             background: var(--success-bg);
         }
 
+        .warning {
+            color: #92400e;
+            background: #fef3c7;
+        }
+
         .designs-container {
             display: none;
         }
@@ -661,6 +666,10 @@
         <h1>Tally Stock Viewer</h1>
         <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and control customer accounts.</p>
     </div>
+
+    {% if is_admin %}
+    <div id="staleDataNotice" class="notice warning" style="display:none;"></div>
+    {% endif %}
 
     <div class="panel">
         <div class="toolbar">
@@ -1337,6 +1346,60 @@ async function loadCars() {
     updateTimestamp();
 }
 
+// Last refresh_status payload seen by updateTimestamp(), reused by
+// checkTimestampFreshness() so the stale-data banner reflects the most
+// recent known reason without polling /refresh_status on its own timer.
+let lastKnownRefreshStatus = null;
+
+// Single source of truth for turning a /refresh_status payload into one of
+// the known failure buckets. error_code is trusted first (set by the manual
+// refresh path); the scheduled auto-export path only stores message text, so
+// the same keyword fallback classifies it. Both the muted hint and the
+// visible stale-data banner render off this same bucket -- never a second,
+// separate classification.
+function classifyRefreshIssueBucket(status) {
+    const text = `${status.message || ""} ${status.raw_error || ""}`.toLowerCase();
+    if (text.includes("multiple tally")) {
+        return "MULTIPLE_TALLY";
+    }
+    if (status.error_code === "TALLY_UNREACHABLE" || text.includes("unreachable") || text.includes("not reachable") || text.includes("connection refused") || text.includes("failed to establish") || text.includes("max retries")) {
+        return "TALLY_UNREACHABLE";
+    }
+    if (status.error_code === "TALLY_TIMEOUT" || text.includes("timed out")) {
+        return "TALLY_TIMEOUT";
+    }
+    return "OTHER";
+}
+
+const REFRESH_ISSUE_HINTS = {
+    MULTIPLE_TALLY: "Auto-refresh issue: multiple Tally windows open",
+    TALLY_UNREACHABLE: "Auto-refresh issue: Tally appears closed",
+    TALLY_TIMEOUT: "Auto-refresh issue: Tally is slow to respond",
+    OTHER: "Auto-refresh issue: see System panel for details",
+};
+
+const REFRESH_ISSUE_BANNER_MESSAGES = {
+    MULTIPLE_TALLY: "⚠️ Stock data may be out of date — multiple Tally windows are open. Close the extra Tally and keep only one.",
+    TALLY_UNREACHABLE: "⚠️ Stock data may be out of date — Tally appears closed or unreachable.",
+    TALLY_TIMEOUT: "⚠️ Stock data may be out of date — Tally is slow to respond (request timed out).",
+    OTHER: "⚠️ Stock data may be out of date — see System panel for details.",
+};
+
+function updateStaleDataNotice(isStale) {
+    const el = document.getElementById("staleDataNotice");
+    if (!el) {
+        return;
+    }
+
+    if (isStale && lastKnownRefreshStatus && lastKnownRefreshStatus.success === false) {
+        const bucket = classifyRefreshIssueBucket(lastKnownRefreshStatus);
+        el.textContent = REFRESH_ISSUE_BANNER_MESSAGES[bucket];
+        el.style.display = "block";
+    } else {
+        el.style.display = "none";
+    }
+}
+
 function checkTimestampFreshness() {
     const lastUpdateEl = document.getElementById("lastUpdate");
     if (!lastUpdateEl) {
@@ -1358,11 +1421,13 @@ function checkTimestampFreshness() {
     }
 
     const diffSeconds = (Date.now() - parsed.getTime()) / 1000;
-    if (diffSeconds > 180) {
+    const isStale = diffSeconds > 180;
+    if (isStale) {
         lastUpdateEl.classList.add("stale-timestamp");
     } else {
         lastUpdateEl.classList.remove("stale-timestamp");
     }
+    updateStaleDataNotice(isStale);
 }
 
 function updateLastUpdateTime(timestamp) {
@@ -1386,12 +1451,12 @@ function updateLastUpdateTime(timestamp) {
 }
 
 async function updateTimestamp() {
-    try {
-        const statusEl = document.getElementById("statusMessage");
-        if (!statusEl) {
-            return;
-        }
+    const statusEl = document.getElementById("statusMessage");
+    if (!statusEl) {
+        return;
+    }
 
+    try {
         const res = await fetch("/last_update");
         if (res.ok) {
             const data = await res.json();
@@ -1413,23 +1478,15 @@ async function updateTimestamp() {
         const statusRes = await fetch("/refresh_status");
         if (statusRes.ok) {
             const status = await statusRes.json();
+            lastKnownRefreshStatus = status;
             const hintEl = document.getElementById("autoRefreshHint");
             if (status.success === false) {
                 const details = status.error_code ? ` [${status.error_code}]` : "";
                 statusEl.textContent = `Last error: ${status.message}${details}`;
                 statusEl.style.color = "#b42318";
                 if (hintEl) {
-                    // Scheduled exports store only message text (no error_code),
-                    // so match the same keywords _classify_tally_exception uses.
-                    const text = `${status.message || ""} ${status.raw_error || ""}`.toLowerCase();
-                    let hint = "Auto-refresh issue: see System panel for details";
-                    if (text.includes("multiple tally")) {
-                        hint = "Auto-refresh issue: multiple Tally windows open";
-                    } else if (status.error_code === "TALLY_UNREACHABLE" || text.includes("unreachable") || text.includes("not reachable") || text.includes("connection refused") || text.includes("failed to establish") || text.includes("max retries")) {
-                        hint = "Auto-refresh issue: Tally appears closed";
-                    } else if (status.error_code === "TALLY_TIMEOUT" || text.includes("timed out")) {
-                        hint = "Auto-refresh issue: Tally is slow to respond";
-                    }
+                    const bucket = classifyRefreshIssueBucket(status);
+                    const hint = REFRESH_ISSUE_HINTS[bucket];
                     hintEl.textContent = hint;
                     hintEl.title = hint;
                 }
@@ -1445,6 +1502,12 @@ async function updateTimestamp() {
     } catch (error) {
         console.log("Could not fetch refresh status", error);
     }
+
+    // Re-evaluate staleness now that the freshest status is known, so the
+    // banner doesn't wait for the next independent checkTimestampFreshness
+    // tick (still no new timer -- this piggybacks on updateTimestamp's own
+    // existing poll).
+    checkTimestampFreshness();
 }
 
 async function updateStockSilently() {

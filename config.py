@@ -53,6 +53,11 @@ class Config:
     # default. If unset, the entire /admin/system* panel stays disabled.
     SYSTEM_ACCESS_TOKEN = os.environ.get("SYSTEM_ACCESS_TOKEN", "").strip()
 
+    # Accounts panel secondary password gate — deliberately has no default.
+    # If unset, Manage Accounts stays locked (same "not configured" pattern
+    # as SYSTEM_ACCESS_TOKEN above) rather than silently allowing access.
+    ACCOUNTS_ACCESS_PASSWORD = os.environ.get("ACCOUNTS_ACCESS_PASSWORD", "").strip()
+
     # Logging
     LOG_DIR = os.environ.get("LOG_DIR", "logs")
     LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")
