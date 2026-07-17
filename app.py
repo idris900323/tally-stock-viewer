@@ -223,6 +223,65 @@ def system_device_required(view_func):
     return wrapper
 
 
+# ============================================================
+# ACCOUNTS PASSWORD GATE — secondary auth layer on Manage Accounts
+# ============================================================
+# Even a valid admin session cannot view or modify customer accounts
+# without also entering a separate password, so a compromised admin
+# session alone isn't enough to reach the most sensitive part of the
+# admin panel.
+#   1. Set ACCOUNTS_ACCESS_PASSWORD in .env. If unset, every accounts
+#      route below returns 403 (same "not configured" pattern as the
+#      System panel's SYSTEM_ACCESS_TOKEN above) instead of silently
+#      allowing access.
+#   2. Unlike the System panel's device pairing (a long-lived cookie),
+#      this is purely session-based: session["accounts_unlocked"] only
+#      lives as long as the login session does (session.clear() on both
+#      /login and /logout already wipes it), so it must be re-entered
+#      on every new login.
+# ============================================================
+
+def _accounts_password_configured():
+    return bool(str(Config.ACCOUNTS_ACCESS_PASSWORD or "").strip())
+
+
+def _accounts_unlocked():
+    return bool(session.get("accounts_unlocked"))
+
+
+def accounts_access_required(view_func=None, *, is_page=False):
+    """Stack alongside (after) @admin_required on every accounts route.
+
+    is_page=True is for the /admin/accounts page itself: when locked it
+    renders a password interstitial instead of the real page. Every other
+    (JSON) accounts route just returns a 403 when locked.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if not _accounts_password_configured():
+                return jsonify({
+                    "error": "Accounts panel is not configured. Set ACCOUNTS_ACCESS_PASSWORD in .env to enable it."
+                }), 403
+            if not _accounts_unlocked():
+                if is_page:
+                    return render_template(
+                        "accounts_unlock.html",
+                        error=None,
+                        next_url=request.path,
+                    ), 200
+                return jsonify({
+                    "error": "Accounts access is locked. Enter the accounts password first."
+                }), 403
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    if view_func is not None:
+        return decorator(view_func)
+    return decorator
+
+
 @app.before_request
 def require_login():
     session.permanent = True
@@ -2002,6 +2061,7 @@ def resolve_car_from_folder():
 
 @app.route("/admin/accounts")
 @admin_required
+@accounts_access_required(is_page=True)
 def admin_accounts():
     status_message = (request.args.get("status") or "").strip()
     error_message = (request.args.get("error") or "").strip()
@@ -2012,8 +2072,39 @@ def admin_accounts():
     )
 
 
+@app.route("/admin/accounts/unlock", methods=["POST"])
+@admin_required
+def admin_accounts_unlock():
+    if not _accounts_password_configured():
+        return jsonify({
+            "error": "Accounts panel is not configured. Set ACCOUNTS_ACCESS_PASSWORD in .env to enable it."
+        }), 403
+
+    next_url = _safe_next_url(request.form.get("next"))
+    submitted_password = (request.form.get("password") or "").strip()
+
+    rate_limit_key = f"accounts:{session.get('username', '')}"
+    if not _check_login_rate_limit(rate_limit_key):
+        return render_template(
+            "accounts_unlock.html",
+            error="Too many attempts. Please try again later.",
+            next_url=next_url,
+        ), 429
+
+    if not submitted_password or submitted_password != Config.ACCOUNTS_ACCESS_PASSWORD:
+        return render_template(
+            "accounts_unlock.html",
+            error="Incorrect password.",
+            next_url=next_url,
+        ), 401
+
+    session["accounts_unlocked"] = True
+    return redirect(next_url)
+
+
 @app.route("/admin/create_user", methods=["POST"])
 @admin_required
+@accounts_access_required
 def admin_create_user():
     payload = request.get_json(silent=True) or request.form or {}
     username = (payload.get("username") or "").strip()
@@ -2048,6 +2139,7 @@ def admin_create_user():
 
 @app.route("/admin/get_all_customers")
 @admin_required
+@accounts_access_required
 def admin_get_all_customers():
     customers = db.get_all_customers_with_details()
     return jsonify([
@@ -2066,6 +2158,7 @@ def admin_get_all_customers():
 
 @app.route("/admin/toggle_user_status/<int:user_id>", methods=["POST"])
 @admin_required
+@accounts_access_required
 def admin_toggle_user_status(user_id):
     try:
         updated_user = db.toggle_customer_active_status(user_id)
@@ -2087,6 +2180,7 @@ def admin_toggle_user_status(user_id):
 
 @app.route("/admin/set_all_customer_status", methods=["POST"])
 @admin_required
+@accounts_access_required
 def admin_set_all_customer_status():
     payload = request.get_json(silent=True) or request.form or {}
     is_active = bool(payload.get("is_active", True))
@@ -2103,6 +2197,7 @@ def admin_set_all_customer_status():
 
 @app.route("/admin/delete_user/<int:user_id>", methods=["POST"])
 @admin_required
+@accounts_access_required
 def admin_delete_user(user_id):
     try:
         deleted_user = db.delete_customer_user(user_id)
