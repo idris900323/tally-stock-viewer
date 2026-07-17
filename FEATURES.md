@@ -11,7 +11,7 @@ customer users - built and run by one person on an office PC.
 - Stock export is a single TDL collection request per cycle (measured production runs put the old three-request cycle at ~20-27s of Tally engine work and the replacement at ~1.5-5s depending on load — the old detailed Stock Summary visibly stalled Tally Prime every refresh)
 - Stock quantities auto-refresh every 3 minutes while the app runs (`TALLY_EXPORT_INTERVAL`, default 180s); a one-time full refresh (car master + hierarchy + stock) also runs ~45 seconds after every app start, plus manual `Update Stock` / `Full Refresh` buttons
 - Falls back to the last cached export if Tally is offline, instead of breaking the page
-- "Last updated" timestamp turns red live if data goes stale (no refresh in 180s), with a plain-words hint next to it plus a clearly visible banner near the top of the page once it's actually stale, both explaining why the last refresh failed (Tally closed, Tally slow, multiple Tally windows open) - both clear themselves automatically once a refresh succeeds again
+- "Last updated" timestamp turns red live if data goes stale (no refresh in 180s); if it's been stale for a full 15 minutes with a real refresh failure behind it, a clear banner (plus a short matching hint) explains the likely reason in plain language (Tally closed, Tally slow, multiple Tally windows open) - both clear themselves automatically once a refresh succeeds again, and neither one shows falsely right after a restart or during a brief retry-able blip
 - Detects multiple running Tally instances before each export and surfaces a clear on-screen message instead of a cryptic failure
 - Cars deleted from Tally disappear from the dropdown instead of showing hundreds of wrong cross-car designs
 

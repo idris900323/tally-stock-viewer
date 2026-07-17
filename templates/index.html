@@ -263,6 +263,9 @@
         .warning {
             color: #92400e;
             background: #fef3c7;
+            border-left: 4px solid #d97706;
+            font-weight: 600;
+            line-height: 1.5;
         }
 
         .designs-container {
@@ -1351,6 +1354,13 @@ async function loadCars() {
 // recent known reason without polling /refresh_status on its own timer.
 let lastKnownRefreshStatus = null;
 
+// Separate from (and much longer than) the 180-second threshold that turns
+// the "Last updated" text red. That one stays a live, at-a-glance freshness
+// indicator; this one gates the more disruptive banner/hint so a brief
+// retry-able blip doesn't raise an alarm before Tally has had a real chance
+// to recover on its own.
+const STALE_WARNING_THRESHOLD_SECONDS = 900; // 15 minutes
+
 // Single source of truth for turning a /refresh_status payload into one of
 // the known failure buckets. error_code is trusted first (set by the manual
 // refresh path); the scheduled auto-export path only stores message text, so
@@ -1371,32 +1381,65 @@ function classifyRefreshIssueBucket(status) {
     return "OTHER";
 }
 
+// Short label next to the (already red) "Last updated" timestamp -- deliberately
+// worded as a shorter echo of the banner text below, not a second, different
+// message, so the two read as one thought instead of disconnected fragments.
 const REFRESH_ISSUE_HINTS = {
-    MULTIPLE_TALLY: "Auto-refresh issue: multiple Tally windows open",
-    TALLY_UNREACHABLE: "Auto-refresh issue: Tally appears closed",
-    TALLY_TIMEOUT: "Auto-refresh issue: Tally is slow to respond",
-    OTHER: "Auto-refresh issue: see System panel for details",
+    MULTIPLE_TALLY: "Stale — multiple Tally windows open",
+    TALLY_UNREACHABLE: "Stale — Tally appears closed",
+    TALLY_TIMEOUT: "Stale — Tally is slow to respond",
+    OTHER: "Stale — unexpected issue, see System panel",
 };
 
 const REFRESH_ISSUE_BANNER_MESSAGES = {
-    MULTIPLE_TALLY: "⚠️ Stock data may be out of date — multiple Tally windows are open. Close the extra Tally and keep only one.",
-    TALLY_UNREACHABLE: "⚠️ Stock data may be out of date — Tally appears closed or unreachable.",
-    TALLY_TIMEOUT: "⚠️ Stock data may be out of date — Tally is slow to respond (request timed out).",
-    OTHER: "⚠️ Stock data may be out of date — see System panel for details.",
+    MULTIPLE_TALLY: "⚠️ Stock data hasn't updated in over 15 minutes — multiple Tally windows are open. Close the extra Tally and keep only one; refresh will resume automatically.",
+    TALLY_UNREACHABLE: "⚠️ Stock data hasn't updated in over 15 minutes — Tally appears to be closed or unreachable. Open Tally Prime and refresh will resume automatically.",
+    TALLY_TIMEOUT: "⚠️ Stock data hasn't updated in over 15 minutes — Tally is slow to respond. It may be busy; refresh will keep retrying automatically.",
+    OTHER: "⚠️ Stock data hasn't updated in over 15 minutes due to an unexpected issue. Check the System panel for details.",
 };
 
-function updateStaleDataNotice(isStale) {
-    const el = document.getElementById("staleDataNotice");
-    if (!el) {
-        return;
-    }
+// The placeholder set before any refresh cycle has ever completed
+// ({"success": false, "message": "Not yet run", "timestamp": null} in
+// app.py) must never be treated as a real failure -- it carries no
+// timestamp, which a genuine captured attempt always has (see
+// _refresh_stock_data() and the scheduled _export_job(), both of which set
+// one on every success AND failure).
+function hasRealRefreshAttempt(status) {
+    return Boolean(status && status.timestamp);
+}
 
-    if (isStale && lastKnownRefreshStatus && lastKnownRefreshStatus.success === false) {
+// Single consolidated place that decides whether a stale-data warning is
+// showing at all, and drives both surfaces (the muted hint and the visible
+// banner) off the exact same decision so they never disagree.
+function updateStaleWarningUI(isStaleForWarning) {
+    const bannerEl = document.getElementById("staleDataNotice");
+    const hintEl = document.getElementById("autoRefreshHint");
+    const warningActive = Boolean(
+        isStaleForWarning
+        && lastKnownRefreshStatus
+        && lastKnownRefreshStatus.success === false
+        && hasRealRefreshAttempt(lastKnownRefreshStatus)
+    );
+
+    if (warningActive) {
         const bucket = classifyRefreshIssueBucket(lastKnownRefreshStatus);
-        el.textContent = REFRESH_ISSUE_BANNER_MESSAGES[bucket];
-        el.style.display = "block";
+        const bannerText = REFRESH_ISSUE_BANNER_MESSAGES[bucket];
+        if (bannerEl) {
+            bannerEl.textContent = bannerText;
+            bannerEl.style.display = "block";
+        }
+        if (hintEl) {
+            hintEl.textContent = REFRESH_ISSUE_HINTS[bucket];
+            hintEl.title = bannerText;
+        }
     } else {
-        el.style.display = "none";
+        if (bannerEl) {
+            bannerEl.style.display = "none";
+        }
+        if (hintEl) {
+            hintEl.textContent = "";
+            hintEl.removeAttribute("title");
+        }
     }
 }
 
@@ -1421,13 +1464,19 @@ function checkTimestampFreshness() {
     }
 
     const diffSeconds = (Date.now() - parsed.getTime()) / 1000;
+
+    // Unchanged: the red-timestamp threshold stays exactly 180 seconds.
     const isStale = diffSeconds > 180;
     if (isStale) {
         lastUpdateEl.classList.add("stale-timestamp");
     } else {
         lastUpdateEl.classList.remove("stale-timestamp");
     }
-    updateStaleDataNotice(isStale);
+
+    // Separate, much longer threshold for the warning banner/hint -- see
+    // STALE_WARNING_THRESHOLD_SECONDS above.
+    const isStaleForWarning = diffSeconds > STALE_WARNING_THRESHOLD_SECONDS;
+    updateStaleWarningUI(isStaleForWarning);
 }
 
 function updateLastUpdateTime(timestamp) {
@@ -1479,24 +1528,20 @@ async function updateTimestamp() {
         if (statusRes.ok) {
             const status = await statusRes.json();
             lastKnownRefreshStatus = status;
-            const hintEl = document.getElementById("autoRefreshHint");
-            if (status.success === false) {
-                const details = status.error_code ? ` [${status.error_code}]` : "";
-                statusEl.textContent = `Last error: ${status.message}${details}`;
-                statusEl.style.color = "#b42318";
-                if (hintEl) {
-                    const bucket = classifyRefreshIssueBucket(status);
-                    const hint = REFRESH_ISSUE_HINTS[bucket];
-                    hintEl.textContent = hint;
-                    hintEl.title = hint;
-                }
-            } else if (status.success === true) {
+            if (status.success === true) {
                 statusEl.textContent = `Last update: ${status.message}`;
                 statusEl.style.color = "#475569";
-                if (hintEl) {
-                    hintEl.textContent = "";
-                    hintEl.removeAttribute("title");
-                }
+            } else {
+                // Deliberately no "Last error: ..." text here. That used to
+                // fire on every failure regardless of how long ago it
+                // happened (even the pre-refresh "Not yet run" placeholder),
+                // and reading alongside the separate muted hint as two
+                // disconnected fragments. The one consolidated warning
+                // (banner + short hint, both gated on the same 15-minute
+                // threshold) is now the single place this is communicated --
+                // see updateStaleWarningUI(), called via checkTimestampFreshness()
+                // below.
+                statusEl.textContent = "";
             }
         }
     } catch (error) {
