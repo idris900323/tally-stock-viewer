@@ -56,6 +56,7 @@ Also make sure:
 - customer access codes are no longer the seeded defaults if those accounts are still active
 - the Flask secret key is unique for this install
 - `SYSTEM_ACCESS_TOKEN` is set to a long random value if you want the remote System panel (see section 10); leave it unset to keep the panel disabled
+- `ACCOUNTS_ACCESS_PASSWORD` is set to a value only trusted admins know, if you want `Manage Accounts` protected by a second password on top of the admin login; leave it unset and that page stays fully locked, even to a valid admin session
 
 To generate a secret key (the same command works for `SYSTEM_ACCESS_TOKEN`):
 
@@ -196,6 +197,7 @@ This document is the public deployment guide.
 - `.env` has `FLASK_DEBUG=0`
 - `.env` has `SESSION_COOKIE_SECURE=1`
 - default seeded credentials are no longer in active use
+- `ACCOUNTS_ACCESS_PASSWORD` is set if `Manage Accounts` should be usable in production (optional — leaving it unset just keeps that page locked)
 
 ## 10. Remote management with the System panel
 

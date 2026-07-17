@@ -92,6 +92,9 @@ Important configuration groups:
 ### Remote System panel
 - `SYSTEM_ACCESS_TOKEN` — required to enable `/admin/system`; used once per browser to pair the device (see section 21). If unset, the panel routes return `403`.
 
+### Accounts panel password gate
+- `ACCOUNTS_ACCESS_PASSWORD` — required to unlock `/admin/accounts` and its API routes for the current session (see section 16). If unset, those routes return `403` regardless of admin session or `accounts_unlocked` state.
+
 ## 5. Data files on disk
 
 The app uses a mixed model: some files are source-of-truth inputs and some are generated caches.
@@ -159,6 +162,7 @@ Authentication is form-based.
 ### Route protection
 - `@app.before_request` blocks all non-public routes for logged-out users
 - `@admin_required` protects admin-only endpoints such as accounts, mapping changes, and stock refresh
+- `@accounts_access_required` layers a second, session-based password check on top of `@admin_required` for every Manage Accounts route (see section 16) — independent of the System panel's device pairing, and never a substitute for `@admin_required` itself
 
 ### Roles
 - `admin`
@@ -309,6 +313,22 @@ The database no longer has to rely on machine-specific absolute image paths.
 
 Image list queries used by the training UI (`get_images_by_folder`, `get_unmapped_images`, `get_unmapped_images_by_folder`) order results by `LOWER(filename) ASC, id ASC`, not insertion order. This matters because newly-scanned files get a much higher autoincrement `id` than the rest of their folder; ordering by `id` alone would always push new images to the end of the list regardless of filename. `get_next_unmapped_image()` is the one exception — it still orders by `id` because it uses `id` as a pagination cursor (`WHERE i.id > ?`), so it is not filename-sorted.
 
+### Missing-image detection and removal (two-way sync)
+
+The scan used to be add-only: files could be added to the `images` table but a row was never removed after its file was deleted from `S.S IMAGE`, so deleted photos stayed mapped forever. `find_missing_image_rows(base_path=None)` in `image_scanner.py` closes that gap:
+
+- read-only — it never deletes or modifies anything itself
+- pulls every image row via `database.get_all_images_with_link_status()`, which flags each row `mapped` using an `EXISTS` subquery (not a `LEFT JOIN`) against `mappings`, because one image can have more than one mapping row now that the `UNIQUE(image_id)` constraint is gone (Bulk Match links one image to many stock items) — a join would double-count
+- resolves each row's stored relative `filepath` against `base_path` (the caller passes `IMAGE_SCAN_ROOT`) and checks `os.path.exists()`; anything that fails is "missing"
+- for just that missing subset, looks up which confirmed stock item name(s) it was linked to via `database.get_stock_item_names_for_images()` — scoped to the missing ids so this doesn't cost a catalog-wide `GROUP_CONCAT` on every scan
+- computes `over_threshold_warning`: true only when `missing_count >= MISSING_IMAGE_WARNING_MIN_COUNT` (20) **and** `missing_count / total_images > MISSING_IMAGE_WARNING_RATIO` (0.15). Both a floor and a ratio are required so a small catalog's noisy percentage (e.g. 1 missing out of 4 images) doesn't trip it, while a large fraction of a real catalog does. This is meant to catch `IMAGE_SCAN_ROOT` itself being temporarily unreachable (disconnected network drive, renamed folder) — in that case every row resolves as missing at once, which the ratio check reliably flags
+
+`POST /scan_images` runs the unchanged add-side `scan_ss_image_folder()` and then always also calls `find_missing_image_rows()`, adding `missing_count`, `missing_mapped_count`, `over_threshold_warning`, `missing_image_ids`, and a `missing_images` list (`{id, car_folder, filename, filepath, mapped, stock_item_names}` per row) to the same JSON response — so the frontend gets file-level detail for a "View List" display without a second disk walk.
+
+Nothing is deleted by the scan. `POST /admin/remove_missing_images` (admin-only) takes a JSON `image_ids` list, re-runs `find_missing_image_rows()` from scratch, and only deletes the intersection with what was requested — a file that reappeared between the scan and the confirm click (drive reconnected, folder restored) is never deleted even if the client still asks for it. The actual delete is `database.remove_missing_image_rows()`: it deletes the `images` row(s), and their `mappings` rows disappear automatically through the existing `ON DELETE CASCADE` foreign key, reverting that stock item back to "Needs link" — no separate mapping-delete step is needed.
+
+`templates/train.html` shows a Remove/Keep prompt under `Rescan Images` when `missing_count > 0` (or, when over threshold, a more serious warning with Remove/Keep hidden — re-running `Rescan Images` after confirming the folder is reachable is the only way past it). A "View List" toggle renders the `missing_images` payload already in hand — folder/filename per row, with a "Was linked to: ..." badge for mapped ones — without calling the scan again.
+
 ## 13. Mapping workflow
 
 The mapping workflow lives mostly in `app.py`, `database.py`, `matcher.py`, and `templates/train.html`.
@@ -319,7 +339,8 @@ The mapping workflow lives mostly in `app.py`, `database.py`, `matcher.py`, and 
 - `GET /train_images`
 - `POST /confirm_mapping`
 - `POST /remove_mapping`
-- `POST /scan_images`
+- `POST /scan_images` — add-side rescan plus a read-only `find_missing_image_rows()` pass; response includes both the add-side counts and the missing-image detection fields (see section 12's "Missing-image detection and removal")
+- `POST /admin/remove_missing_images` — takes `{"image_ids": [...]}`, re-verifies each is still actually missing before deleting, and removes those `images` rows (mappings cascade); returns `images_removed`/`mappings_removed` plus refreshed `stats`
 - `POST /admin/upload_image` — lets an admin upload a photo straight from the `Train Matches` page instead of pre-copying it into `S.S IMAGE\` and rescanning; validates extension (`Config.ALLOWED_IMAGE_EXTENSIONS`) and size (`Config.MAX_IMAGE_SIZE`), saves it under `data/S.S IMAGE/<car_folder>/` (de-duplicating the filename with `_unique_filename_in_dir()` if one already exists), inserts an `images` row via `db.add_image()`, then confirms the mapping to the selected stock item through the same `_confirm_mapping_core()` helper used by `/confirm_mapping`
 - `GET /mapping_stats`
 - `GET /get_current_mapping_image?stock_item=<name>` — used by the `train.html` "Currently Matched Image" preview; looks up `db.get_mapping_for_stock_item()` and returns `{has_mapping, image_id, image_url, confidence}` as JSON so the admin can visually compare the existing match against the new image before confirming
@@ -404,6 +425,15 @@ The `users` table has `is_active` (default `1`) and `last_login` columns, added 
 
 Each major account action is logged through `account_logs`, including bulk pause/resume (`bulk_paused` / `bulk_resumed` action labels).
 
+### Secondary password gate
+
+All six routes above (plus the `/admin/accounts` page route itself) also require `@accounts_access_required`, stacked directly after `@admin_required` — a valid admin session alone is no longer enough to reach customer account data:
+- gated on `Config.ACCOUNTS_ACCESS_PASSWORD` (read from `.env`, no default — same "unset means disabled" pattern as `SYSTEM_ACCESS_TOKEN`); if unset, every accounts route returns `403` regardless of session state
+- unlock is purely session-based (`session["accounts_unlocked"]`), NOT a device cookie like the System panel's pairing — `session.clear()` on both `/login` and `/logout` already wipes it, so it has to be re-entered every new login session
+- `POST /admin/accounts/unlock` (itself behind `@admin_required`) checks the submitted password against `Config.ACCOUNTS_ACCESS_PASSWORD`, rate-limited through the same `_check_login_rate_limit()` used by `/login` (keyed separately as `accounts:<username>` so attempts don't share a bucket with regular login attempts), and sets the session flag on success before redirecting to `next` (validated through the existing `_safe_next_url()`)
+- `accounts_access_required(is_page=True)` on the `/admin/accounts` route renders `templates/accounts_unlock.html` (a password interstitial styled like `login.html`) instead of the real page when locked; every other accounts route (JSON) just returns `403` with a clear message instead
+- `@admin_required` still runs first in the decorator stack (it's listed above `@accounts_access_required` on every route), so a non-admin session is blocked before this gate is ever reached — the two checks are independent, not a replacement for one another
+
 ## 17. Search endpoints
 
 `api/search.py` provides paginated JSON endpoints for Select2 widgets.
@@ -427,7 +457,7 @@ The templates map cleanly to the major workflows:
   - main stock viewer
   - admin-only update, training, and account links
   - `checkTimestampFreshness()` marks the "Last updated" text with the `.stale-timestamp` class (red, bold) whenever it is more than 180 seconds old; it runs after every timestamp update and on a 10-second `setInterval`, so it turns red live even if no new data arrives (e.g. Tally down for a while)
-  - a muted hint next to the timestamp explains WHY the last auto-refresh failed in plain words (multiple Tally windows, Tally closed, Tally slow, or a pointer to the System panel); it rides the existing 30-second `/refresh_status` poll, classifying by `error_code` when present and falling back to the same message keywords `_classify_tally_exception` uses, and hides entirely when the last cycle succeeded
+  - a muted hint next to the timestamp, plus a clearly visible banner (`#staleDataNotice`, near the top of the page, only rendered once the timestamp is actually stale) both explain WHY the last auto-refresh failed in plain words (multiple Tally windows, Tally closed, Tally slow, or a pointer to the System panel). Both read off one shared classifier, `classifyRefreshIssueBucket()`, fed by the existing 30-second `/refresh_status` poll — `error_code` when present, falling back to the same message keywords `_classify_tally_exception` uses — so there is exactly one place that decides which reason it is, never two competing schemes. Both clear automatically once a refresh cycle succeeds again; no separate timer was added for the banner, it piggybacks on the same poll and on `checkTimestampFreshness()`'s existing 10-second tick
   - every admin-view design card carries an "Add Image" pill (its own `.add-image-link` class, not the plain `.fix-link` shared with Logout) linking to `/train?car=...&stock_item=...` so Training Mode opens pre-selected
   - car names in the heading and info messages are shown shelf-code-stripped (see section 11); the raw name still drives `?car=` requests
 - `templates/train.html`
@@ -442,6 +472,8 @@ The templates map cleanly to the major workflows:
 - `templates/accounts.html`
   - customer account management
   - accounts table adds Access Code, Status (Active/Paused), and Last Login columns, plus per-row Pause/Resume and bulk `Resume All`/`Pause All` controls
+- `templates/accounts_unlock.html`
+  - password interstitial rendered in place of `/admin/accounts` when the current session hasn't passed the accounts password gate (see section 16); styled consistently with `templates/login.html`
 
 `templates/train.html`, `templates/accounts.html`, and `templates/bulk_match.html` share the same sticky topbar pattern (`.topbar` > `.topbar-left` / `.topbar-right`, `.link-button` for navigation, `.role-indicator` for the current role label) for visual consistency across admin screens; `templates/index.html` still uses the older `.role-badge` topbar style.
 
@@ -539,6 +571,8 @@ All git subprocess calls go through `_run_git_command()`, which passes `creation
 - public tunnel startup is conditional on `cloudflared.exe` being present in the app root
 - the generated Desktop stop shortcut only kills the server PID; the full clean shutdown path is the tray menu item `Stop & Exit`
 - `templates/train.html` exposes an admin-only `Rescan Images` button that calls `POST /scan_images` directly; it also runs automatically on every app startup
+- the missing-image removal flow trusts nothing from the earlier scan at delete time: `POST /admin/remove_missing_images` always re-runs `find_missing_image_rows()` itself and intersects with the requested ids, so a reconnected drive between scan and confirm-click can't cause a real file to be deleted. Never change this to delete the client-supplied id list directly
+- do not lower `MISSING_IMAGE_WARNING_MIN_COUNT`/`MISSING_IMAGE_WARNING_RATIO` (`image_scanner.py`) without re-checking both conditions together — the floor and the ratio each guard a different false-positive: the floor stops a tiny catalog's noisy percentage from tripping the warning, the ratio stops a large catalog from ever reaching the floor on genuine one-by-one deletions
 - a full refresh (car master + main hierarchy + item stock) also runs automatically once, ~45 seconds after every app startup, sharing `run_full_refresh_job()` with the manual `Full Refresh` button; it silently skips if a refresh is already running and fails gracefully (logged, `full_refresh_status` set to `error`) if Tally isn't reachable yet — it never blocks startup or crashes the app
 - each stock item can only be mapped to one image at a time; confirming a new image against a stock item that's already mapped elsewhere silently deletes that other mapping first (`db.remove_mappings_for_stock_item`). The reverse is NOT true: one image may map to many stock items (Bulk Match depends on this) — do not reintroduce a unique constraint on `mappings.image_id`
 - `strip_shelf_code_for_display()` is presentation-only; anything sent to the backend (`?car=` params, matching against `car_master.json` / `main_hierarchy.json`) must use the raw, unstripped name. The templates carry hand-ported JS copies of the function — if the Python version changes, change every JS copy too
@@ -549,6 +583,8 @@ All git subprocess calls go through `_run_git_command()`, which passes `creation
 - `.env` is no longer tracked in git (it holds rotated secrets including `SYSTEM_ACCESS_TOKEN`); a fresh clone gets it from `first_time_setup.bat`, not from the repo
 - `/admin/upload_image` sanitizes `car_folder` against path separators and `..` (`_sanitize_upload_car_folder()`) and the filename against directory components (`_sanitize_upload_filename()`) before touching the filesystem — do not bypass these when adding new upload entry points
 - in `templates/train.html`, `#stockItemSelect` is a plain `<select>` (not Select2); its `change` event only fires on real user interaction. Any code path that sets `select.value` programmatically (auto-matching by filename/car folder, restoring a preferred stock item, or leaving the browser's default first-option selection in place) must explicitly call `handleStockItemSelection()` afterward, or the "Currently Matched Image" preview silently stays out of sync until the user manually changes the dropdown — this was the root cause of a bug where the preview only appeared from the second selection onward
+- `updateTimestamp()` in `templates/index.html` declares `statusEl` once, before both of its `try` blocks. It used to be declared inside the first `try` block only, so the second block referenced it out of scope and threw a `ReferenceError` on every single `/refresh_status` poll — caught and logged to the console, never surfaced, so the auto-refresh hint text silently never updated in any real browser despite looking correct on a read of the code. Reading the code was not enough to catch this; it only showed up by actually executing the script. Keep both status-fetching blocks sharing the one `statusEl` reference
+- `accounts_access_required`'s rate limit key (`accounts:<username>`) is deliberately namespaced away from the plain `<username>` key `/login` uses in the same `LOGIN_ATTEMPTS` dict — don't collapse them, or a user's login attempts and their accounts-password attempts would consume the same budget
 
 ## 23. File map for maintenance
 
@@ -563,6 +599,7 @@ If you need to change a behavior, start here:
 - login/session settings: `config.py`, `app.py`
 - tray startup and tunnel behavior: `launcher.pyw`, `serve.py`
 - System panel restart mechanism: `relaunch_helper.py`, `app.py` (`/admin/system/*` routes)
+- Manage Accounts secondary password gate: `app.py` (`accounts_access_required`, `/admin/accounts/unlock`), `templates/accounts_unlock.html`, `config.py` (`ACCOUNTS_ACCESS_PASSWORD`)
 - Tally timing diagnostics: `scripts/measure_tally.ps1`, `/admin/system/tally_perf_test`
 - admin and customer UI: `templates/`
 - install/update scripts: `first_time_setup.bat`, `update_app.bat`

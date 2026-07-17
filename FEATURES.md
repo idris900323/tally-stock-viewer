@@ -11,7 +11,7 @@ customer users - built and run by one person on an office PC.
 - Stock export is a single TDL collection request per cycle (measured production runs put the old three-request cycle at ~20-27s of Tally engine work and the replacement at ~1.5-5s depending on load — the old detailed Stock Summary visibly stalled Tally Prime every refresh)
 - Stock quantities auto-refresh every 3 minutes while the app runs (`TALLY_EXPORT_INTERVAL`, default 180s); a one-time full refresh (car master + hierarchy + stock) also runs ~45 seconds after every app start, plus manual `Update Stock` / `Full Refresh` buttons
 - Falls back to the last cached export if Tally is offline, instead of breaking the page
-- "Last updated" timestamp turns red live if data goes stale (no refresh in 180s), with a plain-words hint explaining why the last refresh failed (Tally closed, Tally slow, multiple Tally windows open)
+- "Last updated" timestamp turns red live if data goes stale (no refresh in 180s), with a plain-words hint next to it plus a clearly visible banner near the top of the page once it's actually stale, both explaining why the last refresh failed (Tally closed, Tally slow, multiple Tally windows open) - both clear themselves automatically once a refresh succeeds again
 - Detects multiple running Tally instances before each export and surfaces a clear on-screen message instead of a cryptic failure
 - Cars deleted from Tally disappear from the dropdown instead of showing hundreds of wrong cross-car designs
 
@@ -29,13 +29,14 @@ customer users - built and run by one person on an office PC.
 - Bulk Match screen: confirm one photo against hundreds of stock items at once - find them by text search or by auto-derived product category (type + color, e.g. "7D MAT / BLACK-TAN"), tick, confirm. Built for floor mats and curtains where the same photo applies across car variants
 - Direct photo upload from the training screen (validated for type/size, auto-creates the car folder, auto-confirms the match) - no manual file copying + rescanning required
 - "Add Image" button on every design card jumps to Training Mode with the car and stock item pre-selected
-- Auto rescans the image folder on every startup, plus a manual rescan button
+- Auto rescans the image folder on every startup, plus a manual rescan button - rescanning is a true two-way sync: it also detects database rows whose file was deleted from disk and offers to remove them (with an expandable list of the exact files and any linked stock item, and a safety threshold that blocks removal if a suspiciously large share of the catalog looks missing at once - e.g. a disconnected image drive)
 
 **Accounts**
 - Session-based login, admin and customer roles, access-code auth
 - Create / pause / resume / delete customer accounts, individually or in bulk
 - Paused accounts are locked out at login with a clear message
 - Last-login tracking and an audit log (`account_logs`) for every account action
+- Manage Accounts sits behind its own second password on top of the admin login (session-based, re-entered every new login) - a compromised admin session alone can't reach customer account data
 
 **Deployment / ops**
 - One-shot Windows setup script (venv, dependencies, `.env`, desktop shortcuts, auto-start)
@@ -65,13 +66,13 @@ Overall: a genuinely useful, correctly-engineered internal tool - not a toy, not
 
 ## How much effort this took
 
-From the repo history: 39 commits spanning **2026-05-20 to 2026-07-13** (about 8 weeks), ~11,500 lines of code across the app, plus three separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`) documenting setup, public rollout, and architecture.
+From the repo history: 48 commits spanning **2026-05-20 to 2026-07-17** (about 8 weeks), ~12,000 lines of code across the app, plus three separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`) documenting setup, public rollout, and architecture.
 
 That includes:
-- 56 Flask routes covering auth, stock, training, bulk matching, accounts, search, and remote system management
+- 59 Flask routes covering auth, stock, training, bulk matching, accounts, search, and remote system management
 - A custom XML request/response layer for talking to Tally directly (no official SDK), including TDL collection requests tuned against real production timing measurements
-- A full account-management system with pause/resume/bulk actions and audit logging
-- An image-matching pipeline from filesystem scan through heuristic suggestion to confirmed mapping, plus a one-to-many bulk matching workflow with automatic product categorization
+- A full account-management system with pause/resume/bulk actions and audit logging, now with its own secondary password gate independent of the admin login
+- An image-matching pipeline from filesystem scan through heuristic suggestion to confirmed mapping, now a true two-way sync (add and remove, with a mass-deletion safety threshold), plus a one-to-many bulk matching workflow with automatic product categorization
 - End-to-end Windows packaging: setup script, tray app, production server, auto-start (self-repairing on every update), optional public tunnel, and a remote ops panel
 
 The early history was committed in large batches, so the hands-on-keyboard time is more than the commit count alone implies; the later history shows the opposite pattern - small, heavily-verified fixes hardened against a real, live use case (an actual office running actual Tally data), several of them diagnosed with measurements taken on the production machine. This is not a weekend project; it's a small production system built and maintained iteratively.
