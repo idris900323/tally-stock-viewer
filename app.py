@@ -785,6 +785,46 @@ def _classify_tally_exception(exc):
     return "TALLY_ERROR"
 
 
+def _tally_connection_error_note(exc):
+    """Short note to append to a Tally request failure if it looks like a
+    connection/timeout error AND multiple Tally windows are currently open;
+    "" otherwise.
+
+    Investigated on a real machine (two live tally.exe processes, one
+    genuinely listening on port 9000 per netstat, one an inert duplicate
+    window): 10/10 real requests succeeded identically with both open, so a
+    second Tally.exe isn't actually interfering with anything -- it's only
+    worth mentioning as a *possible* explanation once a request has already
+    failed for a connection-shaped reason, not treated as a guaranteed cause
+    to pre-emptively block on. Non-connection errors (bad XML, no rows
+    parsed, etc.) get nothing appended -- a second Tally window had nothing
+    to do with those.
+    """
+    if _classify_tally_exception(exc) not in ("TALLY_TIMEOUT", "TALLY_UNREACHABLE"):
+        return ""
+    instance_count = _check_multiple_tally_instances()
+    if instance_count <= 1:
+        return ""
+    # Deliberately contains "multiple tally" -- templates/index.html's
+    # classifyRefreshIssueBucket() keys its own (unchanged) stale-data
+    # banner/hint off that exact substring in status.message/raw_error.
+    return f" (Note: multiple Tally windows are open — {instance_count} running; closing the extra one may help.)"
+
+
+def _raise_with_tally_instance_note(exc):
+    """Re-raise exc, appending _tally_connection_error_note()'s context to
+    its message when applicable, while preserving its original type so
+    downstream isinstance-based classification (_classify_tally_exception)
+    still works exactly as before."""
+    note = _tally_connection_error_note(exc)
+    if not note:
+        raise exc
+    try:
+        raise type(exc)(f"{exc}{note}") from exc
+    except TypeError:
+        raise Exception(f"{exc}{note}") from exc
+
+
 def get_main_file_path():
     for path in MAIN_FILE_CANDIDATES:
         if os.path.exists(path):
@@ -950,10 +990,6 @@ def fetch_item_stock_flat():
     group rows -- so the old group-name filtering requests are
     unnecessary. Output format is unchanged.
     """
-    tally_instance_count = _check_multiple_tally_instances()
-    if tally_instance_count > 1:
-        raise Exception(MULTIPLE_TALLY_MESSAGE)
-
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
@@ -1053,17 +1089,10 @@ def fetch_item_stock_flat():
         return {"rows": len(deduped), "file": ITEM_STOCK_FILE_AUTO, "warning": None}
     except Exception as exc:
         print(f"item stock export failed: {str(exc)}")
-        raise
+        _raise_with_tally_instance_note(exc)
 
 
 def fetch_car_master_from_tally():
-    tally_instance_count = _check_multiple_tally_instances()
-    if tally_instance_count > 1:
-        raise Exception(
-            f"Multiple Tally instances detected ({tally_instance_count} running). "
-            "Close duplicate Tally windows and keep only one open, then try again."
-        )
-
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
@@ -1083,7 +1112,11 @@ def fetch_car_master_from_tally():
   </BODY>
 </ENVELOPE>'''.strip()
 
-    text = _post_tally_with_retry(xml_req)
+    try:
+        text = _post_tally_with_retry(xml_req)
+    except Exception as exc:
+        _raise_with_tally_instance_note(exc)
+
     if "<LINEERROR>" in text or "Unknown Request" in text:
         raise Exception(f"Tally returned error for stock group collection: {text[:300]}")
 
@@ -1201,13 +1234,6 @@ def save_car_master_to_file(car_names):
 
 
 def fetch_main_hierarchy_from_tally():
-    tally_instance_count = _check_multiple_tally_instances()
-    if tally_instance_count > 1:
-        raise Exception(
-            f"Multiple Tally instances detected ({tally_instance_count} running). "
-            "Close duplicate Tally windows and keep only one open, then try again."
-        )
-
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
 
@@ -1331,12 +1357,15 @@ def fetch_main_hierarchy_from_tally():
     except ET.ParseError:
         raise
     except Exception as exc:
-        return _fallback_existing(str(exc))
+        return _fallback_existing(f"{exc}{_tally_connection_error_note(exc)}")
 
     if not stock_items:
         return _fallback_existing("Stock item master collection returned no items for main hierarchy refresh.")
 
-    qty_map = _fetch_current_qty_map()
+    try:
+        qty_map = _fetch_current_qty_map()
+    except Exception as exc:
+        _raise_with_tally_instance_note(exc)
     allowed_parents = _load_car_groups_from_cache_or_excel()
     allowed_parent_lookup = {_norm(parent_name): parent_name for parent_name in allowed_parents}
 
