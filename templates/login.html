@@ -3,7 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login - Tally Stock Viewer</title>
+    <title>Login - Super Seatings</title>
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='logo.jpg') }}">
     <style>
         :root {
             --bg: #f4f7fb;
@@ -42,6 +43,19 @@
             border-radius: 20px;
             padding: 28px;
             box-shadow: 0 18px 50px rgba(20, 33, 61, 0.1);
+        }
+
+        .brand {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 16px;
+        }
+
+        .brand img {
+            width: 64px;
+            height: 64px;
+            border-radius: 12px;
+            object-fit: cover;
         }
 
         h1 {
@@ -117,6 +131,74 @@
             color: #fff;
         }
 
+        .contact-footer {
+            width: min(100%, 520px);
+            margin: 18px auto 0;
+            /* Reserves clearance below the text so the fixed WhatsApp
+               button (bottom-right, up to ~78px tall including its offset)
+               never sits on top of the phone link, at any viewport height. */
+            padding-bottom: 90px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .contact-footer h2 {
+            margin: 0 0 4px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+        }
+
+        .contact-footer a {
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
+            color: var(--accent);
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .contact-footer a:hover {
+            text-decoration: underline;
+        }
+
+        .whatsapp-fab {
+            position: fixed;
+            right: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            background: #25d366;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 6px 18px rgba(20, 33, 61, 0.3);
+            z-index: 900;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .whatsapp-fab svg {
+            width: 58%;
+            height: 58%;
+            color: #fff;
+        }
+
+        .whatsapp-fab:hover {
+            transform: scale(1.06);
+            box-shadow: 0 8px 22px rgba(20, 33, 61, 0.35);
+        }
+
+        .whatsapp-fab:active {
+            transform: scale(0.97);
+        }
+
         @media (max-width: 640px) {
             .page {
                 padding: 14px;
@@ -133,14 +215,22 @@
             h1 {
                 font-size: 26px;
             }
+
+            .whatsapp-fab {
+                width: 52px;
+                height: 52px;
+                right: 16px;
+                bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            }
         }
     </style>
 </head>
 <body>
 <div class="page">
     <form class="panel" method="post" action="/login">
+        <div class="brand"><img src="{{ url_for('static', filename='logo.jpg') }}" alt="Super Seatings logo"></div>
         <h1>Sign in</h1>
-        <p>Use your assigned username and access code.</p>
+        <p>Welcome to Super Seatings. Sign in with your username and access code to browse our designs.</p>
 
         {% if error %}
         <div class="notice">{{ error }}</div>
@@ -166,6 +256,18 @@
             <button type="submit">Continue</button>
         </div>
     </form>
+
+    <footer class="contact-footer">
+        <h2>Contact Us</h2>
+        <p>No. 1, Ramasamy Street, Woods Road, Anna Salai, Chennai - 600002</p>
+        <p><a href="tel:+919500048983">+91 95000 48983</a></p>
+    </footer>
 </div>
+
+<a class="whatsapp-fab" href="https://wa.me/919500048983" target="_blank" rel="noopener noreferrer" aria-label="Chat with us on WhatsApp" title="Chat with us on WhatsApp">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.83 14.03c-.24.68-1.4 1.32-1.93 1.4-.5.08-1.12.11-1.81-.11-.42-.13-.96-.31-1.65-.61-2.9-1.25-4.79-4.17-4.94-4.36-.15-.2-1.18-1.57-1.18-3 0-1.42.75-2.13 1.01-2.42.27-.29.58-.36.78-.36.2 0 .39 0 .56.01.18.01.42-.07.66.5.24.58.83 2 .9 2.15.07.15.12.32.02.52-.09.2-.14.32-.28.49-.14.17-.29.38-.42.51-.14.14-.28.3-.12.58.16.28.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.22 1.37.28.14.44.12.6-.07.16-.19.68-.79.87-1.06.18-.27.36-.22.6-.13.24.09 1.53.72 1.79.85.27.13.44.2.51.31.06.11.06.65-.18 1.33z"/>
+    </svg>
+</a>
 </body>
 </html>

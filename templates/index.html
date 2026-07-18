@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Tally Stock Viewer</title>
+    <title>Super Seatings</title>
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='logo.jpg') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -53,6 +54,24 @@
         .hero p {
             margin: 0;
             color: var(--muted);
+        }
+
+        .brand-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-row h1 {
+            margin: 0 0 8px;
+        }
+
+        .brand-logo {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            object-fit: cover;
+            flex: 0 0 auto;
         }
 
         .panel {
@@ -518,7 +537,20 @@
             border-bottom: 1px solid var(--border);
         }
 
+        .modal-head-text {
+            min-width: 0;
+        }
+
+        .modal-position {
+            display: block;
+            margin-top: 2px;
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--muted);
+        }
+
         .modal-body {
+            position: relative;
             background: #0f172a;
             display: flex;
             align-items: center;
@@ -530,6 +562,43 @@
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
+        }
+
+        .modal-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 0;
+            background: rgba(15, 23, 42, 0.45);
+            color: #fff;
+            font-size: 18px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 2;
+            transition: background-color 0.15s ease, opacity 0.15s ease;
+        }
+
+        .modal-nav:hover {
+            background: rgba(15, 23, 42, 0.7);
+        }
+
+        .modal-nav:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+        }
+
+        .modal-nav-prev {
+            left: 10px;
+        }
+
+        .modal-nav-next {
+            right: 10px;
         }
 
         .modal-actions {
@@ -562,6 +631,75 @@
             font-size: 13px;
         }
 
+        .contact-footer {
+            margin-top: 24px;
+            padding: 18px 20px;
+            /* Reserves clearance below the text so the fixed WhatsApp
+               button (bottom-right, up to ~78px tall including its offset)
+               never sits on top of the phone link, even when this is the
+               last thing on the page and the user scrolls to the bottom. */
+            padding-bottom: 90px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .contact-footer h2 {
+            margin: 0 0 4px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+        }
+
+        .contact-footer a {
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
+            color: var(--accent);
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .contact-footer a:hover {
+            text-decoration: underline;
+        }
+
+        .whatsapp-fab {
+            position: fixed;
+            right: 20px;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            background: #25d366;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 6px 18px rgba(19, 34, 56, 0.3);
+            z-index: 900;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        .whatsapp-fab svg {
+            width: 58%;
+            height: 58%;
+            color: #fff;
+        }
+
+        .whatsapp-fab:hover {
+            transform: scale(1.06);
+            box-shadow: 0 8px 22px rgba(19, 34, 56, 0.35);
+        }
+
+        .whatsapp-fab:active {
+            transform: scale(0.97);
+        }
+
         @media (max-width: 640px) {
             .page {
                 padding: 18px 12px 28px;
@@ -571,10 +709,34 @@
                 font-size: 24px;
             }
 
+            .brand-logo {
+                width: 36px;
+                height: 36px;
+            }
+
+            .whatsapp-fab {
+                width: 52px;
+                height: 52px;
+                right: 16px;
+                bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            }
+
             .toolbar {
                 flex-direction: column;
                 align-items: stretch;
                 gap: 10px;
+            }
+
+            /* .car-select-wrap is display:inline-block with no explicit
+               width, so it shrink-to-fits around its child -- but that
+               child (.select2-container) is itself width:100% of this box,
+               a circular sizing case browsers resolve by falling back to
+               the select2 widget's own unconstrained content width (well
+               past the viewport). Giving this box an explicit width breaks
+               the circularity so 100% below actually means "this box". */
+            .car-select-wrap {
+                min-width: 0;
+                width: 100%;
             }
 
             .toolbar select,
@@ -666,7 +828,10 @@
             <div class="role-badge">{{ current_role|default('customer')|title }} mode</div>
             <a href="/logout" class="fix-link">Logout</a>
         </div>
-        <h1>Tally Stock Viewer</h1>
+        <div class="brand-row">
+            <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Super Seatings logo" class="brand-logo">
+            <h1>Super Seatings</h1>
+        </div>
         <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and control customer accounts.</p>
     </div>
 
@@ -735,17 +900,34 @@
         {% endif %}
         <ul id="designsList"></ul>
     </div>
+
+    <footer class="contact-footer">
+        <h2>Contact Us</h2>
+        <p>No. 1, Ramasamy Street, Woods Road, Anna Salai, Chennai - 600002</p>
+        <p><a href="tel:+919500048983">+91 95000 48983</a></p>
+    </footer>
 </div>
+
+<a class="whatsapp-fab" href="https://wa.me/919500048983" target="_blank" rel="noopener noreferrer" aria-label="Chat with us on WhatsApp" title="Chat with us on WhatsApp">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.79 1.21 5.46 0 9.91-4.45 9.91-9.91S17.5 2 12.04 2zm5.83 14.03c-.24.68-1.4 1.32-1.93 1.4-.5.08-1.12.11-1.81-.11-.42-.13-.96-.31-1.65-.61-2.9-1.25-4.79-4.17-4.94-4.36-.15-.2-1.18-1.57-1.18-3 0-1.42.75-2.13 1.01-2.42.27-.29.58-.36.78-.36.2 0 .39 0 .56.01.18.01.42-.07.66.5.24.58.83 2 .9 2.15.07.15.12.32.02.52-.09.2-.14.32-.28.49-.14.17-.29.38-.42.51-.14.14-.28.3-.12.58.16.28.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.22 1.37.28.14.44.12.6-.07.16-.19.68-.79.87-1.06.18-.27.36-.22.6-.13.24.09 1.53.72 1.79.85.27.13.44.2.51.31.06.11.06.65-.18 1.33z"/>
+    </svg>
+</a>
 
 <div class="modal" id="imageModal" aria-hidden="true">
     <div class="modal-backdrop" onclick="closeImageModal()"></div>
     <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Full screen image preview">
         <div class="modal-head">
-            <strong id="modalTitle">Image preview</strong>
+            <div class="modal-head-text">
+                <strong id="modalTitle">Image preview</strong>
+                <span id="modalPosition" class="modal-position"></span>
+            </div>
             <button class="secondary" onclick="closeImageModal()">Close</button>
         </div>
         <div class="modal-body">
+            <button type="button" class="modal-nav modal-nav-prev" onclick="navigateModalImage(-1)" aria-label="Previous image" title="Previous image">&#10094;</button>
             <img id="modalImage" alt="Full screen preview">
+            <button type="button" class="modal-nav modal-nav-next" onclick="navigateModalImage(1)" aria-label="Next image" title="Next image">&#10095;</button>
         </div>
         <div class="modal-actions">
             <button class="secondary" onclick="copyModalImage()">Copy Image</button>
@@ -824,11 +1006,116 @@ function getImageSource(src) {
     return src || "/get_stock_image";
 }
 
-function openImageModal(src, label) {
-    const modal = document.getElementById("imageModal");
+// Swipe/arrow navigation moves between designs that actually have a mapped
+// image (data-image-id non-empty), skipping "Needs link" placeholder cards
+// entirely -- there's no real image to show for those, so they're excluded
+// from the countable, swipeable set rather than shown as an empty frame.
+// If the modal happens to be opened directly from a placeholder thumbnail
+// (still possible by tapping it), modalNavIndex stays -1: no position
+// counter, no arrows, swipe is a no-op, since there's no defined place for
+// that card in the countable list to navigate from.
+let modalNavButtons = [];
+let modalNavIndex = -1;
+let modalSwipeStartXY = null;
+let modalSwipeCancelled = false;
+const MODAL_SWIPE_THRESHOLD_PX = 50;
+
+function getMappedThumbnailButtons() {
+    return Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
+        .filter(button => button.dataset.imageId);
+}
+
+function displayModalImage(src, label) {
     const modalImage = document.getElementById("modalImage");
     document.getElementById("modalTitle").textContent = label || "Image preview";
     modalImage.src = getImageSource(src);
+}
+
+function updateModalNavUI() {
+    const total = modalNavButtons.length;
+    const hasPosition = modalNavIndex >= 0 && total > 0;
+    const positionEl = document.getElementById("modalPosition");
+    const prevBtn = document.querySelector(".modal-nav-prev");
+    const nextBtn = document.querySelector(".modal-nav-next");
+
+    if (positionEl) {
+        positionEl.textContent = hasPosition ? `${modalNavIndex + 1} of ${total}` : "";
+    }
+    if (prevBtn) {
+        prevBtn.style.display = total > 1 ? "flex" : "none";
+        prevBtn.disabled = !hasPosition || modalNavIndex <= 0;
+    }
+    if (nextBtn) {
+        nextBtn.style.display = total > 1 ? "flex" : "none";
+        nextBtn.disabled = !hasPosition || modalNavIndex >= total - 1;
+    }
+}
+
+// No wraparound: navigating past the first/last mapped image is a no-op
+// rather than jumping to the other end, so a swipe that overshoots the
+// list doesn't unexpectedly teleport the user across the whole car's design set.
+function navigateModalImage(direction) {
+    if (modalNavIndex < 0) {
+        return;
+    }
+    const nextIndex = modalNavIndex + direction;
+    if (nextIndex < 0 || nextIndex >= modalNavButtons.length) {
+        return;
+    }
+    modalNavIndex = nextIndex;
+    const button = modalNavButtons[modalNavIndex];
+    displayModalImage(button.dataset.src, button.dataset.label);
+    updateModalNavUI();
+}
+
+function handleModalTouchStart(event) {
+    if (!event.touches || event.touches.length !== 1) {
+        modalSwipeStartXY = null;
+        return;
+    }
+    const touch = event.touches[0];
+    modalSwipeStartXY = { x: touch.clientX, y: touch.clientY };
+    modalSwipeCancelled = false;
+}
+
+function handleModalTouchMove(event) {
+    if (!modalSwipeStartXY || !event.touches || !event.touches.length) {
+        return;
+    }
+    const touch = event.touches[0];
+    const dx = touch.clientX - modalSwipeStartXY.x;
+    const dy = touch.clientY - modalSwipeStartXY.y;
+    if (Math.abs(dy) > Math.abs(dx)) {
+        modalSwipeCancelled = true;
+    }
+}
+
+function handleModalTouchEnd(event) {
+    if (!modalSwipeStartXY || !event.changedTouches || !event.changedTouches.length) {
+        modalSwipeStartXY = null;
+        modalSwipeCancelled = false;
+        return;
+    }
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - modalSwipeStartXY.x;
+    const cancelled = modalSwipeCancelled;
+    modalSwipeStartXY = null;
+    modalSwipeCancelled = false;
+
+    if (cancelled || Math.abs(dx) < MODAL_SWIPE_THRESHOLD_PX) {
+        return;
+    }
+    navigateModalImage(dx < 0 ? 1 : -1);
+}
+
+function openImageModal(button) {
+    modalNavButtons = getMappedThumbnailButtons();
+    modalNavIndex = modalNavButtons.indexOf(button);
+
+    displayModalImage(button.dataset.src, button.dataset.label);
+    updateModalNavUI();
+
+    const modal = document.getElementById("imageModal");
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
 }
@@ -1744,7 +2031,7 @@ function renderDesignItem(item, index) {
     return `
         <li>
             <div class="design-item" data-image-id="${imageId}" data-item-key="${itemKey}">
-                <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this.dataset.src, this.dataset.label)">
+                <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this)">
                     <img src="${thumbnailUrl}" alt="${escapedTitle}" class="design-thumbnail">
                     <span class="select-check" aria-hidden="true">&#10003;</span>
                 </button>
@@ -1883,6 +2170,14 @@ window.addEventListener("DOMContentLoaded", () => {
         designsList.addEventListener("touchmove", handleDesignsListTouchMove, { passive: true });
         designsList.addEventListener("touchend", handleDesignsListTouchEnd, { passive: true });
         designsList.addEventListener("touchcancel", handleDesignsListTouchEnd, { passive: true });
+    }
+
+    const imageModalEl = document.getElementById("imageModal");
+    if (imageModalEl) {
+        imageModalEl.addEventListener("touchstart", handleModalTouchStart, { passive: true });
+        imageModalEl.addEventListener("touchmove", handleModalTouchMove, { passive: true });
+        imageModalEl.addEventListener("touchend", handleModalTouchEnd, { passive: true });
+        imageModalEl.addEventListener("touchcancel", handleModalTouchEnd, { passive: true });
     }
 });
 

@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Training Mode - Stock Matching</title>
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='logo.jpg') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -57,6 +58,16 @@
             gap: 18px;
         }
 
+        /* Grid/flex items default to min-width:auto (content-based), so
+           the select2 search box and image preview nested several levels
+           down (.grid > .panel > .preview-wrap > .image-frame) were each
+           refusing to shrink below their own content width, pushing the
+           whole page wider than the viewport on narrow screens even though
+           nothing here actually needs to scroll -- it should all just fit. */
+        .grid > .panel {
+            min-width: 0;
+        }
+
         .panel {
             background: var(--panel);
             border: 1px solid var(--border);
@@ -95,6 +106,7 @@
             display: grid;
             grid-template-columns: 1fr;
             gap: 16px;
+            min-width: 0;
         }
 
         .image-frame {
@@ -158,6 +170,14 @@
         .form-grid {
             display: grid;
             gap: 14px;
+        }
+
+        /* Grid items default to min-width:auto (content-based); .field here
+           wraps a select2 search box whose own content can exceed the
+           narrow-viewport grid track otherwise. Same fix as .grid > .panel
+           above. */
+        .form-grid > .field {
+            min-width: 0;
         }
 
         .field label {

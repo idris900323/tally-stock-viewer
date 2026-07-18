@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Accounts Admin - Tally Stock Viewer</title>
+    <title>Accounts Admin - Super Seatings</title>
+    <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='logo.jpg') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         :root {
@@ -108,6 +109,17 @@
             display: grid;
             grid-template-columns: 360px 1fr;
             gap: 16px;
+        }
+
+        /* Grid items default to min-width:auto (content-based), so the
+           table's own min-width:960px (below) was pulling this whole column
+           -- and the page along with it -- wider than the viewport on
+           narrow screens, even though .table-wrap already had overflow-x:
+           auto set up to make just the table scroll horizontally instead.
+           min-width:0 lets the item actually shrink to its grid track so
+           that intended containment takes over. */
+        .grid > .panel {
+            min-width: 0;
         }
 
         label {
