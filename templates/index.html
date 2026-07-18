@@ -925,6 +925,7 @@ function exitSelectMode() {
     selectMode = false;
     selectedImageIds.clear();
     selectedCardKeys.clear();
+    selectedImageBlobCache.clear();
     updateSelectModeUI();
 }
 
@@ -957,6 +958,7 @@ function toggleImageSelection(imageId, itemKey) {
         selectedCardKeys.add(itemKey);
     }
     syncSelectedImageIdsFromCardKeys();
+    prefetchSelectedImageBlobs();
     updateSelectModeUI();
 }
 
@@ -975,6 +977,7 @@ function toggleSelectAll() {
         allKeys.forEach(key => selectedCardKeys.add(key));
     }
     syncSelectedImageIdsFromCardKeys();
+    prefetchSelectedImageBlobs();
     updateSelectModeUI();
 }
 
@@ -1085,6 +1088,41 @@ function handleDesignsListTouchEnd() {
     longPressStartXY = null;
 }
 
+// Blob fetches for selected images are kicked off in the background as soon
+// as a selection changes (see prefetchSelectedImageBlobs(), called from
+// toggleImageSelection()/toggleSelectAll()) rather than only once "Share
+// Images" is clicked. navigator.share() requires an active user gesture, and
+// browsers expire that gesture a few seconds after the click; fetching N
+// images sequentially at click-time was often slow enough to burn through
+// that window before share() ever ran. Keying the cache by URL means a
+// click-time cache hit resolves in a microtask instead of a network
+// round-trip, keeping share() close enough to the original gesture to count.
+const selectedImageBlobCache = new Map();
+
+function prefetchImageBlob(url) {
+    if (selectedImageBlobCache.has(url)) {
+        return selectedImageBlobCache.get(url);
+    }
+    const promise = fetch(getImageSource(url)).then(response => {
+        if (!response.ok) {
+            throw new Error(`Image fetch failed (HTTP ${response.status})`);
+        }
+        return response.blob();
+    });
+    // Swallow rejections here so a failed background prefetch doesn't surface
+    // as an unhandled rejection; copySelectedImages() awaits this same cached
+    // promise later and handles the real error there.
+    promise.catch(() => {});
+    selectedImageBlobCache.set(url, promise);
+    return promise;
+}
+
+function prefetchSelectedImageBlobs() {
+    Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
+        .filter(button => selectedImageIds.has(button.dataset.imageId) && button.dataset.src)
+        .forEach(button => prefetchImageBlob(button.dataset.src));
+}
+
 async function copySelectedImages() {
     try {
         clearMessages();
@@ -1112,19 +1150,17 @@ async function copySelectedImages() {
             return;
         }
 
-        const files = [];
-        for (let i = 0; i < urls.length; i += 1) {
-            const url = urls[i];
-            const response = await fetch(getImageSource(url));
-            if (!response.ok) {
-                throw new Error(`Image fetch failed (HTTP ${response.status})`);
-            }
-
-            const blob = await response.blob();
+        // Blobs already prefetched (the common case, since selection happens
+        // before the click) resolve immediately; anything not yet cached is
+        // fetched now, in parallel rather than one-at-a-time, so total wait
+        // is bounded by the slowest single image instead of the sum of all
+        // of them.
+        const blobs = await Promise.all(urls.map(url => prefetchImageBlob(url)));
+        const files = blobs.map((blob, i) => {
             const mime = blob.type || "image/jpeg";
             const extension = (mime.split("/")[1] || "jpg").toLowerCase();
-            files.push(new File([blob], `image_${i + 1}.${extension}`, { type: mime }));
-        }
+            return new File([blob], `image_${i + 1}.${extension}`, { type: mime });
+        });
 
         if (
             navigator.share &&
@@ -1150,6 +1186,10 @@ async function copySelectedImages() {
     } catch (error) {
         if (error && error.name === "AbortError") {
             showInfo("Share canceled.");
+            return;
+        }
+        if (error && error.name === "NotAllowedError" && /gesture/i.test(error.message || "")) {
+            showError("Sharing timed out — try selecting fewer images, or use Copy Image individually.");
             return;
         }
         showError(error.message);
