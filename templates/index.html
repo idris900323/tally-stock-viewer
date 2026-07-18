@@ -832,7 +832,11 @@
             <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Super Seatings logo" class="brand-logo">
             <h1>Super Seatings</h1>
         </div>
+        {% if is_admin %}
         <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and control customer accounts.</p>
+        {% else %}
+        <p>Select your car below to see available seat cover designs and photos.</p>
+        {% endif %}
     </div>
 
     {% if is_admin %}
@@ -1108,6 +1112,56 @@ function handleModalTouchEnd(event) {
     navigateModalImage(dx < 0 ? 1 : -1);
 }
 
+// Shared modal <-> browser-back integration. Every full-screen modal on
+// this page pushes exactly one history entry when it opens, so the phone/
+// browser back button closes the modal instead of leaving the page. A
+// modal closed via any in-page control (X, backdrop, Escape) instead of
+// the back button must silently unwind that same entry (history.back()),
+// or it lingers and eats a later, unrelated back-press. modalBackStack
+// (not the history state object, which other code on this page can
+// legitimately replaceState over) is the source of truth for which
+// modal's own hide-the-UI function to run, so this works correctly even
+// if a modal is closed and another opened right after (each push/pop is
+// independent -- see openModalWithBackSupport/closeModalWithBackSupport).
+const modalBackStack = [];
+let suppressNextPopstate = false;
+
+function openModalWithBackSupport(hideFn) {
+    modalBackStack.push(hideFn);
+    history.pushState({ appModal: true }, "");
+}
+
+function closeModalWithBackSupport(hideFn) {
+    const index = modalBackStack.lastIndexOf(hideFn);
+    if (index !== -1) {
+        modalBackStack.splice(index, 1);
+        suppressNextPopstate = true;
+        history.back();
+    }
+    hideFn();
+}
+
+window.addEventListener("popstate", () => {
+    if (suppressNextPopstate) {
+        // This is the popstate our own history.back() call above caused --
+        // the modal is already closed, there's nothing left to do.
+        suppressNextPopstate = false;
+        return;
+    }
+    // A real back-button press: close whichever modal was opened most
+    // recently (LIFO, matching how the browser's own history unwinds).
+    const hideFn = modalBackStack.pop();
+    if (hideFn) {
+        hideFn();
+    }
+});
+
+function hideImageModalUI() {
+    const modal = document.getElementById("imageModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
 function openImageModal(button) {
     modalNavButtons = getMappedThumbnailButtons();
     modalNavIndex = modalNavButtons.indexOf(button);
@@ -1118,12 +1172,11 @@ function openImageModal(button) {
     const modal = document.getElementById("imageModal");
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
+    openModalWithBackSupport(hideImageModalUI);
 }
 
 function closeImageModal() {
-    const modal = document.getElementById("imageModal");
-    modal.classList.remove("open");
-    modal.setAttribute("aria-hidden", "true");
+    closeModalWithBackSupport(hideImageModalUI);
 }
 
 async function copyImageToClipboard(src) {
