@@ -1220,6 +1220,50 @@ function getCurrentImageSource() {
     return currentImage ? `/get_image/${currentImage.id}` : getPlaceholderImage();
 }
 
+// Shared modal <-> browser-back integration. Every full-screen modal on
+// this page (the image preview and the upload confirmation) pushes exactly
+// one history entry when it opens, so the phone/browser back button closes
+// the modal instead of leaving the page. A modal closed via any in-page
+// control (X, backdrop, Escape, or a flow like a successful upload that
+// closes it itself) instead of the back button must silently unwind that
+// same entry (history.back()), or it lingers and eats a later, unrelated
+// back-press. modalBackStack (not the history state object) is the source
+// of truth for which modal's own hide-the-UI function to run, so this
+// works correctly even if one modal closes and another opens right after
+// -- each push/pop is independent.
+const modalBackStack = [];
+let suppressNextPopstate = false;
+
+function openModalWithBackSupport(hideFn) {
+    modalBackStack.push(hideFn);
+    history.pushState({ appModal: true }, "");
+}
+
+function closeModalWithBackSupport(hideFn) {
+    const index = modalBackStack.lastIndexOf(hideFn);
+    if (index !== -1) {
+        modalBackStack.splice(index, 1);
+        suppressNextPopstate = true;
+        history.back();
+    }
+    hideFn();
+}
+
+window.addEventListener("popstate", () => {
+    if (suppressNextPopstate) {
+        // This is the popstate our own history.back() call above caused --
+        // the modal is already closed, there's nothing left to do.
+        suppressNextPopstate = false;
+        return;
+    }
+    // A real back-button press: close whichever modal was opened most
+    // recently (LIFO, matching how the browser's own history unwinds).
+    const hideFn = modalBackStack.pop();
+    if (hideFn) {
+        hideFn();
+    }
+});
+
 function openFullscreenImage() {
     const modal = document.getElementById("imageModal");
     const modalImage = document.getElementById("modalImage");
@@ -1228,9 +1272,14 @@ function openFullscreenImage() {
     modalTitle.textContent = currentImage ? `${currentImage.car_folder || "Image"} · ${currentImage.filename || "Preview"}` : "Image preview";
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
+    openModalWithBackSupport(hideFullscreenImageUI);
 }
 
 function closeFullscreenImage() {
+    closeModalWithBackSupport(hideFullscreenImageUI);
+}
+
+function hideFullscreenImageUI() {
     const modal = document.getElementById("imageModal");
     modal.classList.remove("open");
     modal.setAttribute("aria-hidden", "true");
@@ -1540,9 +1589,14 @@ function openUploadModal(file) {
     const modal = document.getElementById("uploadModal");
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
+    openModalWithBackSupport(hideUploadModalUI);
 }
 
 function closeUploadModal() {
+    closeModalWithBackSupport(hideUploadModalUI);
+}
+
+function hideUploadModalUI() {
     const modal = document.getElementById("uploadModal");
     modal.classList.remove("open");
     modal.setAttribute("aria-hidden", "true");
