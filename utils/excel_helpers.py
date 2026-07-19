@@ -17,9 +17,23 @@ def _pandas_read_excel(file_path: str, usecols=None, engine=None):
     return pd.read_excel(file_path, usecols=usecols)
 
 
-def load_excel_rows(file_path: str, usecols=None, min_row: int = 1, engines: Sequence = ("xlrd", None)) -> List[Tuple[Any, ...]]:
+def _default_engines_for(file_path: str) -> Sequence:
+    # xlrd (>=2.0) only reads legacy .xls files -- it always fails on
+    # .xlsx/.xlsm, so trying it first for those just wastes a doomed
+    # attempt before falling through to the working engine=None (pandas
+    # auto-detect, which resolves to openpyxl for .xlsx). Only put it
+    # first for the file type it actually supports.
+    if os.path.splitext(file_path)[1].lower() == ".xls":
+        return ("xlrd", None)
+    return (None,)
+
+
+def load_excel_rows(file_path: str, usecols=None, min_row: int = 1, engines: Sequence = None) -> List[Tuple[Any, ...]]:
     if not os.path.exists(file_path):
         raise FileNotFoundError(file_path)
+
+    if engines is None:
+        engines = _default_engines_for(file_path)
 
     for engine in engines:
         try:
@@ -57,6 +71,6 @@ def load_excel_rows(file_path: str, usecols=None, min_row: int = 1, engines: Seq
         workbook.close()
 
 
-def load_excel_column(file_path: str, col_index: int = 0, min_row: int = 1, engines: Sequence = ("xlrd", None)) -> List[Any]:
+def load_excel_column(file_path: str, col_index: int = 0, min_row: int = 1, engines: Sequence = None) -> List[Any]:
     rows = load_excel_rows(file_path, usecols=[col_index], min_row=min_row, engines=engines)
     return [row[0] if row else "" for row in rows]

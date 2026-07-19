@@ -39,15 +39,8 @@ class Config:
     ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".bmp", ".gif"}
 
     # Cache
-    CACHE_SIZE = int(os.environ.get("CACHE_SIZE", "100"))
-    CACHE_TTL = int(os.environ.get("CACHE_TTL", "300"))
     MAX_IMAGE_RESPONSE_LIMIT = int(os.environ.get("MAX_IMAGE_RESPONSE_LIMIT", "500"))
     INITIAL_IMAGE_SCAN = os.environ.get("INITIAL_IMAGE_SCAN", "1").strip().lower() not in ("0", "false")
-
-    # Auth
-    ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
-    # Can be plaintext (legacy) or werkzeug pbkdf2 hash
-    ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "idris123")
 
     # System panel (remote deployment/admin panel) — deliberately has no
     # default. If unset, the entire /admin/system* panel stays disabled.

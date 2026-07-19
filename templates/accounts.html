@@ -346,6 +346,7 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='shared.js') }}"></script>
 <script>
 const initialStatus = {{ status_message|tojson }};
 const initialError = {{ error_message|tojson }};
@@ -399,15 +400,6 @@ function formatLastLoginLabel(value) {
         hours = 12;
     }
     return `${day} ${month} ${year}, ${hours}:${minutes} ${ampm}`;
-}
-
-function escapeHtml(value) {
-    return String(value || "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll("\"", "&quot;")
-        .replaceAll("'", "&#39;");
 }
 
 async function createUserAccount() {
