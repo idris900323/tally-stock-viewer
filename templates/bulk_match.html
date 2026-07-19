@@ -7,6 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    <script src="{{ url_for('static', filename='shared.js') }}"></script>
     <style>
         :root {
             --bg: #f4f7fb;
@@ -720,25 +721,6 @@ function showNotice(type, message) {
     const notice = document.getElementById(type === "error" ? "errorNotice" : "successNotice");
     notice.textContent = message;
     notice.style.display = "block";
-}
-
-// Display-only cleanup of a trailing Tally shelf-location code (e.g.
-// "* M-20", "****H-4****", "***G-4)"). Mirrors utils/normalize.py's
-// strip_shelf_code_for_display() -- never use this on a value sent to the
-// backend, only on text shown to the user.
-function stripShelfCodeForDisplay(name) {
-    const text = String(name || "");
-    const idx = text.indexOf("*");
-    if (idx === -1) {
-        return text.trim();
-    }
-    let before = text.slice(0, idx);
-    before = before.replace(/[\s.\-,]+$/, "");
-    while (before.endsWith(")") && (before.split("(").length - 1) < (before.split(")").length - 1)) {
-        before = before.slice(0, -1).replace(/\s+$/, "");
-    }
-    const cleaned = before.trim();
-    return cleaned || text.trim();
 }
 
 function clearNotices() {

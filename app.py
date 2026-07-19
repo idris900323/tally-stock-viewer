@@ -27,7 +27,6 @@ from itsdangerous import TimestampSigner, BadSignature, SignatureExpired
 
 import database as db
 import image_scanner
-import matcher
 from api.search import search_bp, set_search_dependencies
 from config import Config
 from tally.sync import fetch_from_tally_with_retry
@@ -386,16 +385,49 @@ STOCK_ITEMS_CACHE = []
 MAIN_ROWS_CACHE = {"fingerprint": None, "rows": [], "exact_index": {}}
 STOCK_QTY_CACHE = {"fingerprint": None, "qty_map": {}}
 PRODUCT_CATEGORY_CACHE = {"fingerprint": None, "categories": []}
+HIERARCHY_JSON_CACHE = {"fingerprint": None, "payload": []}
 PARENT_NAME_SET = set()
 DATA_CACHE_LOCK = threading.Lock()
 
 
 def _invalidate_runtime_caches():
-    global STOCK_ITEMS_CACHE, MAIN_ROWS_CACHE, STOCK_QTY_CACHE, PRODUCT_CATEGORY_CACHE
+    global STOCK_ITEMS_CACHE, MAIN_ROWS_CACHE, STOCK_QTY_CACHE, PRODUCT_CATEGORY_CACHE, HIERARCHY_JSON_CACHE
     STOCK_ITEMS_CACHE = []
     MAIN_ROWS_CACHE = {"fingerprint": None, "rows": [], "exact_index": {}}
     STOCK_QTY_CACHE = {"fingerprint": None, "qty_map": {}}
     PRODUCT_CATEGORY_CACHE = {"fingerprint": None, "categories": []}
+    HIERARCHY_JSON_CACHE = {"fingerprint": None, "payload": []}
+
+
+def _load_main_hierarchy_payload():
+    """Cached parse of main_hierarchy.json, invalidated by the file's
+    fingerprint (mtime + size). Only the JSON parse of the ~15,000-item
+    hierarchy is cached here -- quantities are intentionally NOT part of
+    this cache and must still be attached fresh by callers via
+    _load_training_stock_qty_map(), since stock quantities update far more
+    often (roughly every export cycle) than the hierarchy file itself
+    (only on Full Refresh); caching quantities here would show stale
+    numbers in Training Mode / Bulk Match between refreshes."""
+    fingerprint = _file_fingerprint(MAIN_HIERARCHY_CACHE_JSON)
+    if fingerprint is not None:
+        with DATA_CACHE_LOCK:
+            if HIERARCHY_JSON_CACHE["fingerprint"] == fingerprint:
+                return HIERARCHY_JSON_CACHE["payload"]
+
+    try:
+        with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, list):
+            payload = []
+    except Exception:
+        payload = []
+
+    if payload and fingerprint is not None:
+        with DATA_CACHE_LOCK:
+            HIERARCHY_JSON_CACHE["fingerprint"] = fingerprint
+            HIERARCHY_JSON_CACHE["payload"] = payload
+
+    return payload
 
 
 def _get_product_categories():
@@ -571,9 +603,8 @@ def _load_training_hierarchy_items():
 
     if os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
         try:
-            with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            for entry in payload if isinstance(payload, list) else []:
+            payload = _load_main_hierarchy_payload()
+            for entry in payload:
                 parent_name = str(entry.get("parent") or "").strip()
                 children = entry.get("children", [])
                 if not parent_name or not isinstance(children, list):
@@ -637,14 +668,13 @@ def get_stock_items_for_training_from_hierarchy(car_full_name):
         return None
 
     try:
-        with open(MAIN_HIERARCHY_CACHE_JSON, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = _load_main_hierarchy_payload()
     except Exception:
         return None
 
     car_upper = _normalize_text(car_full_name)
     qty_map = _load_training_stock_qty_map()
-    for entry in payload if isinstance(payload, list) else []:
+    for entry in payload:
         parent_name = str(entry.get("parent") or "").strip()
         if _normalize_text(parent_name) != car_upper:
             continue
@@ -1922,7 +1952,6 @@ def _find_children_by_qty(car_name: str):
             if _norm(parent_name) != car_upper:
                 continue
 
-            _ = _to_int(entry.get("parent_qty", 0))
             children = entry.get("children", [])
             if not isinstance(children, list):
                 children = []
@@ -2331,7 +2360,7 @@ def search_all_stock_items():
     results = []
     for item in limited:
         stock_item_name = item.get("stock_item_name", "")
-        mapping = mapping_lookup.get(stock_item_name.strip().lower())
+        mapping = mapping_lookup.get(_normalize_lookup_key(stock_item_name))
         results.append({
             "stock_item_name": stock_item_name,
             "car_model": item.get("car_model", ""),
@@ -3420,7 +3449,7 @@ def system_tally_perf_test():
 @system_device_required
 def system_env_summary():
     # Deliberately excluded from this summary and never sent to the
-    # browser: FLASK_SECRET_KEY, ADMIN_PASSWORD, SYSTEM_ACCESS_TOKEN.
+    # browser: FLASK_SECRET_KEY, SYSTEM_ACCESS_TOKEN.
     return jsonify({
         "TALLY_URL": Config.TALLY_URL,
         "DB_PATH": db.DB_PATH,
@@ -3494,7 +3523,6 @@ def system_uptime():
 set_search_dependencies(
     get_car_models=lambda: list(CAR_GROUPS),
     get_car_folders=db.get_image_folders,
-    get_customer_users=db.get_customer_users,
     get_stock_items_for_car_from_hierarchy=get_stock_items_for_training_from_hierarchy,
     get_stock_items_for_car=get_stock_items_for_training,
 )

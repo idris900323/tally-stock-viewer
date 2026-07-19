@@ -1,3 +1,4 @@
+import glob
 import hashlib
 import os
 import shutil
@@ -230,7 +231,6 @@ def init_database():
                 username TEXT NOT NULL UNIQUE,
                 access_code TEXT NOT NULL,
                 role TEXT NOT NULL CHECK(role IN ('admin', 'customer')),
-                force_contact_us INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 last_login TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -250,26 +250,6 @@ def init_database():
             )
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS base_prices (
-                stock_item_name TEXT PRIMARY KEY,
-                price TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS customer_prices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                stock_item_name TEXT NOT NULL,
-                price TEXT NOT NULL,
-                UNIQUE(user_id, stock_item_name),
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-            )
-            """
-        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_images_car_folder ON images(car_folder)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_images_car_folder_id ON images(car_folder, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_stock_item ON mappings(stock_item_name)")
@@ -282,7 +262,6 @@ def init_database():
         _ensure_users_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_account_logs_timestamp ON account_logs(timestamp)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_customer_prices_user_stock ON customer_prices(user_id, stock_item_name)")
         seed_default_data(conn)
         try:
             normalized_count = _normalize_legacy_absolute_image_paths(conn)
@@ -292,16 +271,44 @@ def init_database():
             logger.exception("Failed to normalize legacy image paths")
 
     _migrate_remove_image_id_unique()
+    _migrate_drop_pricing_tables()
+
+
+DB_BACKUP_RETENTION_COUNT = 5
+
+
+def _prune_old_database_backups(keep=DB_BACKUP_RETENTION_COUNT):
+    """Keep only the most recent `keep` mappings.db.backup_* files.
+
+    Safety net for any one-time migration (present or future) that calls
+    _backup_database_file() -- the timestamp suffix (YYYYMMDD_HHMMSS) sorts
+    both lexicographically and chronologically, so a plain sort is enough
+    to find the oldest files to remove.
+    """
+    existing = sorted(glob.glob(f"{DB_PATH}.backup_*"))
+    surplus = existing[:-keep] if keep > 0 else existing
+    for stale_path in surplus:
+        try:
+            os.remove(stale_path)
+            logger.info("Pruned old database backup: %s", stale_path)
+        except OSError:
+            logger.exception("Failed to prune old database backup: %s", stale_path)
 
 
 def _backup_database_file():
     """Copy the live DB file, matching the timestamp convention used by
-    the System panel's /admin/system/download_backup (backup_TIMESTAMP)."""
+    the System panel's /admin/system/download_backup (backup_TIMESTAMP).
+
+    Prunes older backups down to DB_BACKUP_RETENTION_COUNT afterward, so
+    this is safe to call repeatedly (e.g. from future migrations) without
+    accumulating backup files on disk indefinitely.
+    """
     if not os.path.exists(DB_PATH):
         return None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = f"{DB_PATH}.backup_{timestamp}"
     shutil.copy2(DB_PATH, backup_path)
+    _prune_old_database_backups()
     return backup_path
 
 
@@ -370,6 +377,49 @@ def _migrate_remove_image_id_unique():
             conn.rollback()
             logger.exception(
                 "Migration failed removing UNIQUE(image_id); rolled back. Backup preserved at %s",
+                backup_path,
+            )
+            raise
+    finally:
+        conn.close()
+
+
+def _migrate_drop_pricing_tables():
+    """One-time migration: drop the base_prices/customer_prices tables.
+
+    Both tables were leftovers from a pricing feature that was removed from
+    the app; no code reads or writes either table anymore (customer_prices'
+    only remaining reference was a cleanup DELETE in delete_customer_user(),
+    removed alongside this migration). Guarded to run only while either
+    table is still present (checked via sqlite_master), so it's safe to
+    call on every startup -- a no-op once both are gone.
+    """
+    conn = _connect()
+    try:
+        present = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('base_prices', 'customer_prices')"
+            ).fetchall()
+        }
+        if not present:
+            return
+
+        backup_path = _backup_database_file()
+        logger.info("Migrating away leftover pricing tables %s; backup at %s", sorted(present), backup_path)
+
+        conn.execute("BEGIN")
+        try:
+            if "customer_prices" in present:
+                conn.execute("DROP TABLE customer_prices")
+            if "base_prices" in present:
+                conn.execute("DROP TABLE base_prices")
+            conn.commit()
+            logger.info("Migration succeeded: leftover pricing tables dropped.")
+        except Exception:
+            conn.rollback()
+            logger.exception(
+                "Migration failed dropping pricing tables; rolled back. Backup preserved at %s",
                 backup_path,
             )
             raise
@@ -547,13 +597,6 @@ def add_folder_mapping(folder_name, car_model):
     except Exception:
         logger.exception("add_folder_mapping failed for folder=%s", folder_name)
         raise
-
-
-def cleanup_database():
-    """Run lightweight SQLite maintenance tasks."""
-    with _connect() as conn:
-        conn.execute("PRAGMA optimize")
-        conn.execute("VACUUM")
 
 
 def get_folder_car_model(folder_name):
@@ -1149,19 +1192,6 @@ def get_user_by_id(user_id):
     return _row_to_dict(row)
 
 
-def get_customer_users():
-    with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, username, role, created_at
-            FROM users
-            WHERE role = 'customer'
-            ORDER BY LOWER(username), username
-            """
-        ).fetchall()
-    return [_row_to_dict(row) for row in rows]
-
-
 def create_customer_user(username, access_code):
     username_value = str(username or "").strip()
     access_code_value = str(access_code or "").strip()
@@ -1265,7 +1295,6 @@ def delete_customer_user(user_id):
         if user.get("role") != "customer":
             raise ValueError("only customer accounts can be deleted")
 
-        conn.execute("DELETE FROM customer_prices WHERE user_id = ?", (user_id_value,))
         conn.execute("DELETE FROM users WHERE id = ?", (user_id_value,))
     return user
 
