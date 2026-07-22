@@ -865,8 +865,15 @@
                 flex: 0 0 auto;
             }
 
+            /* Hidden rather than just left in the scrollable row: opening
+               the car search box auto-scrolls this row to bring the
+               focused input into view, which permanently pushes the label
+               off-screen to the left (confirmed while testing on a real
+               375px viewport) -- there's nothing to scroll back to once
+               that happens. The select2 placeholder text already conveys
+               the field's purpose, so the label is redundant here anyway. */
             .sticky-toolbar label {
-                white-space: nowrap;
+                display: none;
             }
 
             .sticky-toolbar .car-select-wrap {
