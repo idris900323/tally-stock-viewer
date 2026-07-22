@@ -91,6 +91,34 @@
             align-items: center;
         }
 
+        /* Sticky top bar: holds the car selector + admin action buttons (and,
+           during select mode, the selection controls) so they stay reachable
+           no matter how far down the design list the user has scrolled. Kept
+           as its own top-level element (sibling of .panel, not nested inside
+           it) because position:sticky only sticks for as long as its
+           containing block -- .panel is short (just status text/timestamps),
+           so a toolbar nested inside it would stop sticking the moment the
+           panel scrolled out of view, well before the end of a long design
+           list. */
+        .sticky-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 500;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: 0 14px 40px rgba(19, 34, 56, 0.08);
+            padding: 16px 20px;
+            margin-bottom: 18px;
+        }
+
+        .sticky-toolbar .selection-toolbar {
+            margin-top: 10px;
+            margin-bottom: 0;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+        }
+
         label {
             font-weight: 700;
         }
@@ -810,6 +838,52 @@
                 padding: 14px;
             }
 
+            /* The sticky bar's own row(s) deliberately do NOT use the
+               column-stack layout above: stacking the car selector + up to 6
+               admin buttons vertically would make the sticky bar itself
+               ~300-400px tall on a phone, crowding out most of the visible
+               design cards underneath it. A single horizontally-scrollable
+               row keeps the sticky bar's height constant (one row) no matter
+               how many buttons it holds -- the trade-off is that some buttons
+               are reached by swiping sideways instead of being all visible at
+               once, which is preferable to losing most of the screen to a
+               tall fixed header. */
+            .sticky-toolbar {
+                padding: 12px 14px;
+            }
+
+            .sticky-toolbar .toolbar {
+                flex-direction: row;
+                flex-wrap: nowrap;
+                align-items: center;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding-bottom: 2px;
+            }
+
+            .sticky-toolbar .toolbar > * {
+                flex: 0 0 auto;
+            }
+
+            .sticky-toolbar label {
+                white-space: nowrap;
+            }
+
+            .sticky-toolbar .car-select-wrap {
+                width: 220px;
+                min-width: 220px;
+            }
+
+            .sticky-toolbar .select2-container {
+                width: 220px !important;
+            }
+
+            .sticky-toolbar .toolbar select,
+            .sticky-toolbar .toolbar button {
+                width: auto;
+                white-space: nowrap;
+            }
+
             .topbar {
                 flex-wrap: wrap;
                 gap: 8px;
@@ -840,11 +914,7 @@
         {% endif %}
     </div>
 
-    {% if is_admin %}
-    <div id="staleDataNotice" class="notice warning" style="display:none;"></div>
-    {% endif %}
-
-    <div class="panel">
+    <div class="sticky-toolbar" id="stickyToolbar">
         <div class="toolbar">
             <label for="carSelect">Select Car Model:</label>
             <div class="car-select-wrap">
@@ -855,15 +925,29 @@
             </div>
             {% if is_admin %}
             <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
-            <button id="updateStockBtn" class="secondary" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
-            <button id="fullRefreshBtn" class="secondary" onclick="startFullRefresh()" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">
+            <button id="updateStockBtn" class="secondary toolbar-admin-btn" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
+            <button id="fullRefreshBtn" class="secondary toolbar-admin-btn" onclick="startFullRefresh()" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">
                 Full Refresh
             </button>
-            <button onclick="window.location.href='/train'" title="Open Training Mode to match scanned images to stock items">Train Matches</button>
-            <button class="secondary" onclick="window.location.href='/admin/accounts'" title="Manage customer login accounts">Manage Accounts</button>
-            <button class="secondary" onclick="window.location.href='/admin/system'" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
+            <button class="toolbar-admin-btn" onclick="window.location.href='/train'" title="Open Training Mode to match scanned images to stock items">Train Matches</button>
+            <button class="secondary toolbar-admin-btn" onclick="window.location.href='/admin/accounts'" title="Manage customer login accounts">Manage Accounts</button>
+            <button class="secondary toolbar-admin-btn" onclick="window.location.href='/admin/system'" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
             {% endif %}
         </div>
+        {% if is_admin %}
+        <div id="selectionToolbar" class="toolbar selection-toolbar" style="display:none;">
+            <button id="selectAllBtn" class="secondary" onclick="toggleSelectAll()" title="Select every image currently shown">Select All</button>
+            <span id="selectionCount" class="selection-count">0 selected</span>
+            <button id="copySelectedBtn" onclick="copySelectedImages()" title="Share the selected images" disabled>Share Images</button>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if is_admin %}
+    <div id="staleDataNotice" class="notice warning" style="display:none;"></div>
+    {% endif %}
+
+    <div class="panel">
         <div id="designLoadingStatus" class="loading-status">Loading designs...</div>
         {% if is_admin %}
         <div id="fullRefreshProgress" style="display:none; margin-top:10px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
@@ -896,13 +980,6 @@
             <h2 style="margin:0;">Available Designs for <span id="selectedCarName"></span></h2>
             <p id="designCount" style="margin:0; color: var(--muted);"></p>
         </div>
-        {% if is_admin %}
-        <div id="selectionToolbar" class="toolbar selection-toolbar" style="display:none;">
-            <button id="selectAllBtn" class="secondary" onclick="toggleSelectAll()" title="Select every image currently shown">Select All</button>
-            <span id="selectionCount" class="selection-count">0 selected</span>
-            <button id="copySelectedBtn" onclick="copySelectedImages()" title="Share the selected images" disabled>Share Images</button>
-        </div>
-        {% endif %}
         <ul id="designsList"></ul>
     </div>
 
@@ -1308,6 +1385,14 @@ function updateSelectModeUI() {
     if (toolbar) {
         toolbar.style.display = selectMode ? "flex" : "none";
     }
+    // Swap the normal admin action buttons (Update Stock, Full Refresh, Train
+    // Matches, Manage Accounts, System) out for the selection controls above
+    // while select mode is active, so the sticky bar never shows both
+    // unrelated button sets at once. selectModeBtn itself is exempt -- it
+    // stays put and just relabels to "Cancel".
+    document.querySelectorAll(".toolbar-admin-btn").forEach(actionBtn => {
+        actionBtn.style.display = selectMode ? "none" : "";
+    });
     if (list) {
         list.classList.toggle("select-mode", selectMode);
         list.querySelectorAll(".design-item").forEach(item => {
