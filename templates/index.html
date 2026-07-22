@@ -119,6 +119,42 @@
             border-top: 1px solid var(--border);
         }
 
+        /* Customer variant: no action buttons sit alongside the car search
+           (admin-only), so it's presented as the page's one primary action --
+           a small centered caption above a centered, slightly wider search
+           box -- instead of reusing the admin row's left-aligned layout
+           (built around having buttons to its right) with a lone control
+           looking like a leftover half-empty toolbar. #stickyToolbar is
+           included in every selector here purely to out-specificity the
+           plain `.sticky-toolbar …` / `.car-select-wrap` rules (including
+           the mobile ones below) regardless of source order, not because an
+           ID hook is otherwise needed. */
+        #stickyToolbar.sticky-toolbar-customer .toolbar {
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #stickyToolbar.sticky-toolbar-customer label {
+            display: block;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        #stickyToolbar.sticky-toolbar-customer .car-select-wrap {
+            width: 100%;
+            max-width: 360px;
+        }
+
+        #stickyToolbar.sticky-toolbar-customer .select2-container {
+            width: 100% !important;
+            min-width: 0 !important;
+        }
+
         label {
             font-weight: 700;
         }
@@ -639,16 +675,6 @@
             background: #f8fafc;
         }
 
-        .viewer-note {
-            padding: 12px 14px;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            background: #f8fafc;
-            color: var(--muted);
-            font-size: 13px;
-            line-height: 1.5;
-        }
-
         .loading-status {
             display: none;
             margin-top: 10px;
@@ -881,8 +907,18 @@
                 min-width: 220px;
             }
 
+            /* min-width must be pinned alongside width: the base (non-mobile)
+               .select2-container rule sets min-width: 260px, which silently
+               wins over this width regardless of !important -- min-width and
+               width are separate properties, and the rendered box is clamped
+               to at least min-width. Left unset, the container rendered at
+               260px inside its 220px-wide .car-select-wrap parent, overflowing
+               by 40px directly onto the first admin button (confirmed via a
+               real 375px viewport: "Update Stock" showed as "...date Stock"
+               overlapped by the select2 box). */
             .sticky-toolbar .select2-container {
                 width: 220px !important;
+                min-width: 220px !important;
             }
 
             .sticky-toolbar .toolbar select,
@@ -921,9 +957,9 @@
         {% endif %}
     </div>
 
-    <div class="sticky-toolbar" id="stickyToolbar">
+    <div class="sticky-toolbar{% if not is_admin %} sticky-toolbar-customer{% endif %}" id="stickyToolbar">
         <div class="toolbar">
-            <label for="carSelect">Select Car Model:</label>
+            <label for="carSelect">{% if is_admin %}Select Car Model:{% else %}Select Your Car Model{% endif %}</label>
             <div class="car-select-wrap">
                 <select id="carSelect" title="Choose a car model to see its stock designs and linked images">
                     <option value="">Search for a car...</option>
@@ -974,8 +1010,6 @@
             <span id="autoRefreshHint" style="font-size:12px; color:#94a3b8; align-self:center;"></span>
             <div id="statusMessage" class="status-line"></div>
         </div>
-        {% else %}
-        <div class="viewer-note" style="margin-top:14px;">Customer mode is read-only. You can browse designs and open image previews, but only admin can update stock or save matches.</div>
         {% endif %}
     </div>
 
