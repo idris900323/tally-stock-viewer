@@ -1,0 +1,12 @@
+/* Shared brand color used across every template (index.html, login.html,
+   train.html, etc.). Previously login.html used a teal accent (#0f766e)
+   while every other page used this blue -- neither actually matches the
+   logo (red/maroon "Super Seatings" wordmark on cream), so there was no
+   deliberate brand reason for the split; unified on the blue since it's
+   already the dominant color across the larger, more central part of the
+   app. Loaded before each page's own <style> block, which no longer
+   redeclares --accent/--accent-dark itself. */
+:root {
+    --accent: #1f6feb;
+    --accent-dark: #1558c0;
+}

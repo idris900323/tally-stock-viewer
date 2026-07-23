@@ -5,6 +5,7 @@
     <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='logo.jpg') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='shared.css') }}">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="{{ url_for('static', filename='shared.js') }}"></script>
@@ -15,8 +16,6 @@
             --text: #132238;
             --muted: #5d6b82;
             --border: #d9e2ec;
-            --accent: #1f6feb;
-            --accent-dark: #1558c0;
             --success-bg: #e8f5e9;
             --success-text: #276749;
             --error-bg: #fdecea;
@@ -267,6 +266,46 @@
             border-width: 0 6px 6px 6px;
         }
 
+        /* The closed select box above already matched the site's rounded,
+           bordered input style -- the open dropdown panel (search field +
+           results list) was still pure Select2 default (sharp corners,
+           thin grey border, Select2's own hardcoded blue highlight) until
+           this. CSS-only: none of this touches Select2's own JS behavior
+           (search-as-you-type, keyboard nav, the ajax pagination in
+           initializeCarSelect() all still go through Select2's unmodified
+           internals). */
+        .select2-dropdown {
+            border: 1px solid var(--border) !important;
+            border-radius: 12px !important;
+            overflow: hidden;
+            box-shadow: 0 14px 34px rgba(19, 34, 56, 0.16);
+        }
+
+        .select2-search--dropdown {
+            padding: 8px !important;
+        }
+
+        .select2-search--dropdown .select2-search__field {
+            border: 1px solid var(--border) !important;
+            border-radius: 8px !important;
+            padding: 8px 10px !important;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .select2-search--dropdown .select2-search__field:focus {
+            border-color: var(--accent) !important;
+        }
+
+        .select2-results__option--highlighted[aria-selected] {
+            background-color: var(--accent) !important;
+            color: #fff !important;
+        }
+
+        .select2-results__option[aria-selected="true"] {
+            background-color: #eef4ff;
+        }
+
         button {
             background: var(--accent);
             color: white;
@@ -332,6 +371,12 @@
             border-radius: 10px;
             margin-bottom: 14px;
             display: none;
+            opacity: 1;
+            transition: opacity 0.4s ease;
+        }
+
+        .notice.notice-fading {
+            opacity: 0;
         }
 
         .error {
@@ -379,6 +424,7 @@
         }
 
         .design-item {
+            position: relative;
             display: flex;
             gap: 14px;
             align-items: flex-start;
@@ -386,6 +432,74 @@
             border: 1px solid var(--border);
             border-radius: 14px;
             background: linear-gradient(180deg, #fff, #fafcff);
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        /* Long-press-to-select feedback (see handleDesignsListTouchStart()):
+           an immediate slight scale-down confirms the touch registered, and
+           a ring border fades in over exactly LONG_PRESS_MS (the JS sets
+           --long-press-duration to that same constant, so this can never
+           drift out of sync with the real threshold) so the user can see
+           their hold progressing toward select-mode entry before it
+           actually triggers. Removed by JS the instant the gesture is
+           reinterpreted as a scroll (moved > LONG_PRESS_MOVE_THRESHOLD) or
+           the finger lifts early, so the ring never keeps animating for a
+           press that didn't actually result in a selection. */
+        .design-item.long-press-active {
+            transform: scale(0.97);
+        }
+
+        .design-item.long-press-active::after {
+            content: "";
+            position: absolute;
+            inset: -2px;
+            border-radius: 16px;
+            border: 2px solid var(--accent);
+            opacity: 0;
+            pointer-events: none;
+            animation: long-press-fill linear forwards;
+            animation-duration: var(--long-press-duration, 500ms);
+        }
+
+        @keyframes long-press-fill {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .design-item.long-press-active::after {
+                animation: none;
+                opacity: 1;
+            }
+        }
+
+        /* (hover: hover) and (pointer: fine) restricts this to devices with a
+           real mouse/trackpad -- touch devices report (hover: none), so a tap
+           there never triggers :hover at all and can't leave a "stuck" lifted
+           card behind after the finger lifts. :not(.selected) keeps a
+           selected card's existing border/box-shadow (see .design-item.selected
+           below) as the one, stable look for that state instead of the two
+           competing for the same box-shadow property. */
+        @media (hover: hover) and (pointer: fine) {
+            .design-item:hover:not(.selected) {
+                transform: translateY(-3px);
+                box-shadow: 0 10px 26px rgba(19, 34, 56, 0.14);
+            }
+        }
+
+        /* "Needs link" cards: a muted, dashed border and a faded thumbnail
+           (that thumbnail is always the generic stock placeholder for these,
+           never a real photo -- see renderDesignItem()'s imageId logic) make
+           gaps in the catalog visible while scanning a whole grid, without
+           needing to read each card's badge text individually. */
+        .design-item.unmapped-card {
+            border-style: dashed;
+            border-color: #cbd5e1;
+            background: linear-gradient(180deg, #fbfbfc, #f5f6f8);
+        }
+
+        .design-item.unmapped-card .design-thumbnail {
+            opacity: 0.55;
         }
 
         .design-thumbnail {
@@ -579,6 +693,59 @@
             color: var(--muted);
         }
 
+        /* Skeleton loading cards (see renderSkeletonCards() in loadDesigns())
+           -- shown in place of the real grid while /designs is fetching, in
+           the actual .design-item shape, so the swap to real content doesn't
+           jump the layout around. */
+        .skeleton-card {
+            pointer-events: none;
+        }
+
+        .skeleton-block {
+            background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 37%, #eef1f5 63%);
+            background-size: 400% 100%;
+            animation: skeleton-shimmer 1.4s ease infinite;
+            border-radius: 8px;
+        }
+
+        .skeleton-thumbnail {
+            width: 92px;
+            height: 92px;
+            border-radius: 12px;
+            flex: 0 0 auto;
+        }
+
+        .skeleton-line {
+            height: 12px;
+            margin-bottom: 10px;
+        }
+
+        .skeleton-badge {
+            width: 70px;
+            height: 18px;
+            border-radius: 999px;
+        }
+
+        .skeleton-title {
+            width: 80%;
+        }
+
+        .skeleton-subtext {
+            width: 50%;
+            margin-bottom: 0;
+        }
+
+        @keyframes skeleton-shimmer {
+            0% { background-position: 100% 0; }
+            100% { background-position: 0 0; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .skeleton-block {
+                animation: none;
+            }
+        }
+
         .modal {
             position: fixed;
             inset: 0;
@@ -691,17 +858,6 @@
             padding: 12px 16px;
             border-top: 1px solid var(--border);
             background: #f8fafc;
-        }
-
-        .loading-status {
-            display: none;
-            margin-top: 10px;
-            padding: 10px 14px;
-            border-radius: 10px;
-            background: #f0f9ff;
-            border: 1px solid #bae6fd;
-            color: #0369a1;
-            font-size: 13px;
         }
 
         .contact-footer {
@@ -897,12 +1053,51 @@
             }
 
             .sticky-toolbar .toolbar {
+                position: relative;
                 flex-direction: row;
                 flex-wrap: nowrap;
                 align-items: center;
                 overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
                 padding-bottom: 2px;
+            }
+
+            /* "Swipe for more" hint -- the .scroll-fade-left/-right classes
+               are toggled by updateScrollFade() (see script below) based on
+               the row's actual scrollLeft/scrollWidth, so a fade only shows
+               on the edge that genuinely has more content to reveal (e.g.
+               never on the right once already scrolled all the way there).
+               Purely visual (pointer-events: none) -- swiping/tapping
+               through the fade works exactly as it did before this existed. */
+            .sticky-toolbar .toolbar::before,
+            .sticky-toolbar .toolbar::after {
+                content: "";
+                position: absolute;
+                top: 0;
+                bottom: 2px;
+                width: 28px;
+                pointer-events: none;
+                opacity: 0;
+                transition: opacity 0.15s ease;
+                z-index: 1;
+            }
+
+            .sticky-toolbar .toolbar::before {
+                left: 0;
+                background: linear-gradient(to right, var(--panel), rgba(255, 255, 255, 0));
+            }
+
+            .sticky-toolbar .toolbar::after {
+                right: 0;
+                background: linear-gradient(to left, var(--panel), rgba(255, 255, 255, 0));
+            }
+
+            .sticky-toolbar .toolbar.scroll-fade-left::before {
+                opacity: 1;
+            }
+
+            .sticky-toolbar .toolbar.scroll-fade-right::after {
+                opacity: 1;
             }
 
             .sticky-toolbar .toolbar > * {
@@ -976,7 +1171,7 @@
     </div>
 
     <div class="sticky-toolbar{% if not is_admin %} sticky-toolbar-customer{% endif %}" id="stickyToolbar">
-        <div class="toolbar">
+        <div class="toolbar" id="mainToolbarRow">
             <label for="carSelect">{% if is_admin %}Select Car Model:{% else %}Select Your Car Model{% endif %}</label>
             <div class="car-select-wrap">
                 <select id="carSelect" title="Choose a car model to see its stock designs and linked images">
@@ -1021,7 +1216,6 @@
     {% endif %}
 
     <div class="panel">
-        <div id="designLoadingStatus" class="loading-status">Loading designs...</div>
         {% if is_admin %}
         <div id="fullRefreshProgress" style="display:none; margin-top:10px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
             <span id="fullRefreshStageText">Starting full refresh...</span>
@@ -1091,6 +1285,13 @@
 <script>
 const isAdmin = {{ is_admin|tojson }};
 const isCustomer = {{ is_customer|tojson }};
+// Badge icons (see renderDesignItem()) so "Linked" vs "Needs link" isn't
+// conveyed by color alone -- distinct shapes (check-circle vs
+// exclamation-triangle) read the same regardless of color vision. Inline
+// SVGs with fill="currentColor" (same convention as the WhatsApp button
+// below) so each picks up its badge's existing text color automatically.
+const BADGE_ICON_LINKED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="12" height="12"><path fill="currentColor" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.7-9.3a1 1 0 00-1.4-1.4L9 10.6 7.7 9.3a1 1 0 00-1.4 1.4l2 2a1 1 0 001.4 0l4-4z"/></svg>';
+const BADGE_ICON_UNMAPPED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="12" height="12"><path fill="currentColor" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.334-.213 3.003-1.743 3.003H3.482c-1.53 0-2.493-1.669-1.743-3.003L8.257 3.1zM10 8a1 1 0 00-1 1v3a1 1 0 002 0V9a1 1 0 00-1-1zm0 7a1.125 1.125 0 100-2.25A1.125 1.125 0 0010 15z"/></svg>';
 const STAGE_LABELS = {
     car_master: "Stage 1/4 — Updating car master list from Tally...",
     main_hierarchy: "Stage 2/4 — Updating main hierarchy from Tally...",
@@ -1109,6 +1310,11 @@ let selectedCardKeys = new Set();
 let batchContinuePending = false;
 let longPressTimer = null;
 let longPressStartXY = null;
+// The card currently showing long-press visual feedback (see
+// handleDesignsListTouchStart()/cancelLongPressFeedback()) -- tracked
+// separately from longPressStartXY so feedback can be cleared even after
+// longPressStartXY itself has already been reset.
+let longPressCardEl = null;
 let suppressNextClick = false;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_THRESHOLD = 10;
@@ -1124,11 +1330,47 @@ const LONG_PRESS_MOVE_THRESHOLD = 10;
 // (see shareBatchesSequentially()) rather than just warned about.
 const SHARE_BATCH_SIZE = 10;
 
+// Plain (no-action) notices auto-dismiss a few seconds after they're shown,
+// like a toast, instead of sitting there until the next call overwrites
+// them. Anything with an action (showErrorWithAction(), and the sticky-bar
+// batch-continue controls, which don't use these functions at all -- see
+// showBatchContinueBar()) is NOT auto-dismissed, since the user still needs
+// to see and act on it. A single shared timer means rapid repeated calls
+// (e.g. showInfo("Preparing images... N of M") on every fetch) keep
+// resetting the countdown rather than piling up competing timeouts, so the
+// message only actually fades a few seconds after the LAST update.
+const NOTICE_AUTO_DISMISS_MS = 4500;
+let noticeAutoDismissTimer = null;
+
+function clearNoticeAutoDismissTimer() {
+    if (noticeAutoDismissTimer) {
+        clearTimeout(noticeAutoDismissTimer);
+        noticeAutoDismissTimer = null;
+    }
+}
+
+function scheduleNoticeAutoDismiss(el) {
+    clearNoticeAutoDismissTimer();
+    el.classList.remove("notice-fading");
+    noticeAutoDismissTimer = setTimeout(() => {
+        el.classList.add("notice-fading");
+        setTimeout(() => {
+            el.style.display = "none";
+            el.classList.remove("notice-fading");
+        }, 400); // matches .notice's opacity transition duration
+        noticeAutoDismissTimer = null;
+    }, NOTICE_AUTO_DISMISS_MS);
+}
+
 function clearMessages() {
+    clearNoticeAutoDismissTimer();
     const errorEl = document.getElementById("errorMsg");
     errorEl.textContent = "";
     errorEl.style.display = "none";
-    document.getElementById("infoMsg").style.display = "none";
+    errorEl.classList.remove("notice-fading");
+    const infoEl = document.getElementById("infoMsg");
+    infoEl.style.display = "none";
+    infoEl.classList.remove("notice-fading");
 }
 
 // showError/showErrorWithAction/showInfo are mutually exclusive: each one
@@ -1143,15 +1385,19 @@ function showError(msg) {
     const el = document.getElementById("errorMsg");
     el.textContent = "❌ " + msg;
     el.style.display = "block";
+    scheduleNoticeAutoDismiss(el);
 }
 
 // Same "errorMsg" notice used everywhere else, plus one inline action button --
 // used when a failure has a concrete, immediate recovery (e.g. downloading the
 // images that were already fetched instead of leaving the user with nothing
-// to do but retry the whole share from scratch).
+// to do but retry the whole share from scratch). Never auto-dismissed: the
+// user still needs to see and click the action.
 function showErrorWithAction(msg, actionLabel, onAction) {
+    clearNoticeAutoDismissTimer();
     document.getElementById("infoMsg").style.display = "none";
     const el = document.getElementById("errorMsg");
+    el.classList.remove("notice-fading");
     el.textContent = "";
     el.appendChild(document.createTextNode("❌ " + msg + " "));
     const btn = document.createElement("button");
@@ -1169,8 +1415,10 @@ function showInfo(msg) {
     errorEl.textContent = "";
     errorEl.style.display = "none";
     const el = document.getElementById("infoMsg");
+    el.classList.remove("notice-fading");
     el.textContent = "✓ " + msg;
     el.style.display = "block";
+    scheduleNoticeAutoDismiss(el);
 }
 
 // Walks the user through a batched share (see shareBatchesSequentially()):
@@ -1200,7 +1448,10 @@ function showBatchContinueBar(message, actionLabel, onAction, onCancel) {
     if (cancelBtn) {
         cancelBtn.onclick = onCancel;
     }
-    if (bar) bar.style.display = "flex";
+    if (bar) {
+        bar.style.display = "flex";
+        updateScrollFade(bar);
+    }
 }
 
 function hideBatchContinueBar() {
@@ -1551,6 +1802,34 @@ function toggleSelectAll() {
     updateSelectModeUI();
 }
 
+// "Swipe for more" edge-fade hint for the sticky toolbar's horizontally-
+// scrolling rows on mobile (see .sticky-toolbar .toolbar::before/::after).
+// Toggled purely off real scroll position -- scroll-fade-left only once
+// actually scrolled away from the start, scroll-fade-right only while there
+// is still more width to reveal -- so a row that fits without overflowing
+// (the common desktop case, and some rows even on mobile) never shows either
+// fade. Called on scroll/resize and again any time a row's own content or
+// visibility changes elsewhere (mode switches, batch-share continuation).
+function updateScrollFade(el) {
+    if (!el) return;
+    const canScrollLeft = el.scrollLeft > 2;
+    const canScrollRight = el.scrollLeft < el.scrollWidth - el.clientWidth - 2;
+    el.classList.toggle("scroll-fade-left", canScrollLeft);
+    el.classList.toggle("scroll-fade-right", canScrollRight);
+}
+
+function initScrollFadeTracking(el) {
+    if (!el) return;
+    el.addEventListener("scroll", () => updateScrollFade(el), { passive: true });
+    updateScrollFade(el);
+}
+
+function updateAllToolbarScrollFades() {
+    updateScrollFade(document.getElementById("mainToolbarRow"));
+    updateScrollFade(document.getElementById("selectionToolbar"));
+    updateScrollFade(document.getElementById("batchContinueBar"));
+}
+
 function updateSelectModeUI() {
     const btn = document.getElementById("selectModeBtn");
     const toolbar = document.getElementById("selectionToolbar");
@@ -1613,6 +1892,11 @@ function updateSelectModeUI() {
         const allSelected = allKeys.length > 0 && allKeys.every(key => selectedCardKeys.has(key));
         selectAllBtn.textContent = allSelected ? "Deselect All" : "Select All";
     }
+
+    // Whichever row(s) just changed visibility/content above may now fit (or
+    // no longer fit) their full width -- re-measure real overflow rather
+    // than assuming.
+    updateAllToolbarScrollFades();
 }
 
 function handleDesignsListClick(event) {
@@ -1634,6 +1918,17 @@ function handleDesignsListClick(event) {
     toggleImageSelection(card.dataset.imageId || "", card.dataset.itemKey || "");
 }
 
+// Clears the in-progress long-press visual (see .long-press-active in the
+// <style> above) -- called whenever the press ends for any reason, so the
+// filling ring never keeps animating for a gesture that already stopped
+// counting as a long-press (moved too far, finger lifted, or it just fired).
+function cancelLongPressFeedback() {
+    if (longPressCardEl) {
+        longPressCardEl.classList.remove("long-press-active");
+        longPressCardEl = null;
+    }
+}
+
 function handleDesignsListTouchStart(event) {
     if (!isAdmin) {
         return;
@@ -1645,8 +1940,13 @@ function handleDesignsListTouchStart(event) {
     const touch = event.touches[0];
     longPressStartXY = { x: touch.clientX, y: touch.clientY };
     clearTimeout(longPressTimer);
+    cancelLongPressFeedback();
+    longPressCardEl = card;
+    card.style.setProperty("--long-press-duration", `${LONG_PRESS_MS}ms`);
+    card.classList.add("long-press-active");
     longPressTimer = setTimeout(() => {
         longPressTimer = null;
+        cancelLongPressFeedback();
         const imageId = card.dataset.imageId;
         const itemKey = card.dataset.itemKey;
         if (!imageId || !itemKey) {
@@ -1673,6 +1973,7 @@ function handleDesignsListTouchMove(event) {
         clearTimeout(longPressTimer);
         longPressTimer = null;
         longPressStartXY = null;
+        cancelLongPressFeedback();
     }
 }
 
@@ -1680,6 +1981,7 @@ function handleDesignsListTouchEnd() {
     clearTimeout(longPressTimer);
     longPressTimer = null;
     longPressStartXY = null;
+    cancelLongPressFeedback();
 }
 
 // Blob fetches for selected images are kicked off in the background as soon
@@ -2481,13 +2783,13 @@ function renderDesignItem(item, index) {
 
     return `
         <li>
-            <div class="design-item" data-image-id="${imageId}" data-item-key="${itemKey}">
+            <div class="design-item${mapped ? '' : ' unmapped-card'}" data-image-id="${imageId}" data-item-key="${itemKey}">
                 <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this)">
                     <img src="${thumbnailUrl}" alt="${escapedTitle}" class="design-thumbnail">
                     <span class="select-check" aria-hidden="true">&#10003;</span>
                 </button>
                 <div class="design-text">
-                    <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? 'Linked' : 'Needs link'}</div>
+                    <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : 'Needs link'}</div>
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
                     ${isAdmin ? `<a href="${addImageUrl}" class="add-image-link" title="Find or upload a photo for this specific item">Add Image</a>` : ''}
@@ -2500,9 +2802,35 @@ function renderDesignItem(item, index) {
     `;
 }
 
+const SKELETON_CARD_COUNT = 8;
+
+// A single skeleton mirrors .design-item's real layout (thumbnail-sized
+// block + a few text-line blocks of decreasing width) so the grid doesn't
+// visibly jump in shape once real cards replace these -- only their
+// shimmering fill communicates "loading" (aria-hidden since they carry no
+// real content for a screen reader to announce). pointer-events: none also
+// means these never trigger the :hover lift meant for real cards.
+function renderSkeletonCard() {
+    return `
+        <li>
+            <div class="design-item skeleton-card" aria-hidden="true">
+                <div class="skeleton-block skeleton-thumbnail"></div>
+                <div class="design-text">
+                    <div class="skeleton-block skeleton-line skeleton-badge"></div>
+                    <div class="skeleton-block skeleton-line skeleton-title"></div>
+                    <div class="skeleton-block skeleton-line skeleton-subtext"></div>
+                </div>
+            </div>
+        </li>
+    `;
+}
+
+function renderSkeletonCards(count) {
+    return Array.from({ length: count }, renderSkeletonCard).join("");
+}
+
 async function loadDesigns() {
     const car = document.getElementById("carSelect").value;
-    const loadingStatus = document.getElementById("designLoadingStatus");
 
     if (!car) {
         showError("Please select a car first");
@@ -2510,21 +2838,22 @@ async function loadDesigns() {
     }
 
     try {
-        if (loadingStatus) {
-            loadingStatus.style.display = "block";
-            loadingStatus.textContent = "Loading designs...";
-        }
         clearMessages();
+        const list = document.getElementById("designsList");
+        const container = document.getElementById("designsContainer");
+        list.innerHTML = renderSkeletonCards(SKELETON_CARD_COUNT);
+        container.classList.add("show");
+
         const res = await fetch(`/designs?car=${encodeURIComponent(car)}`);
 
         if (!res.ok) {
             showError(`Failed to load designs (HTTP ${res.status})`);
+            list.innerHTML = "";
+            container.classList.remove("show");
             return;
         }
 
         const data = await res.json();
-        const list = document.getElementById("designsList");
-        const container = document.getElementById("designsContainer");
         list.innerHTML = "";
 
         if (Array.isArray(data) && data.length > 0) {
@@ -2541,10 +2870,6 @@ async function loadDesigns() {
         updateSelectModeUI();
     } catch (error) {
         showError(`Error loading designs: ${error.message}`);
-    } finally {
-        if (loadingStatus) {
-            loadingStatus.style.display = "none";
-        }
     }
 }
 
@@ -2629,6 +2954,11 @@ window.addEventListener("DOMContentLoaded", () => {
         imageModalEl.addEventListener("touchend", handleModalTouchEnd, { passive: true });
         imageModalEl.addEventListener("touchcancel", handleModalTouchEnd, { passive: true });
     }
+
+    ["mainToolbarRow", "selectionToolbar", "batchContinueBar"].forEach(id => {
+        initScrollFadeTracking(document.getElementById(id));
+    });
+    window.addEventListener("resize", updateAllToolbarScrollFades, { passive: true });
 });
 
 document.addEventListener("keydown", event => {
