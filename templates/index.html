@@ -1002,6 +1002,17 @@
             <button id="copySelectedBtn" onclick="copySelectedImages()" title="Share the selected images" disabled>Share Images</button>
         </div>
         <div id="selectionWarning" class="selection-warning" style="display:none;"></div>
+        <!-- Shown in place of #selectionToolbar (see showBatchContinueBar() /
+             waitForBatchContinuation()) while a batched share is waiting on
+             the user to continue to the next batch -- lives in the sticky
+             bar, not the regular scrolling notice area, so the control stays
+             reachable no matter how far down the design list the user has
+             scrolled, same reason the rest of this toolbar is sticky. -->
+        <div id="batchContinueBar" class="toolbar selection-toolbar" style="display:none;">
+            <span id="batchContinueText" class="selection-count"></span>
+            <button id="batchContinueActionBtn" type="button" title="Continue the batched share"></button>
+            <button id="batchContinueCancelBtn" type="button" class="secondary" title="Stop sharing the remaining batches">Cancel</button>
+        </div>
         {% endif %}
     </div>
 
@@ -1093,6 +1104,9 @@ let fullRefreshPoller = null;
 let selectMode = false;
 let selectedImageIds = new Set();
 let selectedCardKeys = new Set();
+// True while shareBatchesSequentially() is waiting on the user to continue
+// (or cancel) a batched share -- see showBatchContinueBar() / updateSelectModeUI().
+let batchContinuePending = false;
 let longPressTimer = null;
 let longPressStartXY = null;
 let suppressNextClick = false;
@@ -1159,25 +1173,67 @@ function showInfo(msg) {
     el.style.display = "block";
 }
 
-// Same "infoMsg" notice, plus one inline action button -- used to walk the
-// user through a batched share (see shareBatchesSequentially()): each
-// "Share next N images" tap is its own fresh click/user-gesture, since
+// Walks the user through a batched share (see shareBatchesSequentially()):
+// each "Share next N images" tap is its own fresh click/user-gesture, since
 // navigator.share() cannot be auto-triggered for a later batch without one.
-function showInfoWithAction(msg, actionLabel, onAction) {
-    const errorEl = document.getElementById("errorMsg");
-    errorEl.textContent = "";
-    errorEl.style.display = "none";
-    const el = document.getElementById("infoMsg");
-    el.textContent = "";
-    el.appendChild(document.createTextNode("✓ " + msg + " "));
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "secondary";
-    btn.style.marginLeft = "8px";
-    btn.textContent = actionLabel;
-    btn.onclick = onAction;
-    el.appendChild(btn);
-    el.style.display = "block";
+// This lives in the STICKY toolbar's #batchContinueBar (swapped in for
+// #selectionToolbar), not the regular scrolling notice area -- otherwise a
+// user scrolled deep into a long design list would have no visible way to
+// continue without scrolling back to the top, the exact problem the sticky
+// toolbar exists to solve everywhere else on this page.
+function showBatchContinueBar(message, actionLabel, onAction, onCancel) {
+    batchContinuePending = true;
+    const selectionToolbar = document.getElementById("selectionToolbar");
+    const warningLabel = document.getElementById("selectionWarning");
+    if (selectionToolbar) selectionToolbar.style.display = "none";
+    if (warningLabel) warningLabel.style.display = "none";
+
+    const bar = document.getElementById("batchContinueBar");
+    const text = document.getElementById("batchContinueText");
+    const actionBtn = document.getElementById("batchContinueActionBtn");
+    const cancelBtn = document.getElementById("batchContinueCancelBtn");
+    if (text) text.textContent = message;
+    if (actionBtn) {
+        actionBtn.textContent = actionLabel;
+        actionBtn.onclick = onAction;
+    }
+    if (cancelBtn) {
+        cancelBtn.onclick = onCancel;
+    }
+    if (bar) bar.style.display = "flex";
+}
+
+function hideBatchContinueBar() {
+    batchContinuePending = false;
+    const bar = document.getElementById("batchContinueBar");
+    if (bar) bar.style.display = "none";
+    // Restores #selectionToolbar/#selectionWarning to whatever they should
+    // show given the current (still-active) selection, now that the
+    // continuation control is gone.
+    updateSelectModeUI();
+}
+
+// Shows the batch-continuation control and resolves once the user acts on
+// it: "continue" (running `onAction` first, e.g. downloading a failed
+// batch's images, then proceeding to the next batch) or "cancel" (stopping
+// the rest of the batched share -- exitSelectMode() still runs afterward in
+// copySelectedImages() as usual).
+function waitForBatchContinuation(message, actionLabel, onAction) {
+    return new Promise(resolve => {
+        showBatchContinueBar(
+            message,
+            actionLabel,
+            () => {
+                if (onAction) onAction();
+                hideBatchContinueBar();
+                resolve("continue");
+            },
+            () => {
+                hideBatchContinueBar();
+                resolve("cancel");
+            }
+        );
+    });
 }
 
 function getImageSource(src) {
@@ -1507,7 +1563,13 @@ function updateSelectModeUI() {
         btn.textContent = selectMode ? "Cancel" : "Select Images";
     }
     if (toolbar) {
-        toolbar.style.display = selectMode ? "flex" : "none";
+        // While a batched share is waiting on the user (see
+        // batchContinuePending / showBatchContinueBar()), #batchContinueBar
+        // takes this toolbar's place in the sticky bar -- keep #selectionToolbar
+        // hidden even though selectMode is still true, so nothing else that
+        // happens to call updateSelectModeUI() mid-flow (e.g. toggling a
+        // card's selection) pops it back in front of the continuation control.
+        toolbar.style.display = (selectMode && !batchContinuePending) ? "flex" : "none";
     }
     // Swap the normal admin action buttons (Update Stock, Full Refresh, Train
     // Matches, Manage Accounts, System) out for the selection controls above
@@ -1532,7 +1594,7 @@ function updateSelectModeUI() {
 
     const warningLabel = document.getElementById("selectionWarning");
     if (warningLabel) {
-        const showWarning = selectedImageIds.size > SHARE_BATCH_SIZE;
+        const showWarning = !batchContinuePending && selectedImageIds.size > SHARE_BATCH_SIZE;
         warningLabel.style.display = showWarning ? "" : "none";
         if (showWarning) {
             const batchCount = Math.ceil(selectedImageIds.size / SHARE_BATCH_SIZE);
@@ -1729,6 +1791,7 @@ function buildShareFiles(batch) {
 async function shareBatchesSequentially(succeeded, skippedNote) {
     const total = succeeded.length;
     const batches = chunkArray(succeeded, SHARE_BATCH_SIZE);
+    let sharedCount = 0;
 
     if (!(navigator.share && navigator.canShare && navigator.canShare({ files: buildShareFiles(batches[0]) }))) {
         downloadImagesAsFiles(succeeded.map(r => r.id));
@@ -1742,6 +1805,7 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
         const rangeStart = i * SHARE_BATCH_SIZE + 1;
         const rangeEnd = rangeStart + batch.length - 1;
         const rangeLabel = batches.length > 1 ? ` (images ${rangeStart}-${rangeEnd} of ${total})` : "";
+        const remaining = total - rangeEnd;
 
         let failed = false;
         let canceled = false;
@@ -1762,6 +1826,8 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
                 ? "Sharing timed out — try selecting fewer images, or use Copy Image individually."
                 : (error && error.message) || "Sharing failed.";
             if (isLast) {
+                // Terminal action, nothing left to continue to -- stays in
+                // the regular notice area like any other one-off failure.
                 showErrorWithAction(
                     `${baseMsg}${rangeLabel} You can still download these ${batch.length} image${batch.length === 1 ? "" : "s"}.`,
                     "Download images",
@@ -1772,17 +1838,20 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
                 );
                 return;
             }
+            // Passive failure detail stays in the regular notice area; only
+            // the actionable "download this batch & continue" control moves
+            // to the sticky bar.
+            showError(`${baseMsg}${rangeLabel}`);
             const nextBatch = batches[i + 1];
-            await new Promise(resolve => {
-                showErrorWithAction(
-                    `${baseMsg}${rangeLabel}`,
-                    `Download these & share next ${nextBatch.length}`,
-                    () => {
-                        downloadImagesAsFiles(batch.map(r => r.id));
-                        resolve();
-                    }
-                );
-            });
+            const action = await waitForBatchContinuation(
+                `Batch ${i + 1} of ${batches.length} failed — ${batch.length} image${batch.length === 1 ? "" : "s"} ready to download`,
+                `Download & Share Next ${nextBatch.length}`,
+                () => downloadImagesAsFiles(batch.map(r => r.id))
+            );
+            if (action === "cancel") {
+                showInfo(`Sharing stopped. Shared ${sharedCount} of ${total} images.${skippedNote}`);
+                return;
+            }
             continue;
         }
 
@@ -1792,22 +1861,33 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
                 return;
             }
             const nextBatch = batches[i + 1];
-            await new Promise(resolve => {
-                showInfoWithAction(`Canceled${rangeLabel}.`, `Share next ${nextBatch.length} images`, resolve);
-            });
+            const action = await waitForBatchContinuation(
+                `Batch ${i + 1} of ${batches.length} canceled — ${remaining} image${remaining === 1 ? "" : "s"} remaining`,
+                `Share Next ${nextBatch.length} Images`
+            );
+            if (action === "cancel") {
+                showInfo(`Sharing stopped. Shared ${sharedCount} of ${total} images.${skippedNote}`);
+                return;
+            }
             continue;
         }
 
         // Shared successfully.
+        sharedCount += batch.length;
         if (isLast) {
             const countLabel = batches.length > 1 ? `all ${total} images` : `${total} image${total === 1 ? "" : "s"}`;
             showInfo(`Shared ${countLabel}.${skippedNote}`);
             return;
         }
         const nextBatch = batches[i + 1];
-        await new Promise(resolve => {
-            showInfoWithAction(`Shared${rangeLabel}.`, `Share next ${nextBatch.length} images`, resolve);
-        });
+        const action = await waitForBatchContinuation(
+            `Batch ${i + 1} of ${batches.length} shared — ${remaining} image${remaining === 1 ? "" : "s"} remaining`,
+            `Share Next ${nextBatch.length} Images`
+        );
+        if (action === "cancel") {
+            showInfo(`Sharing stopped. Shared ${sharedCount} of ${total} images.${skippedNote}`);
+            return;
+        }
     }
 }
 
