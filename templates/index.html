@@ -1115,7 +1115,15 @@ function clearMessages() {
     document.getElementById("infoMsg").style.display = "none";
 }
 
+// showError/showErrorWithAction/showInfo are mutually exclusive: each one
+// hides the other notice before showing its own, so a leftover "Preparing
+// images..." info banner can never stay on screen alongside a later error
+// (or vice versa) just because whoever called it forgot to clearMessages()
+// first -- this was the cause of the info banner ("Preparing images... 16
+// of 16") and error banner both appearing at once when a share ultimately
+// failed after fetching had already progressed/finished.
 function showError(msg) {
+    document.getElementById("infoMsg").style.display = "none";
     const el = document.getElementById("errorMsg");
     el.textContent = "❌ " + msg;
     el.style.display = "block";
@@ -1126,6 +1134,7 @@ function showError(msg) {
 // images that were already fetched instead of leaving the user with nothing
 // to do but retry the whole share from scratch).
 function showErrorWithAction(msg, actionLabel, onAction) {
+    document.getElementById("infoMsg").style.display = "none";
     const el = document.getElementById("errorMsg");
     el.textContent = "";
     el.appendChild(document.createTextNode("❌ " + msg + " "));
@@ -1140,6 +1149,9 @@ function showErrorWithAction(msg, actionLabel, onAction) {
 }
 
 function showInfo(msg) {
+    const errorEl = document.getElementById("errorMsg");
+    errorEl.textContent = "";
+    errorEl.style.display = "none";
     const el = document.getElementById("infoMsg");
     el.textContent = "✓ " + msg;
     el.style.display = "block";
