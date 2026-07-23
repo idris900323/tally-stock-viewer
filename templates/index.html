@@ -1109,13 +1109,33 @@ const LONG_PRESS_MOVE_THRESHOLD = 10;
 const LARGE_SELECTION_WARNING_THRESHOLD = 25;
 
 function clearMessages() {
-    document.getElementById("errorMsg").style.display = "none";
+    const errorEl = document.getElementById("errorMsg");
+    errorEl.textContent = "";
+    errorEl.style.display = "none";
     document.getElementById("infoMsg").style.display = "none";
 }
 
 function showError(msg) {
     const el = document.getElementById("errorMsg");
     el.textContent = "❌ " + msg;
+    el.style.display = "block";
+}
+
+// Same "errorMsg" notice used everywhere else, plus one inline action button --
+// used when a failure has a concrete, immediate recovery (e.g. downloading the
+// images that were already fetched instead of leaving the user with nothing
+// to do but retry the whole share from scratch).
+function showErrorWithAction(msg, actionLabel, onAction) {
+    const el = document.getElementById("errorMsg");
+    el.textContent = "";
+    el.appendChild(document.createTextNode("❌ " + msg + " "));
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "secondary";
+    btn.style.marginLeft = "8px";
+    btn.textContent = actionLabel;
+    btn.onclick = onAction;
+    el.appendChild(btn);
     el.style.display = "block";
 }
 
@@ -1612,7 +1632,43 @@ function prefetchSelectedImageBlobs() {
     selectedImageIds.forEach(imageId => prefetchImageBlob(imageId));
 }
 
+// One automatic retry per image on top of prefetchImageBlob(): a flaky
+// network blip on one image out of a 30-60 image batch shouldn't fail the
+// whole share. The first attempt reuses the prefetch cache (usually already
+// in flight or resolved); a failed cache entry is retried once with a fresh
+// fetch, bypassing the poisoned cached-rejection. Returns null (never
+// throws) if both attempts fail, so callers can drop just that one image.
+async function fetchImageForShare(imageId) {
+    try {
+        return await prefetchImageBlob(imageId);
+    } catch (firstError) {
+        try {
+            const response = await fetch(getShareImageSource(imageId));
+            if (!response.ok) {
+                throw new Error(`Image fetch failed (HTTP ${response.status})`);
+            }
+            const blob = await response.blob();
+            selectedImageBlobCache.set(imageId, Promise.resolve(blob));
+            return blob;
+        } catch (secondError) {
+            return null;
+        }
+    }
+}
+
+function downloadImagesAsFiles(imageIds) {
+    imageIds.forEach((imageId, i) => {
+        const link = document.createElement("a");
+        link.href = getShareImageSource(imageId);
+        link.download = `image_${i + 1}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    });
+}
+
 async function copySelectedImages() {
+    let succeeded = [];
     try {
         clearMessages();
         if (!isAdmin) {
@@ -1643,12 +1699,36 @@ async function copySelectedImages() {
         // before the click) resolve immediately; anything not yet cached is
         // fetched now, in parallel rather than one-at-a-time, so total wait
         // is bounded by the slowest single image instead of the sum of all
-        // of them.
-        const blobs = await Promise.all(imageIds.map(id => prefetchImageBlob(id)));
-        const files = blobs.map((blob, i) => {
-            const mime = blob.type || "image/jpeg";
+        // of them. Progress is reported via the same "infoMsg" notice used
+        // everywhere else on this page, updated as each image settles, so a
+        // large selection on a slow connection shows visible movement
+        // instead of looking frozen.
+        const total = imageIds.length;
+        let completed = 0;
+        showInfo(`Preparing images... 0 of ${total}`);
+        const results = await Promise.all(imageIds.map(async (id) => {
+            const blob = await fetchImageForShare(id);
+            completed += 1;
+            showInfo(`Preparing images... ${completed} of ${total}`);
+            return { id, blob };
+        }));
+
+        succeeded = results.filter(r => r.blob);
+        const failedCount = results.length - succeeded.length;
+
+        if (!succeeded.length) {
+            showError("Couldn't prepare any of the selected images — check your connection and try again.");
+            return;
+        }
+
+        const skippedNote = failedCount
+            ? ` (${failedCount} image${failedCount === 1 ? "" : "s"} couldn't be included.)`
+            : "";
+
+        const files = succeeded.map((r, i) => {
+            const mime = r.blob.type || "image/jpeg";
             const extension = (mime.split("/")[1] || "jpg").toLowerCase();
-            return new File([blob], `image_${i + 1}.${extension}`, { type: mime });
+            return new File([r.blob], `image_${i + 1}.${extension}`, { type: mime });
         });
 
         if (
@@ -1657,31 +1737,40 @@ async function copySelectedImages() {
             navigator.canShare({ files })
         ) {
             await navigator.share({ files, title: "Stock Images" });
-            showInfo(`Shared ${files.length} image${files.length === 1 ? "" : "s"}.`);
+            showInfo(`Shared ${files.length} image${files.length === 1 ? "" : "s"}.${skippedNote}`);
             exitSelectMode();
             return;
         }
 
-        for (let i = 0; i < imageIds.length; i += 1) {
-            const link = document.createElement("a");
-            link.href = getShareImageSource(imageIds[i]);
-            link.download = `image_${i + 1}`;
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-        }
-        showInfo(`Share not supported on this browser. Downloaded ${imageIds.length} image${imageIds.length === 1 ? "" : "s"} instead.`);
+        downloadImagesAsFiles(succeeded.map(r => r.id));
+        showInfo(`Share not supported on this browser. Downloaded ${succeeded.length} image${succeeded.length === 1 ? "" : "s"} instead.${skippedNote}`);
         exitSelectMode();
     } catch (error) {
         if (error && error.name === "AbortError") {
             showInfo("Share canceled.");
             return;
         }
-        if (error && error.name === "NotAllowedError" && /gesture/i.test(error.message || "")) {
-            showError("Sharing timed out — try selecting fewer images, or use Copy Image individually.");
-            return;
+        // navigator.share() itself failed (gesture window expired, or some
+        // other picker error) after images were already fetched -- rather
+        // than leaving the user with nothing to do but start over, offer to
+        // download whatever was successfully prepared.
+        const canOfferDownload = succeeded.length > 0;
+        const baseMsg = (error && error.name === "NotAllowedError" && /gesture/i.test(error.message || ""))
+            ? "Sharing timed out — try selecting fewer images, or use Copy Image individually."
+            : (error && error.message) || "Sharing failed.";
+        if (canOfferDownload) {
+            showErrorWithAction(
+                `${baseMsg} You can still download the ${succeeded.length} image${succeeded.length === 1 ? "" : "s"} that were already prepared.`,
+                "Download images",
+                () => {
+                    downloadImagesAsFiles(succeeded.map(r => r.id));
+                    showInfo(`Downloaded ${succeeded.length} image${succeeded.length === 1 ? "" : "s"}.`);
+                    exitSelectMode();
+                }
+            );
+        } else {
+            showError(baseMsg);
         }
-        showError(error.message);
     }
 }
 
