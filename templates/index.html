@@ -426,6 +426,24 @@
             font-weight: 700;
         }
 
+        /* Shown past LARGE_SELECTION_WARNING_THRESHOLD (see JS) -- non-
+           blocking, sharing still works, this is just an honest heads-up
+           that very large batches measured slower/less reliable on a poor
+           connection even after /get_share_image's compression. A block
+           sibling of .selection-toolbar (not a flex item inside it) so it
+           always gets its own full-width line, even on mobile where that
+           row is a horizontally-scrolling strip -- a warning that could
+           itself be scrolled out of view would defeat the point. */
+        .selection-warning {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+            color: #92400e;
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1.4;
+        }
+
         .select-check {
             display: none;
             position: absolute;
@@ -983,6 +1001,7 @@
             <span id="selectionCount" class="selection-count">0 selected</span>
             <button id="copySelectedBtn" onclick="copySelectedImages()" title="Share the selected images" disabled>Share Images</button>
         </div>
+        <div id="selectionWarning" class="selection-warning" style="display:none;"></div>
         {% endif %}
     </div>
 
@@ -1079,6 +1098,15 @@ let longPressStartXY = null;
 let suppressNextClick = false;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_THRESHOLD = 10;
+
+// Real-network measurements (real photos from this catalog, real Chrome
+// throttling presets, since the compression in /get_share_image cut total
+// payload substantially but selections beyond this size still measured
+// multiple seconds to tens of seconds on a poor connection -- long enough to
+// risk navigator.share() outliving the click's user-activation window and
+// failing with "Must be handling a user gesture" instead of a clear reason).
+// This is a non-blocking heads-up, not a hard cap -- sharing still proceeds.
+const LARGE_SELECTION_WARNING_THRESHOLD = 25;
 
 function clearMessages() {
     document.getElementById("errorMsg").style.display = "none";
@@ -1447,6 +1475,15 @@ function updateSelectModeUI() {
         countLabel.textContent = `${selectedImageIds.size} selected`;
     }
 
+    const warningLabel = document.getElementById("selectionWarning");
+    if (warningLabel) {
+        const showWarning = selectedImageIds.size > LARGE_SELECTION_WARNING_THRESHOLD;
+        warningLabel.style.display = showWarning ? "" : "none";
+        if (showWarning) {
+            warningLabel.textContent = `Sharing more than ${LARGE_SELECTION_WARNING_THRESHOLD} images at once may be slow on a weak connection — consider splitting into smaller batches.`;
+        }
+    }
+
     const copyBtn = document.getElementById("copySelectedBtn");
     if (copyBtn) {
         copyBtn.disabled = selectedImageIds.size === 0;
@@ -1533,16 +1570,31 @@ function handleDesignsListTouchEnd() {
 // Images" is clicked. navigator.share() requires an active user gesture, and
 // browsers expire that gesture a few seconds after the click; fetching N
 // images sequentially at click-time was often slow enough to burn through
-// that window before share() ever ran. Keying the cache by URL means a
+// that window before share() ever ran. Keying the cache by image id means a
 // click-time cache hit resolves in a microtask instead of a network
 // round-trip, keeping share() close enough to the original gesture to count.
+//
+// Measured against this catalog's real images: large selections (15-30+)
+// were still slow/failing even with the above prefetch, because raw file
+// size -- not request count or server concurrency -- was the actual
+// bottleneck (some real photos here run 1-2.5MB; total payload for a 30-50
+// image selection reached 6-14MB). /get_share_image/<id> serves a resized,
+// compressed copy (see app.py) specifically for this flow -- measured ~64%
+// smaller on average, far more for the large-tail originals that dominate
+// total transfer time -- while the main grid, full-screen modal, and Copy
+// Image all keep fetching full-resolution originals via getImageSource(),
+// unchanged.
 const selectedImageBlobCache = new Map();
 
-function prefetchImageBlob(url) {
-    if (selectedImageBlobCache.has(url)) {
-        return selectedImageBlobCache.get(url);
+function getShareImageSource(imageId) {
+    return `/get_share_image/${encodeURIComponent(imageId)}`;
+}
+
+function prefetchImageBlob(imageId) {
+    if (selectedImageBlobCache.has(imageId)) {
+        return selectedImageBlobCache.get(imageId);
     }
-    const promise = fetch(getImageSource(url)).then(response => {
+    const promise = fetch(getShareImageSource(imageId)).then(response => {
         if (!response.ok) {
             throw new Error(`Image fetch failed (HTTP ${response.status})`);
         }
@@ -1552,14 +1604,12 @@ function prefetchImageBlob(url) {
     // as an unhandled rejection; copySelectedImages() awaits this same cached
     // promise later and handles the real error there.
     promise.catch(() => {});
-    selectedImageBlobCache.set(url, promise);
+    selectedImageBlobCache.set(imageId, promise);
     return promise;
 }
 
 function prefetchSelectedImageBlobs() {
-    Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
-        .filter(button => selectedImageIds.has(button.dataset.imageId) && button.dataset.src)
-        .forEach(button => prefetchImageBlob(button.dataset.src));
+    selectedImageIds.forEach(imageId => prefetchImageBlob(imageId));
 }
 
 async function copySelectedImages() {
@@ -1578,13 +1628,13 @@ async function copySelectedImages() {
         const selectedButtons = Array.from(document.querySelectorAll("#designsList .thumbnail-button[data-src][data-image-id]"))
             .filter(button => selectedImageIds.has(button.dataset.imageId));
 
-        const urls = Array.from(new Set(
+        const imageIds = Array.from(new Set(
             selectedButtons
-                .map(button => button.dataset.src || "")
+                .map(button => button.dataset.imageId || "")
                 .filter(Boolean)
         ));
 
-        if (!urls.length) {
+        if (!imageIds.length) {
             showError("No linked images are available in the current selection.");
             return;
         }
@@ -1594,7 +1644,7 @@ async function copySelectedImages() {
         // fetched now, in parallel rather than one-at-a-time, so total wait
         // is bounded by the slowest single image instead of the sum of all
         // of them.
-        const blobs = await Promise.all(urls.map(url => prefetchImageBlob(url)));
+        const blobs = await Promise.all(imageIds.map(id => prefetchImageBlob(id)));
         const files = blobs.map((blob, i) => {
             const mime = blob.type || "image/jpeg";
             const extension = (mime.split("/")[1] || "jpg").toLowerCase();
@@ -1612,15 +1662,15 @@ async function copySelectedImages() {
             return;
         }
 
-        for (let i = 0; i < urls.length; i += 1) {
+        for (let i = 0; i < imageIds.length; i += 1) {
             const link = document.createElement("a");
-            link.href = getImageSource(urls[i]);
+            link.href = getShareImageSource(imageIds[i]);
             link.download = `image_${i + 1}`;
             document.body.appendChild(link);
             link.click();
             link.remove();
         }
-        showInfo(`Share not supported on this browser. Downloaded ${urls.length} image${urls.length === 1 ? "" : "s"} instead.`);
+        showInfo(`Share not supported on this browser. Downloaded ${imageIds.length} image${imageIds.length === 1 ? "" : "s"} instead.`);
         exitSelectMode();
     } catch (error) {
         if (error && error.name === "AbortError") {
