@@ -147,7 +147,7 @@
         }
 
         /* Tier 2 -- now a single merged row (see the HTML): car-scoped
-           actions (Select Images, Assign Category) in a left cluster, and
+           actions (Share Images, Assign Category) in a left cluster, and
            always-visible general actions (Update Stock, Train Matches,
            More) in a right cluster. space-between gives a large, deliberate
            gap between the two clusters -- an earlier round used a visible
@@ -1470,7 +1470,7 @@
              once -- see updateModeToggleVisibility(). -->
         <div class="toolbar tier2-row" id="tier2Row">
             <div class="actions-cluster" id="carScopedCluster">
-                <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
+                <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Share Images</button>
                 <select id="assignCategorySelect" class="secondary" style="display:none;" onchange="handleAssignCategoryPick(this)" title="Tag every selected item for this car with a material-tier category (Pearl, Ruby, Saka, etc.)">
                     <option value="" selected>Assign Category&hellip;</option>
                     {% for choice in design_category_choices %}
@@ -2195,7 +2195,7 @@ function updateModeToggleVisibility() {
     const selectBtn = document.getElementById("selectModeBtn");
     if (selectBtn) {
         selectBtn.style.display = (hasCarSelected && !categoryAssignMode) ? "" : "none";
-        selectBtn.textContent = selectMode ? "Cancel" : "Select Images";
+        selectBtn.textContent = selectMode ? "Cancel" : "Share Images";
     }
     // Fully hidden (not just disabled) while its own mode is active -- same
     // treatment as #selectModeBtn above, so an inert, grayed-out "Assign
@@ -2224,7 +2224,7 @@ function updateModeToggleVisibility() {
     // (car-scoped: hasCarSelected && !categoryAssignMode is false; general:
     // toolbar-admin-btn hides for categoryAssignMode too) -- this just
     // avoids leaving an empty, padded row behind in that one case. During
-    // plain selectMode the right cluster hides but "Select Images" (now
+    // plain selectMode the right cluster hides but "Share Images" (now
     // showing "Cancel") in the left cluster stays visible, so the row
     // itself must stay visible then.
     const tier2Row = document.getElementById("tier2Row");
