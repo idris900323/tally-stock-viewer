@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\('app.py', doraise=True\\); print\\('APP SYNTAX OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(git commit -m ' *)",
+      "Bash(node --version)",
+      "Bash(python -)",
+      "Bash(node --check \"C:\\\\Users\\\\idirs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-idirs-Desktop-tally-test\\\\f3d95263-7828-46ba-abb5-801e73fa98d2\\\\scratchpad\\\\index_inline.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\idirs\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-idirs-Desktop-tally-test\\\\f3d95263-7828-46ba-abb5-801e73fa98d2\\\\scratchpad\\\\index_rendered.js\")",
+      "Bash(node -e ' *)",
+      "Bash(grep -n \"def load_data\" app.py matcher.py)",
+      "Bash(grep -rn \"Popen\\\\|subprocess\\\\|check_output\\\\|check_call\\\\|os.system\" matcher.py utils/excel_helpers.py)",
+      "Bash(head -20 utils/excel_helpers.py)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\\\\n\" --max-time 20 https://superseatings.carxone.com/health)",
+      "Bash(curl -s --max-time 20 https://superseatings.carxone.com/health)"
+    ]
+  }
+}

@@ -684,7 +684,30 @@
            .design-item.unmapped-card .design-thumbnail's opacity -- that rule
            only targets .design-thumbnail, not this). pointer-events: none
            keeps it purely decorative, never intercepting the thumbnail's own
-           click/select handling. */
+           click/select handling.
+
+           Root cause of the reported blurriness (Part 6): NOT a transform or
+           filter (there was never one on this element), and NOT font-size
+           alone -- it was the semi-transparent rgba(..., 0.85) background
+           sitting directly over a real product photo. Anti-aliased white
+           text blends its edge pixels against whatever is immediately behind
+           it; with a translucent backdrop that "behind" is the photo's own
+           texture/noise showing through at ~15% strength, not a flat color,
+           so every glyph edge picks up a slightly different fringe color
+           depending on what part of the photo is underneath. A fully opaque
+           background removes that variability -- text edges now anti-alias
+           against one flat, known color everywhere, which is what actually
+           reads as "crisp" vs "blurry" (confirmed by comparing against
+           .badge-row's already-crisp, always-opaque .badge pills). Bumped
+           font-size 10px->11px (matching .badge's own size) and dropped
+           font-weight 700->600 -- now safe since Part 6 also shortened the
+           displayed text to abbreviations (max 6 chars, e.g. "P.DSGN"),
+           so there's headroom that wasn't there when this had to fit
+           "Pearl Designer" at 10px; heavier weight was doing some of the
+           legibility work text-size alone should. text-rendering/
+           -webkit-font-smoothing made explicit rather than left at the
+           default "auto" (harmless, but removes doubt when
+           re-investigating any future rendering-crispness report). */
         .category-ribbon {
             position: absolute;
             top: 6px;
@@ -693,15 +716,17 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            font-size: 10px;
-            font-weight: 700;
+            font-size: 11px;
+            font-weight: 600;
             letter-spacing: 0.02em;
             color: #fff;
-            background: rgba(91, 33, 182, 0.85);
+            background: #5b21b6;
             padding: 3px 8px;
             border-radius: 999px;
             pointer-events: none;
             z-index: 1;
+            text-rendering: optimizeLegibility;
+            -webkit-font-smoothing: antialiased;
         }
 
         .selection-toolbar {
@@ -974,17 +999,41 @@
             background: rgba(2, 6, 23, 0.78);
         }
 
+        /* This panel previously had only a max-height (92vh), never an
+           explicit height, so its own height was indefinite. A percentage
+           height (.modal-body img's max-height:100%) can only resolve
+           against a DEFINITE ancestor height -- a max-height alone doesn't
+           count, even inside a flex/grid container with a shrink algorithm,
+           because the algorithm's clamped "used size" during layout isn't
+           the same thing as a definite size for a later, separate
+           percentage-resolution pass. In practice that meant .modal-body
+           (nee the old CSS Grid `1fr` row) sized itself to its image's
+           natural pixel dimensions no matter how large, and the excess
+           just got silently clipped by this panel's overflow:hidden --
+           cutting off the bottom of the image and/or the Copy Image button.
+           Confirmed by testing an actual 3120x4160 photo: switching only to
+           flexbox (still with max-height, no real height) did NOT fix it --
+           the image kept rendering at its full aspect-ratio'd width-driven
+           height regardless of available space. Giving this panel a real
+           `height` (not just a cap) is what actually makes every descendant
+           height definite end-to-end, letting max-height:100% finally
+           resolve. display:flex + flex-direction:column (replacing the old
+           CSS Grid auto/1fr/auto rows) then distributes that definite
+           height between the head/body/actions bars -- see .modal-body's
+           flex:1 1 auto + min-height:0 below. Pre-existing since this
+           modal's first commit, not a regression from the card redesign or
+           swipe-nav work (neither touched this sizing chain). */
         .modal-panel {
             position: relative;
             z-index: 1;
             width: min(94vw, 1200px);
-            max-height: 92vh;
+            height: 92vh;
             background: #fff;
             border-radius: 18px;
             overflow: hidden;
             box-shadow: 0 24px 80px rgba(15, 23, 42, 0.35);
-            display: grid;
-            grid-template-rows: auto 1fr auto;
+            display: flex;
+            flex-direction: column;
         }
 
         .modal-head {
@@ -994,6 +1043,7 @@
             align-items: center;
             padding: 12px 16px;
             border-bottom: 1px solid var(--border);
+            flex: 0 0 auto;
         }
 
         .modal-head-text {
@@ -1015,6 +1065,14 @@
             align-items: center;
             justify-content: center;
             padding: 14px;
+            /* flex:1 1 auto lets this row shrink below its image's natural
+               size instead of forcing .modal-panel to overflow (see the
+               comment on .modal-panel above); min-height:0 overrides the
+               flex-item default of min-height:auto, which would otherwise
+               floor this row at the image's intrinsic height and defeat the
+               shrink entirely. */
+            flex: 1 1 auto;
+            min-height: 0;
         }
 
         .modal-body img {
@@ -1067,6 +1125,7 @@
             padding: 12px 16px;
             border-top: 1px solid var(--border);
             background: #f8fafc;
+            flex: 0 0 auto;
         }
 
         .contact-footer {
@@ -1471,12 +1530,7 @@
         <div class="toolbar tier2-row" id="tier2Row">
             <div class="actions-cluster" id="carScopedCluster">
                 <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Share Images</button>
-                <select id="assignCategorySelect" class="secondary" style="display:none;" onchange="handleAssignCategoryPick(this)" title="Tag every selected item for this car with a material-tier category (Pearl, Ruby, Saka, etc.)">
-                    <option value="" selected>Assign Category&hellip;</option>
-                    {% for choice in design_category_choices %}
-                    <option value="{{ choice }}">{{ choice }}</option>
-                    {% endfor %}
-                </select>
+                <button id="assignCategoryBtn" class="secondary" style="display:none;" onclick="enterCategoryAssignMode()" title="Open a continuous session to tag this car's items with material-tier categories (Pearl, Ruby, Saka, etc.)">Assign Category</button>
             </div>
             <!-- Always visible (Update Stock refreshes the whole catalog,
                  not just the selected car, so it doesn't belong behind the
@@ -1526,17 +1580,27 @@
             <button id="batchContinueActionBtn" type="button" title="Continue the batched share"></button>
             <button id="batchContinueCancelBtn" type="button" class="secondary" title="Stop sharing the remaining batches">Cancel</button>
         </div>
-        <!-- "Assign Category" selection mode (see Part 5) -- mutually
-             exclusive with #selectionToolbar/#batchContinueBar above; entering
-             one always exits the other (see enterSelectMode()/
-             enterCategoryAssignMode()). Lives in the sticky bar for the same
-             reachability reason as the other selection toolbars here. -->
+        <!-- "Assign Category" continuous tagging session (see Part 2 of the
+             redesign spec) -- mutually exclusive with #selectionToolbar/
+             #batchContinueBar above; entering one always exits the other
+             (see enterSelectMode()/enterCategoryAssignMode()). Stays open
+             across as many category-picker changes and Apply clicks as the
+             admin needs (each Apply commits immediately, see
+             applyCategoryToSelection()) -- only "Done" closes it. Lives in
+             the sticky bar for the same reachability reason as the other
+             selection toolbars here. -->
         <div id="categoryAssignToolbar" class="toolbar selection-toolbar" style="display:none;">
             <span id="categoryAssignLabel" class="selection-count"></span>
+            <select id="categoryActiveSelect" class="secondary" onchange="handleCategoryActivePick(this)" title="Choose the category to apply to your next selection">
+                <option value="" selected>Choose category&hellip;</option>
+                {% for choice in design_category_choices %}
+                <option value="{{ choice }}">{{ choice }}</option>
+                {% endfor %}
+            </select>
             <button id="categorySelectAllBtn" class="secondary" onclick="toggleCategorySelectAll()" title="Select every item currently shown">Select All</button>
             <span id="categorySelectionCount" class="selection-count">0 selected</span>
-            <button id="confirmCategoryBtn" onclick="confirmCategoryAssignment()" disabled>Confirm Assignment</button>
-            <button class="secondary" onclick="cancelCategoryAssignMode()">Cancel</button>
+            <button id="applyCategoryBtn" onclick="applyCategoryToSelection()" disabled>Apply</button>
+            <button id="doneCategoryAssignBtn" class="secondary" onclick="closeCategorySession()" title="Close this session and return to normal browsing -- every Apply above already saved, so there's nothing left to save">Done</button>
         </div>
         {% endif %}
     </div>
@@ -1566,7 +1630,7 @@
 
     <div id="designsContainer" class="panel designs-container">
         <div class="designs-header">
-            <h2 style="margin:0;">Available Designs for <span id="selectedCarName"></span></h2>
+            <h2 style="margin:0;"><span id="designsHeaderPrefix">Available Designs for</span> <span id="selectedCarName"></span></h2>
             <p id="designCount" style="margin:0; color: var(--muted);"></p>
         </div>
         <ul id="designsList"></ul>
@@ -1617,6 +1681,21 @@ const isCustomer = {{ is_customer|tojson }};
 // below) so each picks up its badge's existing text color automatically.
 const BADGE_ICON_LINKED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="12" height="12"><path fill="currentColor" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.7-9.3a1 1 0 00-1.4-1.4L9 10.6 7.7 9.3a1 1 0 00-1.4 1.4l2 2a1 1 0 001.4 0l4-4z"/></svg>';
 const BADGE_ICON_UNMAPPED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="12" height="12"><path fill="currentColor" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.334-.213 3.003-1.743 3.003H3.482c-1.53 0-2.493-1.669-1.743-3.003L8.257 3.1zM10 8a1 1 0 00-1 1v3a1 1 0 002 0V9a1 1 0 00-1-1zm0 7a1.125 1.125 0 100-2.25A1.125 1.125 0 0010 15z"/></svg>';
+// Short forms for the on-thumbnail .category-ribbon ONLY (Part 6) -- the
+// full name (item.category, unabbreviated) still goes everywhere else: the
+// full-screen modal's badge (see displayModalImage()), and this same
+// ribbon's own title="..." tooltip (see renderDesignItem()). A category
+// with no entry here (shouldn't happen -- this covers every value in
+// db.DESIGN_CATEGORY_CHOICES) just falls back to its own full name.
+const CATEGORY_RIBBON_ABBREVIATIONS = {
+    "Pearl": "PEARL",
+    "Pearl Designer": "P.DSGN",
+    "Pearl Deluxe": "P.DLX",
+    "Saka": "SAKA",
+    "Ruby": "RUBY",
+    "Napa Deluxe": "N.DLX",
+    "Napa Designer": "N.DSGN",
+};
 const STAGE_LABELS = {
     car_master: "Stage 1/4 — Updating car master list from Tally...",
     main_hierarchy: "Stage 2/4 — Updating main hierarchy from Tally...",
@@ -2080,9 +2159,9 @@ function enterSelectMode() {
         return;
     }
     // Mutually exclusive with categoryAssignMode -- entering one always
-    // exits the other first (see Part 5/7 of the Assign Category spec).
+    // exits the other first (see Part 2 of the Assign Category spec).
     if (categoryAssignMode) {
-        cancelCategoryAssignMode();
+        closeCategorySession();
     }
     selectMode = true;
     updateSelectModeUI();
@@ -2184,7 +2263,7 @@ function updateAllToolbarScrollFades() {
 // Shared by updateSelectModeUI() and updateCategoryAssignModeUI() --
 // selectMode and categoryAssignMode are mutually exclusive (see
 // enterSelectMode()/enterCategoryAssignMode()), so exactly one of
-// #selectModeBtn/#assignCategorySelect/toolbar-admin-btn's visibility rules
+// #selectModeBtn/#assignCategoryBtn/toolbar-admin-btn's visibility rules
 // ever needs to reflect "the other mode is active" at a time, but both
 // entry points share the same rules, hence one function instead of two
 // copies drifting apart.
@@ -2198,10 +2277,10 @@ function updateModeToggleVisibility() {
         selectBtn.textContent = selectMode ? "Cancel" : "Share Images";
     }
     // Fully hidden (not just disabled) while its own mode is active -- same
-    // treatment as #selectModeBtn above, so an inert, grayed-out "Assign
-    // Category…" placeholder doesn't linger next to the car select while
-    // the categoryAssignToolbar row below already has its own Cancel.
-    const categoryPicker = document.getElementById("assignCategorySelect");
+    // treatment as #selectModeBtn above, so an inert "Assign Category"
+    // trigger doesn't linger next to the car select while the
+    // categoryAssignToolbar session bar below already has its own Done.
+    const categoryPicker = document.getElementById("assignCategoryBtn");
     if (categoryPicker) {
         categoryPicker.style.display = (hasCarSelected && !selectMode && !categoryAssignMode) ? "" : "none";
     }
@@ -2209,7 +2288,7 @@ function updateModeToggleVisibility() {
     // the More menu trigger that now holds Full Refresh/Manage Accounts/
     // System) out for whichever selection controls are active, so the sticky
     // bar never shows unrelated button sets at once. selectModeBtn/
-    // assignCategorySelect themselves are exempt -- they stay put (see their
+    // assignCategoryBtn themselves are exempt -- they stay put (see their
     // own display rules above).
     document.querySelectorAll(".toolbar-admin-btn").forEach(actionBtn => {
         actionBtn.style.display = (selectMode || categoryAssignMode) ? "none" : "";
@@ -2388,15 +2467,24 @@ function updateSelectModeUI() {
 }
 
 // ============================================================
-// "Assign Category" selection mode (Part 5) -- car-scoped, admin-only bulk
-// tagging. Mutually exclusive with selectMode (Share Images) above: entering
-// one always exits the other first (see enterSelectMode()/
-// enterCategoryAssignMode()). Reuses renderDesignItem() as-is for cards (the
-// same visual pattern as every other design card, including the category
-// badge from Part 6, which doubles as "here's what you're about to
-// overwrite" for already-tagged items) and reuses /api/get_all_items_for_car
-// (Part 2) instead of /designs so zero-stock and unmapped items are
-// selectable too, not just what customers currently see.
+// "Assign Category" continuous tagging session (Part 2 of the redesign
+// spec) -- car-scoped, admin-only. Mutually exclusive with selectMode (Share
+// Images) above: entering one always exits the other first (see
+// enterSelectMode()/enterCategoryAssignMode()). Reuses renderDesignItem() as-
+// is for cards (the same visual pattern as every other design card,
+// including the category ribbon, which doubles as "here's what you're about
+// to overwrite" for already-tagged items) and reuses
+// /api/get_all_items_for_car instead of /designs so zero-stock and unmapped
+// items are selectable too, not just what customers currently see.
+//
+// Unlike the old "pick a category -> select items -> Confirm (which also
+// exited the mode)" flow, this session stays open across as many
+// category-picker changes + Apply clicks as the admin wants: each Apply
+// (applyCategoryToSelection()) commits its own batch immediately via the
+// unchanged /admin/assign_category endpoint and clears only that batch's
+// checkmarks, updating those cards' badges in place (updateCardCategoryBadge())
+// instead of reloading the whole list -- the session itself only ends when
+// the admin clicks "Done" (closeCategorySession()).
 // ============================================================
 
 function resetCategoryAssignState() {
@@ -2405,16 +2493,7 @@ function resetCategoryAssignState() {
     categorySelectedKeys.clear();
 }
 
-function handleAssignCategoryPick(selectEl) {
-    const category = selectEl.value;
-    selectEl.value = ""; // reset to the "Assign Category…" placeholder
-    if (!category || !isAdmin) {
-        return;
-    }
-    enterCategoryAssignMode(category);
-}
-
-async function enterCategoryAssignMode(category) {
+async function enterCategoryAssignMode() {
     if (!isAdmin) {
         return;
     }
@@ -2426,17 +2505,35 @@ async function enterCategoryAssignMode(category) {
         exitSelectMode();
     }
     categoryAssignMode = true;
-    categoryAssignCategory = category;
+    // No active category until the admin explicitly picks one (Part 2.2).
+    categoryAssignCategory = null;
     categorySelectedKeys.clear();
+    const activeSelect = document.getElementById("categoryActiveSelect");
+    if (activeSelect) {
+        activeSelect.value = "";
+    }
     updateCategoryAssignModeUI();
     await loadAllItemsForCategoryAssign(car);
 }
 
-function cancelCategoryAssignMode() {
+// Sets which category the next Apply click will use -- independent of the
+// current item selection, so switching this mid-session (Part 2.5) never
+// touches categorySelectedKeys. Left as-is (not reset to a placeholder)
+// after each pick, unlike the old one-shot entry dropdown this replaced --
+// it now reflects a persistent "current setting" for the session, not a
+// single trigger.
+function handleCategoryActivePick(selectEl) {
+    categoryAssignCategory = selectEl.value || null;
+    updateCategoryAssignModeUI();
+}
+
+function closeCategorySession() {
     resetCategoryAssignState();
     updateCategoryAssignModeUI();
-    // Restores the normal, qty-filtered customer design list (Part 2's
-    // all-items list is only ever shown while actively assigning).
+    // Restores the normal, qty-filtered customer design list (the all-items
+    // list from /api/get_all_items_for_car is only ever shown during an
+    // active session). Nothing to save here -- every Apply during the
+    // session already committed to the database on its own (Part 2.6).
     loadDesigns();
 }
 
@@ -2507,9 +2604,18 @@ function updateCategoryAssignModeUI() {
         toolbar.style.display = categoryAssignMode ? "flex" : "none";
     }
 
+    // "Manage Categories for X" while the session is open, same "Available
+    // Designs for X" as always otherwise (Part 2.1's session-title wording).
+    const headerPrefix = document.getElementById("designsHeaderPrefix");
+    if (headerPrefix) {
+        headerPrefix.textContent = categoryAssignMode ? "Manage Categories for" : "Available Designs for";
+    }
+
     const label = document.getElementById("categoryAssignLabel");
     if (label) {
-        label.textContent = categoryAssignMode ? `Assigning: ${categoryAssignCategory}` : "";
+        label.textContent = categoryAssignMode
+            ? (categoryAssignCategory ? `Active category: ${categoryAssignCategory}` : "Pick a category below to begin")
+            : "";
     }
 
     const countLabel = document.getElementById("categorySelectionCount");
@@ -2517,9 +2623,16 @@ function updateCategoryAssignModeUI() {
         countLabel.textContent = `${categorySelectedKeys.size} selected`;
     }
 
-    const confirmBtn = document.getElementById("confirmCategoryBtn");
-    if (confirmBtn) {
-        confirmBtn.disabled = categorySelectedKeys.size === 0;
+    // Label updates live off BOTH the active category and the current
+    // selection count (Part 2.4), and is disabled until there's something
+    // real for it to do -- either an active category or a non-empty
+    // selection missing.
+    const applyBtn = document.getElementById("applyCategoryBtn");
+    if (applyBtn) {
+        applyBtn.textContent = categoryAssignCategory
+            ? `Apply ${categoryAssignCategory} to ${categorySelectedKeys.size} selected`
+            : "Choose a category to apply";
+        applyBtn.disabled = !categoryAssignCategory || categorySelectedKeys.size === 0;
     }
 
     const selectAllBtn = document.getElementById("categorySelectAllBtn");
@@ -2541,22 +2654,59 @@ function updateCategoryAssignModeUI() {
     updateAllToolbarScrollFades();
 }
 
-async function confirmCategoryAssignment() {
-    const confirmBtn = document.getElementById("confirmCategoryBtn");
-    if (confirmBtn && confirmBtn.disabled) {
+// Pushes a just-applied category onto one card's ribbon/tooltip/dataset in
+// place (Part 2.7) -- no renderDesignItem() re-render and no /designs
+// refetch needed, so the rest of the session's state (other cards' selection
+// checkmarks, scroll position, etc.) is left completely undisturbed. Uses
+// the DOM property APIs (textContent/dataset/title), not innerHTML, so
+// nothing here needs manual HTML-escaping the way renderDesignItem()'s
+// template-literal string building does.
+function updateCardCategoryBadge(card, category) {
+    if (!card) {
         return;
     }
-    if (confirmBtn) {
-        confirmBtn.disabled = true;
+    card.dataset.category = category;
+    const thumbBtn = card.querySelector(".thumbnail-button");
+    if (!thumbBtn) {
+        return;
+    }
+    thumbBtn.dataset.category = category;
+    let ribbon = thumbBtn.querySelector(".category-ribbon");
+    if (!ribbon) {
+        ribbon = document.createElement("span");
+        ribbon.className = "category-ribbon";
+        // Same position as renderDesignItem() places it: after the <img>,
+        // before .select-check (which always exists on every card).
+        thumbBtn.insertBefore(ribbon, thumbBtn.querySelector(".select-check"));
+    }
+    ribbon.textContent = (CATEGORY_RIBBON_ABBREVIATIONS[category] || category).toUpperCase();
+    ribbon.title = category;
+}
+
+// Applies categoryAssignCategory to exactly the currently-selected cards --
+// one batch, committed immediately via the same /admin/assign_category
+// endpoint and validation the old one-shot Confirm used (Part 2's
+// constraint: only the frontend call pattern changes, not that backend
+// route). Unlike the old flow, success does NOT exit the session or reload
+// the list: it clears only this batch's checkmarks and updates only those
+// cards' badges in place, leaving the category picker, the rest of the item
+// list, and the session itself exactly as they were so the admin can
+// immediately select the next batch (Part 2.5).
+async function applyCategoryToSelection() {
+    const applyBtn = document.getElementById("applyCategoryBtn");
+    if (!categoryAssignCategory || categorySelectedKeys.size === 0) {
+        return;
+    }
+    if (applyBtn) {
+        applyBtn.disabled = true;
     }
     try {
         clearMessages();
-        const stockItemNames = Array.from(categorySelectedKeys)
-            .map(key => {
-                const card = document.querySelector(`#designsList .design-item[data-item-key="${key}"]`);
-                return card ? card.dataset.stockItemName : null;
-            })
+        const category = categoryAssignCategory;
+        const cards = Array.from(categorySelectedKeys)
+            .map(key => document.querySelector(`#designsList .design-item[data-item-key="${key}"]`))
             .filter(Boolean);
+        const stockItemNames = cards.map(card => card.dataset.stockItemName).filter(Boolean);
 
         if (!stockItemNames.length) {
             showError("No items selected.");
@@ -2566,7 +2716,7 @@ async function confirmCategoryAssignment() {
         const res = await fetch("/admin/assign_category", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ category: categoryAssignCategory, stock_item_names: stockItemNames }),
+            body: JSON.stringify({ category, stock_item_names: stockItemNames }),
         });
         const data = await res.json().catch(() => ({}));
 
@@ -2575,24 +2725,16 @@ async function confirmCategoryAssignment() {
             return;
         }
 
+        cards.forEach(card => updateCardCategoryBadge(card, category));
+
         const count = data.assigned_count ?? 0;
-        const assignedCategoryLabel = categoryAssignCategory; // resetCategoryAssignState() below clears categoryAssignCategory
-        resetCategoryAssignState();
+        categorySelectedKeys.clear();
         updateCategoryAssignModeUI();
-        // Refreshes the current car's normal design list so updated badges
-        // are immediately visible, per Part 5's Confirm behavior. Awaited
-        // (and the success message shown AFTER, not before) because
-        // loadDesigns() shows its own "Showing N designs" notice on
-        // completion -- showing the assignment count first would just get
-        // silently overwritten a moment later otherwise.
-        await loadDesigns();
-        showInfo(`Assigned "${assignedCategoryLabel}" to ${count} item${count === 1 ? "" : "s"}.`);
+        showInfo(`Applied "${category}" to ${count} item${count === 1 ? "" : "s"}. Session stays open -- pick more items or Done when finished.`);
     } catch (error) {
         showError((error && error.message) || "Failed to assign category.");
     } finally {
-        if (confirmBtn) {
-            confirmBtn.disabled = categorySelectedKeys.size === 0;
-        }
+        updateCategoryAssignModeUI();
     }
 }
 
@@ -3546,7 +3688,11 @@ function renderDesignItem(item, index) {
     // that should stay immediately scannable in that familiar spot.
     const category = item.category || "";
     const escapedCategory = escapeHtml(category);
-    const categoryRibbon = category ? `<span class="category-ribbon">${escapedCategory.toUpperCase()}</span>` : "";
+    // Ribbon shows the short form (Part 6); title="..." and the full-screen
+    // modal (see displayModalImage(), which reads data-category on this same
+    // card's thumbnail-button below) both keep showing the real full name.
+    const ribbonText = escapeHtml((CATEGORY_RIBBON_ABBREVIATIONS[category] || category).toUpperCase());
+    const categoryRibbon = category ? `<span class="category-ribbon" title="${escapedCategory}">${ribbonText}</span>` : "";
     const detailText = isCustomer
         ? ``
         : `
