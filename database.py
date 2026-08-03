@@ -17,6 +17,21 @@ DB_PATH = Config.DB_PATH if os.path.isabs(Config.DB_PATH) else os.path.join(BASE
 IMAGE_ROOT = os.path.join(BASE_DIR, "data", "S.S IMAGE")
 logger = logging.getLogger(__name__)
 
+# The material-tier "Assign Category" tags (see design_categories table below).
+# A fixed, exact list -- validated against on both the DB CHECK constraint and
+# every Python entry point (upsert_design_category()), so an invalid value
+# can never sneak in through either layer alone.
+DESIGN_CATEGORY_CHOICES = (
+    "Pearl",
+    "Pearl Designer",
+    "Pearl Deluxe",
+    "Saka",
+    "Ruby",
+    "Napa Deluxe",
+    "Napa Designer",
+)
+_DESIGN_CATEGORY_CHOICES_SQL = ",".join("'" + choice.replace("'", "''") + "'" for choice in DESIGN_CATEGORY_CHOICES)
+
 
 def _canonicalize_filepath(filepath):
     value = str(filepath or "").strip()
@@ -247,6 +262,19 @@ def init_database():
                 timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
                 FOREIGN KEY (performed_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS design_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_item_key TEXT NOT NULL UNIQUE,
+                stock_item_name TEXT NOT NULL,
+                category TEXT NOT NULL CHECK(category IN ({_DESIGN_CATEGORY_CHOICES_SQL})),
+                assigned_at TEXT NOT NULL,
+                assigned_by INTEGER,
+                FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
             )
             """
         )
@@ -731,6 +759,72 @@ def get_mappings_for_stock_items(stock_item_names):
         if existing is None or candidate_rank > existing_rank:
             result[key] = record
     return result
+
+
+def upsert_design_category(stock_item_name, category, assigned_by):
+    """Assign/overwrite a stock item's material-tier category (last-write-wins,
+    see design_categories table). Keyed on normalize_lookup_key() so the same
+    whitespace-tolerant matching used everywhere else in this codebase
+    (get_mappings_for_stock_items(), _build_design_payload()) also governs
+    category lookups."""
+    stock_item_name = _validate_stock_item_name(stock_item_name)
+    if category not in DESIGN_CATEGORY_CHOICES:
+        raise ValueError(f"invalid category: {category!r}")
+    key = normalize_lookup_key(stock_item_name)
+    if not key:
+        raise ValueError("stock item name is required")
+
+    assigned_at = datetime.now().isoformat(timespec="seconds")
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO design_categories (stock_item_key, stock_item_name, category, assigned_at, assigned_by)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(stock_item_key) DO UPDATE SET
+                    stock_item_name=excluded.stock_item_name,
+                    category=excluded.category,
+                    assigned_at=excluded.assigned_at,
+                    assigned_by=excluded.assigned_by
+                """,
+                (key, stock_item_name, category, assigned_at, assigned_by),
+            )
+    except Exception:
+        logger.exception("upsert_design_category failed for stock_item_name=%s", stock_item_name)
+        raise
+
+
+def get_category_for_stock_item(stock_item_name):
+    key = normalize_lookup_key(stock_item_name)
+    if not key:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT category FROM design_categories WHERE stock_item_key = ?",
+            (key,),
+        ).fetchone()
+    return row["category"] if row else None
+
+
+def get_categories_for_stock_items(stock_item_names):
+    """Batched form of get_category_for_stock_item() -- same shape/spirit as
+    get_mappings_for_stock_items() above. Returns {normalized_key: category}."""
+    cleaned_keys = set()
+    for stock_item_name in stock_item_names or []:
+        key = normalize_lookup_key(stock_item_name)
+        if key:
+            cleaned_keys.add(key)
+
+    if not cleaned_keys:
+        return {}
+
+    placeholders = ",".join("?" for _ in cleaned_keys)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT stock_item_key, category FROM design_categories WHERE stock_item_key IN ({placeholders})",
+            tuple(cleaned_keys),
+        ).fetchall()
+    return {row["stock_item_key"]: row["category"] for row in rows}
 
 
 def get_confirmed_mappings():

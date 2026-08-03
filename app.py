@@ -327,6 +327,7 @@ def inject_session_context():
         "is_admin": role == "admin",
         "is_customer": role == "customer",
         "is_viewer": role == "customer",
+        "design_category_choices": db.DESIGN_CATEGORY_CHOICES,
     }
 
 
@@ -508,10 +509,12 @@ def _build_design_payload(designs):
             stock_item_names.append(stock_item_name)
 
     mapping_lookup = db.get_mappings_for_stock_items(stock_item_names)
+    category_lookup = db.get_categories_for_stock_items(stock_item_names)
     payload = []
     for item in designs or []:
         stock_item_name = item.get("design") or item.get("raw") or "Unknown"
-        mapping = mapping_lookup.get(_normalize_lookup_key(stock_item_name))
+        lookup_key = _normalize_lookup_key(stock_item_name)
+        mapping = mapping_lookup.get(lookup_key)
         enriched_item = dict(item)
         if mapping and mapping.get("image_id"):
             enriched_item.update({
@@ -528,6 +531,10 @@ def _build_design_payload(designs):
                 "confidence": 0.0,
             })
         enriched_item["fix_url"] = f"/train?stock_item={quote(stock_item_name)}"
+        # Assigned via /admin/assign_category (design_categories table) --
+        # visible to both admin and customer views, only ever set server-side
+        # through the admin-only route.
+        enriched_item["category"] = category_lookup.get(lookup_key)
         payload.append(enriched_item)
     return payload
 
@@ -2120,6 +2127,34 @@ def designs():
     return jsonify([])
 
 
+@app.route("/api/get_all_items_for_car")
+@admin_required
+def get_all_items_for_car():
+    """Admin-only, qty-agnostic sibling of /designs -- backs the "Assign
+    Category" selection flow, which must be able to tag zero-stock and
+    not-yet-image-mapped items too, not just what /designs shows customers.
+    Reuses get_stock_items_for_training_from_hierarchy() (the same "every
+    child under this car regardless of stock" lookup Training Mode's fixed
+    item list is built from) rather than re-deriving that list."""
+    car = request.args.get("car")
+    if not car:
+        return jsonify([])
+
+    load_error = ensure_data_loaded()
+    if load_error:
+        return jsonify({"error": load_error}), 500
+
+    items = get_stock_items_for_training_from_hierarchy(car)
+    if not items:
+        return jsonify([])
+
+    designs_input = [
+        {"raw": item["stock_item_name"], "design": item["stock_item_name"], "qty": item.get("qty", 0)}
+        for item in items
+    ]
+    return jsonify(_build_design_payload(designs_input))
+
+
 @app.route("/api/resolve_car_from_folder")
 def resolve_car_from_folder():
     folder = (request.args.get("folder") or "").strip()
@@ -2434,6 +2469,70 @@ def bulk_confirm_mapping():
         "confirmed_count": confirmed_count,
         "failed": failed,
         "stats": stats,
+    })
+
+
+@app.route("/admin/assign_category", methods=["POST"])
+@admin_required
+def assign_category():
+    """Bulk-assigns (last-write-wins, see design_categories table/Part 1) a
+    material-tier category to every stock item name in the request. Unlike
+    image-to-stock-item mapping, this isn't scoped to a single image_id --
+    it's driven by the car-scoped "Assign Category" selection mode in
+    index.html (see Part 2's /api/get_all_items_for_car), so many stock
+    items are tagged in one call."""
+    payload = request.get_json(silent=True) or {}
+    category = str(payload.get("category") or "").strip()
+    stock_item_names = payload.get("stock_item_names")
+
+    if category not in db.DESIGN_CATEGORY_CHOICES:
+        return jsonify({"error": f"category must be one of {list(db.DESIGN_CATEGORY_CHOICES)}"}), 400
+    if not isinstance(stock_item_names, list) or not stock_item_names:
+        return jsonify({"error": "stock_item_names must be a non-empty list"}), 400
+
+    admin_user_id = _current_user_id()
+    assigned_names = []
+    failed = []
+    for raw_name in stock_item_names:
+        stock_item_name = str(raw_name or "").strip()
+        if not stock_item_name:
+            continue
+        try:
+            db.upsert_design_category(stock_item_name, category, admin_user_id)
+            assigned_names.append(stock_item_name)
+        except ValueError as exc:
+            failed.append({"stock_item": stock_item_name, "reason": str(exc)})
+
+    # There's no dedicated admin-action audit table for anything other than
+    # user-account lifecycle events (account_logs is FK'd to a target
+    # users.id row, which a stock item category assignment has no
+    # equivalent of) -- logger.info() is the established pattern this
+    # codebase already uses for other auditable admin/operational actions
+    # (full refresh, stock updates; see logger.info calls elsewhere in this
+    # file), so this follows that precedent instead of forcing a fit into
+    # account_logs.
+    logger.info(
+        "Category '%s' assigned to %d item(s) by user_id=%s: %s",
+        category, len(assigned_names), admin_user_id, assigned_names,
+    )
+
+    # Fire-and-forget pre-generation of the badged share variant (Part 7B)
+    # for every just-tagged item that already has a mapped image, so the
+    # cache is warm before anyone shares it -- runs on a background daemon
+    # thread precisely so this response doesn't wait on however many images
+    # need badging. Items with no mapped image yet have nothing to
+    # pre-generate; get_share_image_badged() still builds on first request
+    # either way (this is a pure optimization, not a correctness dependency).
+    if assigned_names:
+        mapping_lookup = db.get_mappings_for_stock_items(assigned_names)
+        image_ids = [m["image_id"] for m in mapping_lookup.values() if m.get("image_id")]
+        if image_ids:
+            threading.Thread(target=_pregenerate_badged_images, args=(image_ids,), daemon=True).start()
+
+    return jsonify({
+        "assigned_count": len(assigned_names),
+        "category": category,
+        "failed": failed,
     })
 
 
@@ -2791,12 +2890,13 @@ def get_stock_image():
     return _placeholder_response()
 
 
-def _build_share_image(source_path, cache_path):
-    """Write a resized, compressed JPEG copy of source_path to cache_path
-    for the bulk share flow. If re-encoding doesn't actually save space (a
-    handful of already-small, already-compressed originals re-encode
-    slightly larger), the original bytes are cached under the same name
-    unchanged instead -- callers never need to know which happened."""
+def _prepare_share_image(source_path):
+    """Open, EXIF-transpose, flatten-to-RGB, and downscale source_path to
+    SHARE_IMAGE_MAX_DIMENSION -- the resize/compress baseline shared by both
+    the plain share image (_build_share_image) and the badged variant
+    (_build_badged_share_image), so there's exactly one place that logic
+    lives. Returns a standalone PIL Image (detached from the source file
+    handle)."""
     with Image.open(source_path) as original:
         image = ImageOps.exif_transpose(original)  # bake in phone-camera rotation
 
@@ -2814,16 +2914,228 @@ def _build_share_image(source_path, cache_path):
                 (max(1, round(width * scale)), max(1, round(height * scale))),
                 Image.LANCZOS,
             )
+        return image.copy()  # detach from the `with Image.open(...)` block
 
-        buffer = BytesIO()
-        image.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
-        compressed_bytes = buffer.getvalue()
+
+def _build_share_image(source_path, cache_path):
+    """Write a resized, compressed JPEG copy of source_path to cache_path
+    for the bulk share flow. If re-encoding doesn't actually save space (a
+    handful of already-small, already-compressed originals re-encode
+    slightly larger), the original bytes are cached under the same name
+    unchanged instead -- callers never need to know which happened."""
+    image = _prepare_share_image(source_path)
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
+    compressed_bytes = buffer.getvalue()
 
     if len(compressed_bytes) >= os.path.getsize(source_path):
         shutil.copyfile(source_path, cache_path)
     else:
         with open(cache_path, "wb") as handle:
             handle.write(compressed_bytes)
+
+
+_BADGE_FONT_CACHE = {}
+# Common bold-ish TrueType font locations, tried in order. Windows ships
+# arialbd.ttf/arial.ttf on essentially every install (this app targets
+# Windows deployment -- see launcher.pyw/first_time_setup.bat); the Linux
+# paths are a best-effort fallback for dev/CI environments. If none exist,
+# Pillow's own bundled scalable default font (load_default(size=...), added
+# in Pillow 10.1) is used instead -- there is always a usable fallback.
+_BADGE_FONT_CANDIDATES = (
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+)
+
+
+def _load_badge_font(size):
+    if size in _BADGE_FONT_CACHE:
+        return _BADGE_FONT_CACHE[size]
+
+    from PIL import ImageFont
+
+    font = None
+    for candidate in _BADGE_FONT_CANDIDATES:
+        if os.path.exists(candidate):
+            try:
+                font = ImageFont.truetype(candidate, size)
+                break
+            except Exception:
+                continue
+    if font is None:
+        try:
+            font = ImageFont.load_default(size=size)
+        except TypeError:
+            # Pillow < 10.1 doesn't accept a size kwarg here.
+            font = ImageFont.load_default()
+
+    _BADGE_FONT_CACHE[size] = font
+    return font
+
+
+_BADGE_MAX_BANNER_WIDTH_FRACTION = 0.35
+_BADGE_PAD_X_RATIO = 0.6
+_BADGE_PAD_Y_RATIO = 0.4
+
+
+def _draw_category_badge(image, category_text):
+    """Draws a small semi-transparent banner in the bottom-left corner of
+    `image` with `category_text`, legible over varying image content
+    underneath (a flat alpha-blended rectangle behind solid white text,
+    rather than text alone, keeps it readable on both light and dark
+    photos) -- including at the small (~200-300px wide) thumbnail size
+    WhatsApp actually displays a shared image at before it's tapped to
+    expand, which is a much harsher legibility test than viewing the
+    full-resolution share image. Returns a new RGB image; `image` itself is
+    not mutated."""
+    from PIL import ImageDraw
+
+    base = image.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    text = str(category_text or "").strip().upper()
+    font_size = max(16, round(min(base.size) * 0.06))
+    font = _load_badge_font(font_size)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+
+    # The font size above scales off the image's shorter dimension so the
+    # badge reads consistently across portrait/landscape photos -- but the
+    # longer category names ("Pearl Designer", "Napa Designer") at that same
+    # size can produce a banner wide enough to swallow most of a narrow
+    # product photo, and on a few real catalog images that already carry
+    # their own baked-in caption text near the bottom, wide enough to
+    # visually collide with it. If the initial size would exceed
+    # _BADGE_MAX_BANNER_WIDTH_FRACTION of the image width, the font shrinks
+    # just enough to fit (one re-measure at the smaller size -- font metrics
+    # aren't perfectly linear, but one pass is close enough for a visual
+    # sizing fix and avoids unbounded looping) rather than always using the
+    # same size regardless of text length.
+    max_banner_w = base.size[0] * _BADGE_MAX_BANNER_WIDTH_FRACTION
+    initial_banner_w = text_w + 2 * round(font_size * _BADGE_PAD_X_RATIO)
+    if text_w > 0 and initial_banner_w > max_banner_w:
+        font_size = max(12, round(font_size * (max_banner_w / initial_banner_w)))
+        font = _load_badge_font(font_size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+
+    text_h = bbox[3] - bbox[1]
+    pad_x, pad_y = round(font_size * _BADGE_PAD_X_RATIO), round(font_size * _BADGE_PAD_Y_RATIO)
+    margin = max(10, round(min(base.size) * 0.025))
+
+    banner_w = text_w + pad_x * 2
+    banner_h = text_h + pad_y * 2
+    x0 = margin
+    y0 = base.size[1] - margin - banner_h
+    x1 = x0 + banner_w
+    y1 = y0 + banner_h
+
+    # Alpha bumped from an earlier, lighter fill to 190/255 (~75% opaque) --
+    # legible at full resolution either way, but a lighter fill visibly
+    # washed out and lost contrast against busy/light image content once
+    # JPEG-compressed and scaled down to a small chat thumbnail.
+    draw.rectangle([x0, y0, x1, y1], fill=(0, 0, 0, 190))
+    draw.text((x0 + pad_x - bbox[0], y0 + pad_y - bbox[1]), text, font=font, fill=(255, 255, 255, 255))
+
+    return Image.alpha_composite(base, overlay).convert("RGB")
+
+
+def _build_badged_share_image(source_path, cache_path, category):
+    """Same resize/compress baseline as _build_share_image(), plus the
+    category banner burned onto the resized image before final JPEG
+    encoding. Unlike _build_share_image(), there's no "keep the original
+    bytes if smaller" fallback -- the pixels are always modified, so the
+    original file is never a valid substitute."""
+    image = _prepare_share_image(source_path)
+    badged = _draw_category_badge(image, category)
+    buffer = BytesIO()
+    badged.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
+    with open(cache_path, "wb") as handle:
+        handle.write(buffer.getvalue())
+
+
+def _category_slug(category):
+    return re.sub(r"[^a-z0-9]+", "-", str(category or "").lower()).strip("-") or "category"
+
+
+def _badged_share_cache_path(image_id, category):
+    return os.path.join(SHARE_IMAGE_CACHE_DIR, f"{image_id}_badge_{_category_slug(category)}.jpg")
+
+
+def _cleanup_stale_badge_variants(image_id, current_category):
+    """Removes any previously-cached badge variant(s) for image_id whose
+    filename doesn't match the current category -- the category is part of
+    the cache filename (see _badged_share_cache_path()), so a re-tag alone
+    would otherwise leave the old category's file behind as permanent,
+    never-served disk clutter."""
+    current_path = _badged_share_cache_path(image_id, current_category)
+    pattern = os.path.join(SHARE_IMAGE_CACHE_DIR, f"{image_id}_badge_*.jpg")
+    for stale_path in glob.glob(pattern):
+        if os.path.normcase(stale_path) != os.path.normcase(current_path):
+            try:
+                os.remove(stale_path)
+            except OSError:
+                pass
+
+
+def _get_category_for_image(image_id):
+    mapping = db.get_mapping_by_image_id(image_id)
+    if not mapping or not mapping.get("stock_item_name"):
+        return None
+    return db.get_category_for_stock_item(mapping["stock_item_name"])
+
+
+def _ensure_badged_share_cached(image_id):
+    """Builds (if missing/stale) and returns the cache path for image_id's
+    badged share variant, or None if there's nothing to badge (no mapped
+    image, unresolvable source file, or no category assigned). This is the
+    ONE code path that builds this cache -- both get_share_image_badged()
+    (on-demand, from the share flow) and the Part 3 background
+    pre-generation trigger (assign_category()) call this exact function, so
+    there is no duplicate image-generation logic to drift out of sync."""
+    image_record = db.get_image_by_id(image_id)
+    if not image_record:
+        return None
+    source_path = _resolve_stored_image_path(image_record.get("filepath"))
+    if not source_path:
+        return None
+    category = _get_category_for_image(image_id)
+    if not category:
+        return None
+
+    os.makedirs(SHARE_IMAGE_CACHE_DIR, exist_ok=True)
+    cache_path = _badged_share_cache_path(image_id, category)
+    stale = not os.path.exists(cache_path) or os.path.getmtime(cache_path) < os.path.getmtime(source_path)
+    if stale:
+        tmp_path = f"{cache_path}.tmp{os.getpid()}_{image_id}"
+        try:
+            _build_badged_share_image(source_path, tmp_path, category)
+            os.replace(tmp_path, cache_path)
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+        _cleanup_stale_badge_variants(image_id, category)
+    return cache_path
+
+
+def _pregenerate_badged_images(image_ids):
+    """Fire-and-forget background pre-warm of the badged share cache (see
+    Part 3's assign_category() route, which starts this on a daemon thread
+    so the admin's request never waits on it). Best-effort: a single
+    image's failure is logged and skipped, never raised, since nothing is
+    awaiting this thread's result -- get_share_image_badged() still
+    regenerates on demand as a correctness fallback either way."""
+    for image_id in image_ids:
+        try:
+            _ensure_badged_share_cached(image_id)
+        except Exception:
+            logger.exception("Background badge pre-generation failed for image_id=%s", image_id)
 
 
 @app.route("/get_share_image/<int:image_id>")
@@ -2857,6 +3169,30 @@ def get_share_image(image_id):
             return send_file(source_path, conditional=True)
 
     return send_file(cache_path, conditional=True, mimetype="image/jpeg")
+
+
+@app.route("/get_share_image_badged/<int:image_id>")
+def get_share_image_badged(image_id):
+    """Share-optimized image with the item's category burned onto it (see
+    _draw_category_badge()). This is the single endpoint the frontend's
+    "Share Images" flow now uses for every share, categorized or not --
+    falls back to the exact same plain output as /get_share_image/<id>
+    when the item has no category assigned, so it's always a safe drop-in
+    regardless of whether the selected images are categorized.
+
+    /get_share_image/<id> itself (get_share_image() below) is no longer
+    called directly by any frontend flow as of the caption-sharing removal,
+    but is NOT dead code -- it's still the fallback this function calls
+    for uncategorized items, and its own route is left in place."""
+    try:
+        cache_path = _ensure_badged_share_cached(image_id)
+    except Exception:
+        logger.exception("Failed to build badged share image for id %s; falling back to plain share image", image_id)
+        cache_path = None
+
+    if cache_path:
+        return send_file(cache_path, conditional=True, mimetype="image/jpeg")
+    return get_share_image(image_id)
 
 
 @app.route("/get_current_mapping_image")

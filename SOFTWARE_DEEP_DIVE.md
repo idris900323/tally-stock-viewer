@@ -24,6 +24,7 @@ The runtime has five main layers:
 ### Data layer
 - `database.py` manages SQLite schema and queries
 - `data/mappings.db` stores images, mappings, users, and account logs (plus legacy pricing tables, see section 15)
+- `design_categories` stores the per-stock-item category assignments used by Bulk Match
 
 ### Shared normalization layer
 - `utils/normalize.py` — whitespace/case normalization (`normalize_text`), the shared lookup key used on both the app and database sides (`normalize_lookup_key`), display-only shelf-code stripping (`strip_shelf_code_for_display`), and car base-name extraction (`extract_car_base_name`)
@@ -387,6 +388,13 @@ Images are served through:
 
 If no file can be resolved, the app returns an inline SVG placeholder instead of failing.
 
+### Share image flow
+
+The main page also exposes a share workflow for selected images:
+- `GET /get_share_image/<image_id>` builds and serves a cached share-optimized JPEG under `data/share_cache/`
+- `GET /get_share_image_badged/<image_id>` adds the item's category badge when available and falls back to the plain share image when it is not
+- `templates/index.html` provides the `Share Images` button that drives this flow
+
 ## 14. Match suggestion heuristics
 
 `matcher.py` is currently heuristic, not AI-driven.
@@ -455,7 +463,7 @@ The templates map cleanly to the major workflows:
   - sign-in screen
 - `templates/index.html`
   - main stock viewer
-  - admin-only update, training, and account links
+  - admin-only update, training, share-images, and account links
   - `checkTimestampFreshness()` marks the "Last updated" text with the `.stale-timestamp` class (red, bold) whenever it is more than 180 seconds old (`STALE_WARNING_THRESHOLD_SECONDS` below does NOT touch this); it runs after every timestamp update and on a 10-second `setInterval`, so it turns red live even if no new data arrives (e.g. Tally down for a while)
   - a SEPARATE, much longer threshold, `STALE_WARNING_THRESHOLD_SECONDS` (900s / 15 minutes), gates a clearly visible banner (`#staleDataNotice`, near the top of the page) plus a short matching hint next to the timestamp — both explain WHY the last auto-refresh failed in plain language (multiple Tally windows, Tally closed, Tally slow, or an unexpected issue with a pointer to the System panel). Both read off one shared classifier, `classifyRefreshIssueBucket()`, fed by the existing 30-second `/refresh_status` poll — `error_code` when present, falling back to the same message keywords `_classify_tally_exception` uses — so there is exactly one place that decides which reason it is, never two competing schemes. `updateStaleWarningUI()` additionally requires `hasRealRefreshAttempt()` (a non-null `timestamp` on the payload) before showing anything, so the pre-refresh placeholder (`{"success": false, "message": "Not yet run", "timestamp": null}`, set at `last_refresh_status`'s module-level default in `app.py`) can never be mistaken for a real failure — this is what used to cause a false-positive banner immediately after a fresh restart, since an old cached file's mtime could already read as "stale" before the app had done anything. The separate red `#statusMessage` "Last error: ..." line was removed entirely from the failure path (it used to show unconditionally and read as a second, disconnected fragment next to the muted hint); on failure `#statusMessage` now stays blank and the banner/hint pair is the single consolidated notice. Both banner and hint clear automatically once a refresh cycle succeeds again; no separate timer was added, everything piggybacks on the existing 30-second `/refresh_status` poll and `checkTimestampFreshness()`'s existing 10-second tick
   - every admin-view design card carries an "Add Image" pill (its own `.add-image-link` class, not the plain `.fix-link` shared with Logout) linking to `/train?car=...&stock_item=...` so Training Mode opens pre-selected

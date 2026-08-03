@@ -216,9 +216,9 @@ Access requires two things:
 From the panel you can:
 - see the running code version and whether the office PC is behind `origin/main`
 - pull the latest code and restart (`Pull Latest Code & Restart` — the restart is self-contained and does not depend on the tray launcher being healthy)
-- restart the app without pulling
+- restart the app without pulling code (`Restart App Only`)
 - tail recent logs, download a database backup, check disk usage and uptime
-- check Tally status (including the multiple-instances warning), run the Tally Performance Test, and verify the Windows auto-start entry
+- check Tally status (including the multiple-instances warning), run the Tally Performance Test, find duplicate images, and verify the Windows auto-start entry
 
 If `SYSTEM_ACCESS_TOKEN` is not set in `.env`, all of these routes return `403` and the panel is effectively off.
 

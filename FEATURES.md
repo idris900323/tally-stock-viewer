@@ -29,7 +29,9 @@ customer users - built and run by one person on an office PC.
 - Bulk Match screen: confirm one photo against hundreds of stock items at once - find them by text search or by auto-derived product category (type + color, e.g. "7D MAT / BLACK-TAN"), tick, confirm. Built for floor mats and curtains where the same photo applies across car variants
 - Direct photo upload from the training screen (validated for type/size, auto-creates the car folder, auto-confirms the match) - no manual file copying + rescanning required
 - "Add Image" button on every design card jumps to Training Mode with the car and stock item pre-selected
+- Share Images mode on the main page sends selected images through share-ready endpoints backed by cached derivatives in `data/share_cache/`
 - Auto rescans the image folder on every startup, plus a manual rescan button - rescanning is a true two-way sync: it also detects database rows whose file was deleted from disk and offers to remove them (with an expandable list of the exact files and any linked stock item, and a safety threshold that blocks removal if a suspiciously large share of the catalog looks missing at once - e.g. a disconnected image drive)
+- The image scanner accepts `.jfif` files alongside the other supported image formats
 
 **Accounts**
 - Session-based login, admin and customer roles, access-code auth
@@ -41,7 +43,7 @@ customer users - built and run by one person on an office PC.
 **Deployment / ops**
 - One-shot Windows setup script (venv, dependencies, `.env`, desktop shortcuts, auto-start)
 - Tray launcher that runs the server, monitors it, and can start a Cloudflare tunnel for public access
-- Remote System panel (token-paired devices only): git status, pull-and-restart, log tail, DB backup download, disk/uptime/env read-outs, autostart check, Tally status, and a live Tally performance test - the office PC can be managed without remote desktop
+- Remote System panel (token-paired devices only): git status, pull-and-restart, restart-app-only, duplicate-image report, log tail, DB backup download, disk/uptime/env read-outs, autostart check, Tally status, and a live Tally performance test - the office PC can be managed without remote desktop
 - Restarts are self-sufficient: a detached relaunch helper brings the server back even if the tray launcher's watchdog is broken or absent
 - Git-based one-command update path that also verifies and repairs the Windows autostart entry on every update
 - `/health` endpoint, file-based logging, self-migrating SQLite schema (no manual DB migration steps when columns are added - even a table-level constraint removal runs as an automatic, backed-up rebuild)
