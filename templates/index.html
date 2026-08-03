@@ -118,6 +118,161 @@
             border-top: 1px solid var(--border);
         }
 
+        /* Tier 1 -- the car selector, standalone in its own row and the
+           visually dominant control on the page. Shared by both admin and
+           customer views (only one #carSelect exists); the customer-only
+           centered/compact variant below (#stickyToolbar.sticky-toolbar-customer)
+           out-specifies these rules via its ID selector wherever the two
+           overlap, so this only actually changes the admin view. */
+        .tier1-row {
+            margin-bottom: 2px;
+        }
+
+        .tier1-row label {
+            font-size: 15px;
+        }
+
+        .tier1-row .car-select-wrap {
+            width: 100%;
+            max-width: 480px;
+        }
+
+        .tier1-row .select2-container {
+            width: 100% !important;
+        }
+
+        .tier1-row .select2-container .select2-selection--single {
+            min-height: 50px;
+            font-size: 15px;
+        }
+
+        /* Tier 2 -- now a single merged row (see the HTML): car-scoped
+           actions (Select Images, Assign Category) in a left cluster, and
+           always-visible general actions (Update Stock, Train Matches,
+           More) in a right cluster. space-between gives a large, deliberate
+           gap between the two clusters -- an earlier round used a visible
+           vertical-rule divider for this same separation, but with the two
+           groups now pushed to opposite ends of one row, plain whitespace
+           reads as more intentional than a line down the middle would.
+           Hidden as a row only while categoryAssignMode is active (its own
+           toolbar takes over below) -- see updateModeToggleVisibility(),
+           since the right cluster must stay visible even with no car
+           selected. */
+        .tier2-row {
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        /* Tight gap within each cluster (its own buttons read as one
+           group); the larger gap BETWEEN clusters comes from
+           justify-content: space-between on .tier2-row above. */
+        .actions-cluster {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        /* Sized close to this site's own base button/select (11px 14px
+           padding, 14px font -- see the plain `select, button` rule below)
+           rather than the smaller size an earlier round tried here, which
+           read as flatter/less-finished than the rest of the page.
+           min-height makes the ~40-44px target explicit instead of relying
+           on padding math to land there, and matches the 44px mobile
+           tap-target minimum already used elsewhere on this site. */
+        .tier2-row button,
+        .tier2-row select,
+        .more-menu-btn {
+            min-height: 42px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        /* Desktop-only hover polish -- layered on top of the sitewide
+           background-darken/lift every button already gets (see
+           `button:hover`), gated exactly like the design card hover lift
+           (.design-item:hover, see (hover: hover) and (pointer: fine)
+           above) so a touch tap doesn't leave a shadowed button looking
+           stuck after the finger lifts. */
+        @media (hover: hover) and (pointer: fine) {
+            .tier2-row button:hover,
+            .tier2-row select:hover,
+            .more-menu-btn:hover {
+                box-shadow: 0 4px 10px rgba(19, 34, 56, 0.14);
+            }
+        }
+
+        .more-menu-wrap {
+            position: relative;
+        }
+
+        /* Train Matches now shares this exact `.secondary` pill treatment
+           (see the HTML) instead of the underlined nav-tab-link style an
+           earlier round gave it -- next to More's filled pill, the two read
+           as one deliberate pair rather than two different UI languages. */
+        .more-menu-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Reuses the Assign Category dropdown's own interaction model in
+           spirit (pick an item, it closes, nothing lingers open) but can't
+           reuse a native <select> literally -- "Full Refresh" needs to stay
+           a real, individually disable-able/relabel-able <button id=
+           "fullRefreshBtn"> for its in-progress state (see startFullRefresh()),
+           which a <select>'s <option> can't represent. This is the smallest
+           popover that preserves that: plain absolutely-positioned panel,
+           closed on item click, outside click, or Escape (see the JS). */
+        .more-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 190px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 14px 34px rgba(19, 34, 56, 0.18);
+            padding: 6px;
+            z-index: 600;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .more-menu-item {
+            background: transparent;
+            color: var(--text);
+            border: 0;
+            text-align: left;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+        }
+
+        .more-menu-item:hover {
+            background: #e9eef6;
+            transform: none;
+        }
+
+        /* Consolidated status line (Part 3) -- replaces the old bordered
+           white ".panel" status card. Deliberately plain text, no
+           background/border, so it reads as a quiet footnote under the
+           toolbar rather than its own panel. */
+        .status-summary {
+            margin: 10px 2px 4px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        #autoRefreshHint {
+            color: #94a3b8;
+        }
+
         /* Customer variant: no action buttons sit alongside the car search
            (admin-only), so it's presented as the page's one primary action --
            a small centered caption above a centered, slightly wider search
@@ -347,15 +502,6 @@
             transform: none;
         }
 
-        .meta-row {
-            margin-top: 14px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 16px;
-            color: var(--muted);
-            font-size: 13px;
-        }
-
         .status-line {
             margin-top: 8px;
             font-size: 12px;
@@ -525,9 +671,37 @@
 
         .thumbnail-actions {
             display: flex;
-            gap: 8px;
+            gap: 6px;
             flex-wrap: wrap;
-            margin-top: 8px;
+            margin-top: 6px;
+        }
+
+        /* Category ribbon (Part 4) -- lives on the thumbnail itself (see
+           renderDesignItem()), opposite corner from .select-check so the two
+           never collide. Sits on .thumbnail-button (position: relative
+           already), not on the <img> itself, so it still renders at full
+           opacity over a faded "No image mapped" placeholder thumbnail (see
+           .design-item.unmapped-card .design-thumbnail's opacity -- that rule
+           only targets .design-thumbnail, not this). pointer-events: none
+           keeps it purely decorative, never intercepting the thumbnail's own
+           click/select handling. */
+        .category-ribbon {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            max-width: calc(100% - 12px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: #fff;
+            background: rgba(91, 33, 182, 0.85);
+            padding: 3px 8px;
+            border-radius: 999px;
+            pointer-events: none;
+            z-index: 1;
         }
 
         .selection-toolbar {
@@ -628,7 +802,7 @@
 
         .design-subtext {
             color: var(--muted);
-            font-size: 12px;
+            font-size: 11px;
             margin-bottom: 8px;
         }
 
@@ -647,8 +821,8 @@
             text-decoration: none;
             color: var(--accent-dark);
             font-weight: 700;
-            font-size: 12px;
-            padding: 4px 10px;
+            font-size: 11px;
+            padding: 3px 9px;
             border-radius: 999px;
             background: color-mix(in srgb, var(--accent) 12%, transparent);
             border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
@@ -685,6 +859,41 @@
         .badge.unmapped {
             color: #92400e;
             background: #fef3c7;
+        }
+
+        .badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .badge-row .badge {
+            margin-bottom: 0;
+        }
+
+        /* Lighter/more compact than the default button (Part 4) so a card's
+           action row takes less vertical space -- mobile's own
+           `.thumbnail-actions button { min-height: 44px; }` override (see
+           below) still applies at that breakpoint regardless, since it sets
+           a different property (min-height, not padding/font-size) and
+           comes later in the stylesheet. */
+        .thumbnail-actions button {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .modal-category-badge {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #5b21b6;
+            background: #ede9fe;
+            vertical-align: middle;
         }
 
         .empty-state {
@@ -1068,9 +1277,19 @@
                on the edge that genuinely has more content to reveal (e.g.
                never on the right once already scrolled all the way there).
                Purely visual (pointer-events: none) -- swiping/tapping
-               through the fade works exactly as it did before this existed. */
+               through the fade works exactly as it did before this existed.
+               Also applies to .actions-cluster: on mobile the two clusters
+               inside .tier2-row (see above) are what actually scrolls now,
+               not .tier2-row itself, so they need this same affordance and
+               the position: relative it anchors to. */
+            .sticky-toolbar .actions-cluster {
+                position: relative;
+            }
+
             .sticky-toolbar .toolbar::before,
-            .sticky-toolbar .toolbar::after {
+            .sticky-toolbar .toolbar::after,
+            .sticky-toolbar .actions-cluster::before,
+            .sticky-toolbar .actions-cluster::after {
                 content: "";
                 position: absolute;
                 top: 0;
@@ -1082,56 +1301,69 @@
                 z-index: 1;
             }
 
-            .sticky-toolbar .toolbar::before {
+            .sticky-toolbar .toolbar::before,
+            .sticky-toolbar .actions-cluster::before {
                 left: 0;
                 background: linear-gradient(to right, var(--panel), rgba(255, 255, 255, 0));
             }
 
-            .sticky-toolbar .toolbar::after {
+            .sticky-toolbar .toolbar::after,
+            .sticky-toolbar .actions-cluster::after {
                 right: 0;
                 background: linear-gradient(to left, var(--panel), rgba(255, 255, 255, 0));
             }
 
-            .sticky-toolbar .toolbar.scroll-fade-left::before {
+            .sticky-toolbar .toolbar.scroll-fade-left::before,
+            .sticky-toolbar .actions-cluster.scroll-fade-left::before {
                 opacity: 1;
             }
 
-            .sticky-toolbar .toolbar.scroll-fade-right::after {
+            .sticky-toolbar .toolbar.scroll-fade-right::after,
+            .sticky-toolbar .actions-cluster.scroll-fade-right::after {
                 opacity: 1;
             }
 
-            .sticky-toolbar .toolbar > * {
+            .sticky-toolbar .toolbar > *,
+            .sticky-toolbar .actions-cluster > * {
                 flex: 0 0 auto;
             }
 
-            /* Hidden rather than just left in the scrollable row: opening
-               the car search box auto-scrolls this row to bring the
-               focused input into view, which permanently pushes the label
-               off-screen to the left (confirmed while testing on a real
-               375px viewport) -- there's nothing to scroll back to once
-               that happens. The select2 placeholder text already conveys
-               the field's purpose, so the label is redundant here anyway. */
+            /* Hidden by default in a shared scrollable row: opening the car
+               search box auto-scrolls that row to bring the focused input
+               into view, which would permanently push a shared row's label
+               off-screen to the left. Tier 1 (see below) is exempted from
+               this -- it's its own row with nothing beside the car select,
+               so it never scrolls and the label stays put. */
             .sticky-toolbar label {
                 display: none;
             }
 
-            .sticky-toolbar .car-select-wrap {
-                width: 220px;
-                min-width: 220px;
+            /* Tier 1 -- now its own row (see the 3-tier restructure), so
+               unlike the old shared row it never needs to scroll for a
+               sibling button, and the car select can simply go full width
+               instead of a fixed size that used to leave room for those
+               siblings. The extra classes (.toolbar.tier1-row) win over the
+               plain `.sticky-toolbar .toolbar` row rules above by
+               specificity, not source order, so this holds regardless of
+               where either rule is edited later. */
+            .sticky-toolbar .toolbar.tier1-row {
+                overflow: visible;
+                flex-wrap: wrap;
             }
 
-            /* min-width must be pinned alongside width: the base (non-mobile)
-               .select2-container rule sets min-width: 260px, which silently
-               wins over this width regardless of !important -- min-width and
-               width are separate properties, and the rendered box is clamped
-               to at least min-width. Left unset, the container rendered at
-               260px inside its 220px-wide .car-select-wrap parent, overflowing
-               by 40px directly onto the first admin button (confirmed via a
-               real 375px viewport: "Update Stock" showed as "...date Stock"
-               overlapped by the select2 box). */
-            .sticky-toolbar .select2-container {
-                width: 220px !important;
-                min-width: 220px !important;
+            .sticky-toolbar .toolbar.tier1-row label {
+                display: block;
+                margin-bottom: 2px;
+            }
+
+            .sticky-toolbar .tier1-row .car-select-wrap {
+                width: 100%;
+                min-width: 0;
+            }
+
+            .sticky-toolbar .tier1-row .select2-container {
+                width: 100% !important;
+                min-width: 0 !important;
             }
 
             .sticky-toolbar .toolbar select,
@@ -1140,14 +1372,59 @@
                 white-space: nowrap;
             }
 
-            .topbar {
-                flex-wrap: wrap;
+            /* Tier 2's Assign Category <select> would otherwise inherit the
+               base `select { min-width: 260px; }` rule -- shrinking it to
+               its actual content width keeps its cluster meaningfully less
+               crowded on a narrow phone than the old 6-button strip this
+               toolbar used to be. */
+            .sticky-toolbar .toolbar.tier2-row select {
+                min-width: 0;
+            }
+
+            /* Tier 2 is a single merged row on desktop (car-scoped actions
+               left, Update Stock/Train Matches/More right -- see the
+               non-mobile .tier2-row rule above), but that combined content
+               can run past 600px, well over a real phone's width. Rather
+               than force one long horizontal scroll across both clusters at
+               once, stack the two .actions-cluster groups into two short
+               rows here -- only one extra row versus the single-row desktop
+               layout (not the old one-row-per-button strip this toolbar
+               used to be), so the sticky bar's height barely grows. Also
+               switches from overflow-x: auto to visible: the generic
+               `.sticky-toolbar .toolbar { overflow-x: auto; }` rule above
+               would otherwise clip the "More" popover, since setting
+               overflow-x alone implicitly makes overflow-y auto too (a CSS
+               spec quirk) -- each cluster below gets its own scroll
+               affordance instead, on the row that actually needs it. */
+            .sticky-toolbar .toolbar.tier2-row {
+                flex-direction: column;
+                align-items: stretch;
+                overflow: visible;
                 gap: 8px;
             }
 
-            .meta-row {
-                flex-direction: column;
-                gap: 6px;
+            .sticky-toolbar .tier2-row #carScopedCluster {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            /* Deliberately NOT overflow-x: auto like the cluster above --
+               this one contains the "More" popover trigger, and an
+               overflow-auto ancestor here would clip the popover the exact
+               same way .tier2-row itself used to (see the CSS spec quirk
+               noted above). Update Stock/Train Matches/More (3 short
+               buttons) simply wrap to a second line on the narrowest
+               phones instead, which stays fully legible and never clips
+               anything. */
+            .sticky-toolbar .tier2-row #generalActionsCluster {
+                flex-wrap: wrap;
+                overflow: visible;
+            }
+
+            .topbar {
+                flex-wrap: wrap;
+                gap: 8px;
             }
         }
     </style>
@@ -1171,7 +1448,10 @@
     </div>
 
     <div class="sticky-toolbar{% if not is_admin %} sticky-toolbar-customer{% endif %}" id="stickyToolbar">
-        <div class="toolbar" id="mainToolbarRow">
+        <!-- Tier 1 -- car selector, standalone and the visually dominant
+             control (see .tier1-row). Identical markup/IDs to before, just
+             no longer sharing a row with admin buttons. -->
+        <div class="toolbar tier1-row" id="tier1Row">
             <label for="carSelect">{% if is_admin %}Select Car Model:{% else %}Select Your Car Model{% endif %}</label>
             <div class="car-select-wrap">
                 <select id="carSelect" title="Choose a car model to see its stock designs and linked images">
@@ -1179,22 +1459,60 @@
                 </select>
                 <button type="button" id="carClearBtn" class="car-clear-btn" style="display:none;" onclick="clearCarSelection()" title="Clear selected car" aria-label="Clear selected car">&times;</button>
             </div>
-            {% if is_admin %}
-            <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
-            <button id="updateStockBtn" class="secondary toolbar-admin-btn" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
-            <button id="fullRefreshBtn" class="secondary toolbar-admin-btn" onclick="startFullRefresh()" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">
-                Full Refresh
-            </button>
-            <button class="toolbar-admin-btn" onclick="window.location.href='/train'" title="Open Training Mode to match scanned images to stock items">Train Matches</button>
-            <button class="secondary toolbar-admin-btn" onclick="window.location.href='/admin/accounts'" title="Manage customer login accounts">Manage Accounts</button>
-            <button class="secondary toolbar-admin-btn" onclick="window.location.href='/admin/system'" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
-            {% endif %}
         </div>
+        {% if is_admin %}
+        <!-- Tier 2 -- one merged row: car-scoped actions (left cluster,
+             hidden until a car is selected) and always-visible general
+             actions (right cluster) pushed to the far right via
+             justify-content: space-between (see .tier2-row). Hidden as a
+             whole row only while categoryAssignMode is active, since that's
+             the only state where every child in both clusters is hidden at
+             once -- see updateModeToggleVisibility(). -->
+        <div class="toolbar tier2-row" id="tier2Row">
+            <div class="actions-cluster" id="carScopedCluster">
+                <button id="selectModeBtn" class="secondary" style="display:none;" onclick="toggleSelectMode()" title="Choose specific images to copy or share">Select Images</button>
+                <select id="assignCategorySelect" class="secondary" style="display:none;" onchange="handleAssignCategoryPick(this)" title="Tag every selected item for this car with a material-tier category (Pearl, Ruby, Saka, etc.)">
+                    <option value="" selected>Assign Category&hellip;</option>
+                    {% for choice in design_category_choices %}
+                    <option value="{{ choice }}">{{ choice }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <!-- Always visible (Update Stock refreshes the whole catalog,
+                 not just the selected car, so it doesn't belong behind the
+                 car-scoped gate above); Train Matches now shares Update
+                 Stock/More's exact `.secondary` pill styling instead of a
+                 separate nav-link look, so the three read as one cohesive
+                 cluster. -->
+            <div class="actions-cluster" id="generalActionsCluster">
+                <button id="updateStockBtn" class="secondary toolbar-admin-btn" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
+                <button class="secondary toolbar-admin-btn" onclick="window.location.href='/train'" title="Open Training Mode to match scanned images to stock items">Train Matches</button>
+                <div class="more-menu-wrap toolbar-admin-btn" id="moreMenuWrap">
+                    <button type="button" id="moreMenuBtn" class="secondary more-menu-btn" onclick="toggleMoreMenu()" aria-haspopup="true" aria-expanded="false" aria-label="More actions" title="More actions">
+                        <span aria-hidden="true">&#8942;</span> More
+                    </button>
+                    <div id="moreMenu" class="more-menu" role="menu" aria-label="More actions" style="display:none;">
+                        <button type="button" role="menuitem" id="fullRefreshBtn" class="more-menu-item" onclick="handleMoreMenuAction(startFullRefresh)" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">Full Refresh</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/accounts')" title="Manage customer login accounts">Manage Accounts</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
         {% if is_admin %}
         <div id="selectionToolbar" class="toolbar selection-toolbar" style="display:none;">
             <button id="selectAllBtn" class="secondary" onclick="toggleSelectAll()" title="Select every image currently shown">Select All</button>
             <span id="selectionCount" class="selection-count">0 selected</span>
-            <button id="copySelectedBtn" onclick="copySelectedImages()" title="Share the selected images" disabled>Share Images</button>
+            <!-- Plain "Share Images" (identical either way, since there's no
+                 category anywhere in the selection to badge or not) when
+                 nothing selected has a category; swapped for the Badge/No
+                 Badge pair the moment at least one selected image is
+                 categorized (see updateSelectModeUI()) -- never all three
+                 at once. -->
+            <button id="copySelectedBtn" onclick="copySelectedImages('badge')" title="Share the selected images" disabled>Share Images</button>
+            <button id="shareBadgeBtn" onclick="copySelectedImages('badge')" title="Share images with the category visually burned onto each photo" style="display:none;" disabled>Share with Badge</button>
+            <button id="shareNoBadgeBtn" onclick="copySelectedImages('plain')" title="Share the original images, ignoring category entirely" style="display:none;" disabled>Share (No Badge)</button>
         </div>
         <div id="selectionWarning" class="selection-warning" style="display:none;"></div>
         <!-- Shown in place of #selectionToolbar (see showBatchContinueBar() /
@@ -1208,34 +1526,40 @@
             <button id="batchContinueActionBtn" type="button" title="Continue the batched share"></button>
             <button id="batchContinueCancelBtn" type="button" class="secondary" title="Stop sharing the remaining batches">Cancel</button>
         </div>
+        <!-- "Assign Category" selection mode (see Part 5) -- mutually
+             exclusive with #selectionToolbar/#batchContinueBar above; entering
+             one always exits the other (see enterSelectMode()/
+             enterCategoryAssignMode()). Lives in the sticky bar for the same
+             reachability reason as the other selection toolbars here. -->
+        <div id="categoryAssignToolbar" class="toolbar selection-toolbar" style="display:none;">
+            <span id="categoryAssignLabel" class="selection-count"></span>
+            <button id="categorySelectAllBtn" class="secondary" onclick="toggleCategorySelectAll()" title="Select every item currently shown">Select All</button>
+            <span id="categorySelectionCount" class="selection-count">0 selected</span>
+            <button id="confirmCategoryBtn" onclick="confirmCategoryAssignment()" disabled>Confirm Assignment</button>
+            <button class="secondary" onclick="cancelCategoryAssignMode()">Cancel</button>
+        </div>
         {% endif %}
     </div>
 
     {% if is_admin %}
     <div id="staleDataNotice" class="notice warning" style="display:none;"></div>
+    <div id="fullRefreshProgress" style="display:none; margin-bottom:10px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
+        <span id="fullRefreshStageText">Starting full refresh...</span>
+    </div>
     {% endif %}
 
-    <div class="panel">
-        {% if is_admin %}
-        <div id="fullRefreshProgress" style="display:none; margin-top:10px; padding:10px 14px; border-radius:10px; background:#f0f9ff; border:1px solid #bae6fd; color:#0369a1; font-size:13px;">
-            <span id="fullRefreshStageText">Starting full refresh...</span>
-        </div>
-        {% endif %}
-
-        {% if auto_export_enabled %}
-        <p style="margin-top:10px; font-size:12px; color:#0f766e;">Auto-export enabled every {{ refresh_interval }} seconds.</p>
-        {% else %}
-        <p style="margin-top:10px; font-size:12px; color:#64748b;">Auto-export disabled. Use Update Stock to update manually.</p>
-        {% endif %}
-
-        {% if is_admin %}
-        <div class="meta-row">
-            <div id="lastUpdate">Last updated: loading...</div>
-            <span id="autoRefreshHint" style="font-size:12px; color:#94a3b8; align-self:center;"></span>
-            <div id="statusMessage" class="status-line"></div>
-        </div>
-        {% endif %}
+    <!-- Consolidated status line (Part 3) -- replaces the old bordered
+         white ".panel" status card with one small muted line. Auto-export
+         text is shown to every role, unchanged; "Last updated" and its
+         stale-timestamp/hint behavior stay admin-only, unchanged (see
+         checkTimestampFreshness()/updateStaleWarningUI()). -->
+    <div class="status-summary">
+        {% if auto_export_enabled %}Auto-export enabled every {{ refresh_interval }} seconds.{% else %}Auto-export disabled. Use Update Stock to update manually.{% endif %}
+        {% if is_admin %}&nbsp;&middot; <span id="lastUpdate">Last updated: loading...</span> <span id="autoRefreshHint"></span>{% endif %}
     </div>
+    {% if is_admin %}
+    <div id="statusMessage" class="status-line"></div>
+    {% endif %}
 
     <div id="errorMsg" class="notice error"></div>
     <div id="infoMsg" class="notice success"></div>
@@ -1267,6 +1591,7 @@
         <div class="modal-head">
             <div class="modal-head-text">
                 <strong id="modalTitle">Image preview</strong>
+                <span id="modalCategory" class="modal-category-badge" style="display:none;"></span>
                 <span id="modalPosition" class="modal-position"></span>
             </div>
             <button class="secondary" onclick="closeImageModal()">Close</button>
@@ -1308,6 +1633,17 @@ let selectedCardKeys = new Set();
 // True while shareBatchesSequentially() is waiting on the user to continue
 // (or cancel) a batched share -- see showBatchContinueBar() / updateSelectModeUI().
 let batchContinuePending = false;
+// True while navigator.share() itself is mid-call -- guards against a rapid
+// double-click on "Share Images" firing a second, concurrent share() call,
+// which the API itself rejects with InvalidStateError. Distinct from
+// batchContinuePending, which tracks the separate "waiting on the user to
+// tap Continue between batches" state.
+let shareInProgress = false;
+// "Assign Category" selection mode (Part 5) -- mutually exclusive with
+// selectMode above (see toggleSelectMode()/enterCategoryAssignMode()).
+let categoryAssignMode = false;
+let categoryAssignCategory = null;
+let categorySelectedKeys = new Set();
 let longPressTimer = null;
 let longPressStartXY = null;
 // The card currently showing long-press visual feedback (see
@@ -1510,9 +1846,14 @@ function getMappedThumbnailButtons() {
         .filter(button => button.dataset.imageId);
 }
 
-function displayModalImage(src, label) {
+function displayModalImage(src, label, category) {
     const modalImage = document.getElementById("modalImage");
     document.getElementById("modalTitle").textContent = label || "Image preview";
+    const categoryEl = document.getElementById("modalCategory");
+    if (categoryEl) {
+        categoryEl.textContent = category ? category.toUpperCase() : "";
+        categoryEl.style.display = category ? "" : "none";
+    }
     modalImage.src = getImageSource(src);
 }
 
@@ -1549,7 +1890,7 @@ function navigateModalImage(direction) {
     }
     modalNavIndex = nextIndex;
     const button = modalNavButtons[modalNavIndex];
-    displayModalImage(button.dataset.src, button.dataset.label);
+    displayModalImage(button.dataset.src, button.dataset.label, button.dataset.category);
     updateModalNavUI();
 }
 
@@ -1647,7 +1988,7 @@ function openImageModal(button) {
     modalNavButtons = getMappedThumbnailButtons();
     modalNavIndex = modalNavButtons.indexOf(button);
 
-    displayModalImage(button.dataset.src, button.dataset.label);
+    displayModalImage(button.dataset.src, button.dataset.label, button.dataset.category);
     updateModalNavUI();
 
     const modal = document.getElementById("imageModal");
@@ -1738,6 +2079,11 @@ function enterSelectMode() {
     if (!isAdmin) {
         return;
     }
+    // Mutually exclusive with categoryAssignMode -- entering one always
+    // exits the other first (see Part 5/7 of the Assign Category spec).
+    if (categoryAssignMode) {
+        cancelCategoryAssignMode();
+    }
     selectMode = true;
     updateSelectModeUI();
 }
@@ -1747,6 +2093,7 @@ function exitSelectMode() {
     selectedImageIds.clear();
     selectedCardKeys.clear();
     selectedImageBlobCache.clear();
+    selectedPlainImageBlobCache.clear();
     updateSelectModeUI();
 }
 
@@ -1825,22 +2172,150 @@ function initScrollFadeTracking(el) {
 }
 
 function updateAllToolbarScrollFades() {
-    updateScrollFade(document.getElementById("mainToolbarRow"));
+    updateScrollFade(document.getElementById("tier1Row"));
+    updateScrollFade(document.getElementById("tier2Row"));
+    updateScrollFade(document.getElementById("carScopedCluster"));
+    updateScrollFade(document.getElementById("generalActionsCluster"));
     updateScrollFade(document.getElementById("selectionToolbar"));
     updateScrollFade(document.getElementById("batchContinueBar"));
+    updateScrollFade(document.getElementById("categoryAssignToolbar"));
 }
 
-function updateSelectModeUI() {
-    const btn = document.getElementById("selectModeBtn");
-    const toolbar = document.getElementById("selectionToolbar");
-    const list = document.getElementById("designsList");
+// Shared by updateSelectModeUI() and updateCategoryAssignModeUI() --
+// selectMode and categoryAssignMode are mutually exclusive (see
+// enterSelectMode()/enterCategoryAssignMode()), so exactly one of
+// #selectModeBtn/#assignCategorySelect/toolbar-admin-btn's visibility rules
+// ever needs to reflect "the other mode is active" at a time, but both
+// entry points share the same rules, hence one function instead of two
+// copies drifting apart.
+function updateModeToggleVisibility() {
     const carSelect = document.getElementById("carSelect");
     const hasCarSelected = Boolean(carSelect && carSelect.value);
 
-    if (btn) {
-        btn.style.display = hasCarSelected ? "" : "none";
-        btn.textContent = selectMode ? "Cancel" : "Select Images";
+    const selectBtn = document.getElementById("selectModeBtn");
+    if (selectBtn) {
+        selectBtn.style.display = (hasCarSelected && !categoryAssignMode) ? "" : "none";
+        selectBtn.textContent = selectMode ? "Cancel" : "Select Images";
     }
+    // Fully hidden (not just disabled) while its own mode is active -- same
+    // treatment as #selectModeBtn above, so an inert, grayed-out "Assign
+    // Category…" placeholder doesn't linger next to the car select while
+    // the categoryAssignToolbar row below already has its own Cancel.
+    const categoryPicker = document.getElementById("assignCategorySelect");
+    if (categoryPicker) {
+        categoryPicker.style.display = (hasCarSelected && !selectMode && !categoryAssignMode) ? "" : "none";
+    }
+    // Swap the normal admin action buttons (Update Stock, Train Matches, and
+    // the More menu trigger that now holds Full Refresh/Manage Accounts/
+    // System) out for whichever selection controls are active, so the sticky
+    // bar never shows unrelated button sets at once. selectModeBtn/
+    // assignCategorySelect themselves are exempt -- they stay put (see their
+    // own display rules above).
+    document.querySelectorAll(".toolbar-admin-btn").forEach(actionBtn => {
+        actionBtn.style.display = (selectMode || categoryAssignMode) ? "none" : "";
+    });
+    if (selectMode || categoryAssignMode) {
+        closeMoreMenu();
+    }
+    // Tier 2 is a single merged row now (car-scoped left cluster + always-
+    // visible right cluster -- see the HTML/.tier2-row). It only needs to
+    // hide as a whole row during categoryAssignMode, since that's the one
+    // state where every child in BOTH clusters ends up individually hidden
+    // (car-scoped: hasCarSelected && !categoryAssignMode is false; general:
+    // toolbar-admin-btn hides for categoryAssignMode too) -- this just
+    // avoids leaving an empty, padded row behind in that one case. During
+    // plain selectMode the right cluster hides but "Select Images" (now
+    // showing "Cancel") in the left cluster stays visible, so the row
+    // itself must stay visible then.
+    const tier2Row = document.getElementById("tier2Row");
+    if (tier2Row) {
+        tier2Row.style.display = categoryAssignMode ? "none" : "";
+    }
+}
+
+// ============================================================
+// "More" menu (Part 2) -- Full Refresh / Manage Accounts / System, tucked
+// behind a single popover so Tier 3 doesn't crowd the toolbar with rarely-
+// used actions. Closes on item selection, outside click, or Escape (see the
+// keydown listener near the bottom of this script); nothing here changes
+// what any of the three actions actually does, only where the click starts.
+// ============================================================
+
+function isMoreMenuOpen() {
+    const menu = document.getElementById("moreMenu");
+    return Boolean(menu && menu.style.display !== "none");
+}
+
+function openMoreMenu() {
+    const menu = document.getElementById("moreMenu");
+    const btn = document.getElementById("moreMenuBtn");
+    if (!menu || !btn) return;
+    menu.style.display = "flex";
+    // The CSS default anchors the popover to the button's right edge --
+    // correct whenever the button sits near its row's right edge (desktop,
+    // and most mobile widths). But on mobile the button can also end up
+    // alone on its own wrapped line at the row's LEFT edge instead (see
+    // .actions-cluster's mobile flex-wrap -- confirmed at real widths:
+    // Update Stock + Train Matches + More all fit on one line at 414px,
+    // but More wraps alone to the left at 390px and below), where that same
+    // right-edge anchor would push the popover off-screen to the left. A
+    // single CSS breakpoint can't cover both cases since it depends on the
+    // button's actual on-screen position, not just viewport width -- so
+    // this measures it for real after the popover is shown, and flips to a
+    // left-edge anchor only if the default would overflow.
+    menu.style.left = "auto";
+    menu.style.right = "0";
+    const rect = menu.getBoundingClientRect();
+    const margin = 8;
+    if (rect.left < margin) {
+        menu.style.left = "0";
+        menu.style.right = "auto";
+    }
+    btn.setAttribute("aria-expanded", "true");
+    // Capture phase + added only while open, so a click that opened the menu
+    // (on moreMenuBtn itself) doesn't immediately bubble up and close it
+    // again in the same tick, and so this listener isn't sitting on every
+    // click for the entire life of the page.
+    document.addEventListener("click", handleMoreMenuOutsideClick, true);
+}
+
+function closeMoreMenu() {
+    const menu = document.getElementById("moreMenu");
+    const btn = document.getElementById("moreMenuBtn");
+    document.removeEventListener("click", handleMoreMenuOutsideClick, true);
+    if (menu) menu.style.display = "none";
+    if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function toggleMoreMenu() {
+    if (isMoreMenuOpen()) {
+        closeMoreMenu();
+    } else {
+        openMoreMenu();
+    }
+}
+
+function handleMoreMenuOutsideClick(event) {
+    const wrap = document.getElementById("moreMenuWrap");
+    if (wrap && !wrap.contains(event.target)) {
+        closeMoreMenu();
+    }
+}
+
+// Runs a More-menu item's original action, then closes the menu -- every
+// item (Full Refresh, Manage Accounts, System) is wired through this so the
+// menu can never linger open after a selection.
+function handleMoreMenuAction(action) {
+    closeMoreMenu();
+    action();
+}
+
+function updateSelectModeUI() {
+    const toolbar = document.getElementById("selectionToolbar");
+    const list = document.getElementById("designsList");
+
+    updateModeToggleVisibility();
+
     if (toolbar) {
         // While a batched share is waiting on the user (see
         // batchContinuePending / showBatchContinueBar()), #batchContinueBar
@@ -1850,16 +2325,8 @@ function updateSelectModeUI() {
         // card's selection) pops it back in front of the continuation control.
         toolbar.style.display = (selectMode && !batchContinuePending) ? "flex" : "none";
     }
-    // Swap the normal admin action buttons (Update Stock, Full Refresh, Train
-    // Matches, Manage Accounts, System) out for the selection controls above
-    // while select mode is active, so the sticky bar never shows both
-    // unrelated button sets at once. selectModeBtn itself is exempt -- it
-    // stays put and just relabels to "Cancel".
-    document.querySelectorAll(".toolbar-admin-btn").forEach(actionBtn => {
-        actionBtn.style.display = selectMode ? "none" : "";
-    });
     if (list) {
-        list.classList.toggle("select-mode", selectMode);
+        list.classList.toggle("select-mode", selectMode || categoryAssignMode);
         list.querySelectorAll(".design-item").forEach(item => {
             const itemKey = item.dataset.itemKey;
             item.classList.toggle("selected", Boolean(selectMode && itemKey && selectedCardKeys.has(itemKey)));
@@ -1881,9 +2348,30 @@ function updateSelectModeUI() {
         }
     }
 
+    // Plain "Share Images" stays exactly as-is (and is what it would produce
+    // either way, since there's no category anywhere in the selection to
+    // badge or not) when nothing selected has a category; the moment at
+    // least one selected image is categorized, it's swapped for the "Share
+    // with Badge" / "Share (No Badge)" pair so both options are available.
     const copyBtn = document.getElementById("copySelectedBtn");
+    const badgeBtn = document.getElementById("shareBadgeBtn");
+    const noBadgeBtn = document.getElementById("shareNoBadgeBtn");
+    const selectedCards = Array.from(selectedCardKeys)
+        .map(key => document.querySelector(`#designsList .design-item[data-item-key="${key}"]`))
+        .filter(Boolean);
+    const anyCategorized = selectedCards.some(card => card.dataset.category);
+    const hasSelection = selectedImageIds.size > 0;
     if (copyBtn) {
-        copyBtn.disabled = selectedImageIds.size === 0;
+        copyBtn.style.display = anyCategorized ? "none" : "";
+        copyBtn.disabled = !hasSelection;
+    }
+    if (badgeBtn) {
+        badgeBtn.style.display = anyCategorized ? "" : "none";
+        badgeBtn.disabled = !hasSelection;
+    }
+    if (noBadgeBtn) {
+        noBadgeBtn.style.display = anyCategorized ? "" : "none";
+        noBadgeBtn.disabled = !hasSelection;
     }
 
     const selectAllBtn = document.getElementById("selectAllBtn");
@@ -1899,11 +2387,233 @@ function updateSelectModeUI() {
     updateAllToolbarScrollFades();
 }
 
+// ============================================================
+// "Assign Category" selection mode (Part 5) -- car-scoped, admin-only bulk
+// tagging. Mutually exclusive with selectMode (Share Images) above: entering
+// one always exits the other first (see enterSelectMode()/
+// enterCategoryAssignMode()). Reuses renderDesignItem() as-is for cards (the
+// same visual pattern as every other design card, including the category
+// badge from Part 6, which doubles as "here's what you're about to
+// overwrite" for already-tagged items) and reuses /api/get_all_items_for_car
+// (Part 2) instead of /designs so zero-stock and unmapped items are
+// selectable too, not just what customers currently see.
+// ============================================================
+
+function resetCategoryAssignState() {
+    categoryAssignMode = false;
+    categoryAssignCategory = null;
+    categorySelectedKeys.clear();
+}
+
+function handleAssignCategoryPick(selectEl) {
+    const category = selectEl.value;
+    selectEl.value = ""; // reset to the "Assign Category…" placeholder
+    if (!category || !isAdmin) {
+        return;
+    }
+    enterCategoryAssignMode(category);
+}
+
+async function enterCategoryAssignMode(category) {
+    if (!isAdmin) {
+        return;
+    }
+    const car = document.getElementById("carSelect").value;
+    if (!car) {
+        return;
+    }
+    if (selectMode) {
+        exitSelectMode();
+    }
+    categoryAssignMode = true;
+    categoryAssignCategory = category;
+    categorySelectedKeys.clear();
+    updateCategoryAssignModeUI();
+    await loadAllItemsForCategoryAssign(car);
+}
+
+function cancelCategoryAssignMode() {
+    resetCategoryAssignState();
+    updateCategoryAssignModeUI();
+    // Restores the normal, qty-filtered customer design list (Part 2's
+    // all-items list is only ever shown while actively assigning).
+    loadDesigns();
+}
+
+async function loadAllItemsForCategoryAssign(car) {
+    clearMessages();
+    const list = document.getElementById("designsList");
+    const container = document.getElementById("designsContainer");
+    list.innerHTML = renderSkeletonCards(SKELETON_CARD_COUNT);
+    container.classList.add("show");
+
+    try {
+        const res = await fetch(`/api/get_all_items_for_car?car=${encodeURIComponent(car)}`);
+        if (!res.ok) {
+            showError(`Failed to load items (HTTP ${res.status})`);
+            list.innerHTML = "";
+            return;
+        }
+        const items = await res.json();
+        list.innerHTML = "";
+
+        if (Array.isArray(items) && items.length > 0) {
+            document.getElementById("selectedCarName").textContent = stripShelfCodeForDisplay(car);
+            list.innerHTML = items.map((item, index) => renderDesignItem(item, index)).join("");
+            document.getElementById("designCount").textContent = `Total: ${items.length} items (all stock, including zero-qty and unmapped)`;
+        } else {
+            list.innerHTML = '<li><div class="empty-state">No items found for this car.</div></li>';
+        }
+    } catch (error) {
+        showError(`Error loading items: ${error.message}`);
+    }
+    updateCategoryAssignModeUI();
+}
+
+function getAllCategoryCardKeys() {
+    return Array.from(document.querySelectorAll("#designsList .design-item[data-item-key]"))
+        .map(item => item.dataset.itemKey)
+        .filter(Boolean);
+}
+
+function toggleCategoryItemSelection(itemKey) {
+    if (!itemKey) {
+        return;
+    }
+    if (categorySelectedKeys.has(itemKey)) {
+        categorySelectedKeys.delete(itemKey);
+    } else {
+        categorySelectedKeys.add(itemKey);
+    }
+    updateCategoryAssignModeUI();
+}
+
+function toggleCategorySelectAll() {
+    const allKeys = getAllCategoryCardKeys();
+    const allSelected = allKeys.length > 0 && allKeys.every(key => categorySelectedKeys.has(key));
+    if (allSelected) {
+        categorySelectedKeys.clear();
+    } else {
+        allKeys.forEach(key => categorySelectedKeys.add(key));
+    }
+    updateCategoryAssignModeUI();
+}
+
+function updateCategoryAssignModeUI() {
+    updateModeToggleVisibility();
+
+    const toolbar = document.getElementById("categoryAssignToolbar");
+    if (toolbar) {
+        toolbar.style.display = categoryAssignMode ? "flex" : "none";
+    }
+
+    const label = document.getElementById("categoryAssignLabel");
+    if (label) {
+        label.textContent = categoryAssignMode ? `Assigning: ${categoryAssignCategory}` : "";
+    }
+
+    const countLabel = document.getElementById("categorySelectionCount");
+    if (countLabel) {
+        countLabel.textContent = `${categorySelectedKeys.size} selected`;
+    }
+
+    const confirmBtn = document.getElementById("confirmCategoryBtn");
+    if (confirmBtn) {
+        confirmBtn.disabled = categorySelectedKeys.size === 0;
+    }
+
+    const selectAllBtn = document.getElementById("categorySelectAllBtn");
+    if (selectAllBtn) {
+        const allKeys = getAllCategoryCardKeys();
+        const allSelected = allKeys.length > 0 && allKeys.every(key => categorySelectedKeys.has(key));
+        selectAllBtn.textContent = allSelected ? "Deselect All" : "Select All";
+    }
+
+    const list = document.getElementById("designsList");
+    if (list) {
+        list.classList.toggle("select-mode", selectMode || categoryAssignMode);
+        list.querySelectorAll(".design-item").forEach(item => {
+            const itemKey = item.dataset.itemKey;
+            item.classList.toggle("selected", Boolean(categoryAssignMode && itemKey && categorySelectedKeys.has(itemKey)));
+        });
+    }
+
+    updateAllToolbarScrollFades();
+}
+
+async function confirmCategoryAssignment() {
+    const confirmBtn = document.getElementById("confirmCategoryBtn");
+    if (confirmBtn && confirmBtn.disabled) {
+        return;
+    }
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+    }
+    try {
+        clearMessages();
+        const stockItemNames = Array.from(categorySelectedKeys)
+            .map(key => {
+                const card = document.querySelector(`#designsList .design-item[data-item-key="${key}"]`);
+                return card ? card.dataset.stockItemName : null;
+            })
+            .filter(Boolean);
+
+        if (!stockItemNames.length) {
+            showError("No items selected.");
+            return;
+        }
+
+        const res = await fetch("/admin/assign_category", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ category: categoryAssignCategory, stock_item_names: stockItemNames }),
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+            showError(data.error || `Failed to assign category (HTTP ${res.status})`);
+            return;
+        }
+
+        const count = data.assigned_count ?? 0;
+        const assignedCategoryLabel = categoryAssignCategory; // resetCategoryAssignState() below clears categoryAssignCategory
+        resetCategoryAssignState();
+        updateCategoryAssignModeUI();
+        // Refreshes the current car's normal design list so updated badges
+        // are immediately visible, per Part 5's Confirm behavior. Awaited
+        // (and the success message shown AFTER, not before) because
+        // loadDesigns() shows its own "Showing N designs" notice on
+        // completion -- showing the assignment count first would just get
+        // silently overwritten a moment later otherwise.
+        await loadDesigns();
+        showInfo(`Assigned "${assignedCategoryLabel}" to ${count} item${count === 1 ? "" : "s"}.`);
+    } catch (error) {
+        showError((error && error.message) || "Failed to assign category.");
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = categorySelectedKeys.size === 0;
+        }
+    }
+}
+
 function handleDesignsListClick(event) {
     if (suppressNextClick) {
         suppressNextClick = false;
         event.preventDefault();
         event.stopPropagation();
+        return;
+    }
+    if (categoryAssignMode) {
+        const card = event.target.closest(".design-item");
+        if (!card) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        // Unlike toggleImageSelection() (share mode), no imageId is
+        // required here -- unmapped/zero-stock items must be selectable too
+        // (see Part 5), only itemKey is needed to track selection.
+        toggleCategoryItemSelection(card.dataset.itemKey || "");
         return;
     }
     if (!selectMode) {
@@ -1931,6 +2641,14 @@ function cancelLongPressFeedback() {
 
 function handleDesignsListTouchStart(event) {
     if (!isAdmin) {
+        return;
+    }
+    if (categoryAssignMode) {
+        // Long-press here would otherwise enter Share Images mode (below),
+        // which exits categoryAssignMode as a side effect (see
+        // enterSelectMode()) -- while assigning a category, a plain tap
+        // already toggles selection via handleDesignsListClick(), so this
+        // gesture is simply not needed and skipped rather than fighting it.
         return;
     }
     const card = event.target.closest(".design-item");
@@ -1998,23 +2716,39 @@ function handleDesignsListTouchEnd() {
 // were still slow/failing even with the above prefetch, because raw file
 // size -- not request count or server concurrency -- was the actual
 // bottleneck (some real photos here run 1-2.5MB; total payload for a 30-50
-// image selection reached 6-14MB). /get_share_image/<id> serves a resized,
-// compressed copy (see app.py) specifically for this flow -- measured ~64%
-// smaller on average, far more for the large-tail originals that dominate
-// total transfer time -- while the main grid, full-screen modal, and Copy
-// Image all keep fetching full-resolution originals via getImageSource(),
-// unchanged.
+// image selection reached 6-14MB). /get_share_image_badged/<id> and
+// /get_share_image/<id> both serve a resized, compressed copy (see app.py)
+// specifically for this flow -- measured ~64% smaller on average, far more
+// for the large-tail originals that dominate total transfer time -- while
+// the main grid, full-screen modal, and Copy Image all keep fetching
+// full-resolution originals via getImageSource(), unchanged.
+//
+// Two share modes, two endpoints: "badge" (/get_share_image_badged/<id>)
+// transparently returns the plain image for uncategorized items and the
+// badged version for categorized ones; "plain" (/get_share_image/<id>)
+// always returns the plain image regardless of category, for "Share (No
+// Badge)". Kept in separate caches keyed by mode -- a blob fetched for one
+// mode must never be served for the other, since for a categorized image
+// they're genuinely different bytes.
 const selectedImageBlobCache = new Map();
+const selectedPlainImageBlobCache = new Map();
 
-function getShareImageSource(imageId) {
-    return `/get_share_image/${encodeURIComponent(imageId)}`;
+function getShareImageSource(imageId, mode) {
+    return mode === "plain"
+        ? `/get_share_image/${encodeURIComponent(imageId)}`
+        : `/get_share_image_badged/${encodeURIComponent(imageId)}`;
 }
 
-function prefetchImageBlob(imageId) {
-    if (selectedImageBlobCache.has(imageId)) {
-        return selectedImageBlobCache.get(imageId);
+function getShareBlobCache(mode) {
+    return mode === "plain" ? selectedPlainImageBlobCache : selectedImageBlobCache;
+}
+
+function prefetchImageBlob(imageId, mode) {
+    const cache = getShareBlobCache(mode);
+    if (cache.has(imageId)) {
+        return cache.get(imageId);
     }
-    const promise = fetch(getShareImageSource(imageId)).then(response => {
+    const promise = fetch(getShareImageSource(imageId, mode)).then(response => {
         if (!response.ok) {
             throw new Error(`Image fetch failed (HTTP ${response.status})`);
         }
@@ -2024,12 +2758,20 @@ function prefetchImageBlob(imageId) {
     // as an unhandled rejection; copySelectedImages() awaits this same cached
     // promise later and handles the real error there.
     promise.catch(() => {});
-    selectedImageBlobCache.set(imageId, promise);
+    cache.set(imageId, promise);
     return promise;
 }
 
+// Only the "badge" mode is eagerly prefetched on selection (the more common
+// choice, and the one that matches what the plain "Share Images" fallback
+// button uses too) -- "Share (No Badge)"'s plain images are fetched lazily,
+// only once that button is actually clicked, since eagerly fetching a
+// second copy of every selected image on every toggle would double
+// network+server cost for a mode the user may never pick.
+// fetchImageForShare(id, "plain") below still gets the same retry-once
+// robustness either way.
 function prefetchSelectedImageBlobs() {
-    selectedImageIds.forEach(imageId => prefetchImageBlob(imageId));
+    selectedImageIds.forEach(imageId => prefetchImageBlob(imageId, "badge"));
 }
 
 // One automatic retry per image on top of prefetchImageBlob(): a flaky
@@ -2038,17 +2780,18 @@ function prefetchSelectedImageBlobs() {
 // in flight or resolved); a failed cache entry is retried once with a fresh
 // fetch, bypassing the poisoned cached-rejection. Returns null (never
 // throws) if both attempts fail, so callers can drop just that one image.
-async function fetchImageForShare(imageId) {
+async function fetchImageForShare(imageId, mode) {
+    const cache = getShareBlobCache(mode);
     try {
-        return await prefetchImageBlob(imageId);
+        return await prefetchImageBlob(imageId, mode);
     } catch (firstError) {
         try {
-            const response = await fetch(getShareImageSource(imageId));
+            const response = await fetch(getShareImageSource(imageId, mode));
             if (!response.ok) {
                 throw new Error(`Image fetch failed (HTTP ${response.status})`);
             }
             const blob = await response.blob();
-            selectedImageBlobCache.set(imageId, Promise.resolve(blob));
+            cache.set(imageId, Promise.resolve(blob));
             return blob;
         } catch (secondError) {
             return null;
@@ -2056,10 +2799,10 @@ async function fetchImageForShare(imageId) {
     }
 }
 
-function downloadImagesAsFiles(imageIds) {
+function downloadImagesAsFiles(imageIds, mode) {
     imageIds.forEach((imageId, i) => {
         const link = document.createElement("a");
-        link.href = getShareImageSource(imageId);
+        link.href = getShareImageSource(imageId, mode);
         link.download = `image_${i + 1}`;
         document.body.appendChild(link);
         link.click();
@@ -2090,13 +2833,20 @@ function buildShareFiles(batch) {
 // after the first needs its own fresh user gesture -- there is no way to
 // auto-advance -- so this shows a "Share next N images" action and awaits
 // that real click before continuing, rather than looping unattended.
-async function shareBatchesSequentially(succeeded, skippedNote) {
+//
+// `mode` ("badge" or "plain") is fixed for the whole call -- it's whichever
+// button (Share with Badge / Share (No Badge) / plain Share Images) the
+// user originally clicked, and stays that way across every batch in this
+// sequence (only affects the download-fallback URL; the actual blobs in
+// `succeeded` were already fetched by copySelectedImages() using the right
+// endpoint). The batch-continue sticky bar never re-asks mid-sequence.
+async function shareBatchesSequentially(succeeded, skippedNote, mode) {
     const total = succeeded.length;
     const batches = chunkArray(succeeded, SHARE_BATCH_SIZE);
     let sharedCount = 0;
 
     if (!(navigator.share && navigator.canShare && navigator.canShare({ files: buildShareFiles(batches[0]) }))) {
-        downloadImagesAsFiles(succeeded.map(r => r.id));
+        downloadImagesAsFiles(succeeded.map(r => r.id), mode);
         showInfo(`Share not supported on this browser. Downloaded ${total} image${total === 1 ? "" : "s"} instead.${skippedNote}`);
         return;
     }
@@ -2134,7 +2884,7 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
                     `${baseMsg}${rangeLabel} You can still download these ${batch.length} image${batch.length === 1 ? "" : "s"}.`,
                     "Download images",
                     () => {
-                        downloadImagesAsFiles(batch.map(r => r.id));
+                        downloadImagesAsFiles(batch.map(r => r.id), mode);
                         showInfo(`Downloaded ${batch.length} image${batch.length === 1 ? "" : "s"}.`);
                     }
                 );
@@ -2148,7 +2898,7 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
             const action = await waitForBatchContinuation(
                 `Batch ${i + 1} of ${batches.length} failed — ${batch.length} image${batch.length === 1 ? "" : "s"} ready to download`,
                 `Download & Share Next ${nextBatch.length}`,
-                () => downloadImagesAsFiles(batch.map(r => r.id))
+                () => downloadImagesAsFiles(batch.map(r => r.id), mode)
             );
             if (action === "cancel") {
                 showInfo(`Sharing stopped. Shared ${sharedCount} of ${total} images.${skippedNote}`);
@@ -2193,20 +2943,28 @@ async function shareBatchesSequentially(succeeded, skippedNote) {
     }
 }
 
-async function copySelectedImages() {
-    const copyBtn = document.getElementById("copySelectedBtn");
-    // Guards against a rapid double-click firing a second, concurrent
-    // navigator.share() call (which the API itself would reject with
-    // InvalidStateError) as well as a stray click with nothing selected --
-    // the button is already disabled in both cases. Re-enabled in `finally`
-    // via updateSelectModeUI(), which also correctly leaves it disabled if
-    // the selection ends up empty (e.g. after exitSelectMode()).
-    if (copyBtn && copyBtn.disabled) {
+// `mode` is "badge" (plain "Share Images" fallback button, and "Share with
+// Badge" -- images pass through the badge-aware endpoint, which handles
+// categorized vs uncategorized on its own) or "plain" ("Share (No Badge)" --
+// category is ignored entirely, every image shares exactly as it did before
+// the category feature existed). Both funnel through this one function so
+// the batching/double-click-guard/prefetch robustness is shared identically
+// between them.
+async function copySelectedImages(mode) {
+    const allShareBtns = ["copySelectedBtn", "shareBadgeBtn", "shareNoBadgeBtn"]
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    // Guards against a rapid double-click (on the SAME or a DIFFERENT one of
+    // the up-to-two visible share buttons) firing a second, concurrent
+    // navigator.share() call, which the API itself would reject with
+    // InvalidStateError. Re-enabled in `finally` via updateSelectModeUI(),
+    // which also correctly leaves them disabled if the selection ends up
+    // empty (e.g. after exitSelectMode()).
+    if (shareInProgress) {
         return;
     }
-    if (copyBtn) {
-        copyBtn.disabled = true;
-    }
+    shareInProgress = true;
+    allShareBtns.forEach(btn => { btn.disabled = true; });
     try {
         clearMessages();
         if (!isAdmin) {
@@ -2245,7 +3003,7 @@ async function copySelectedImages() {
         let completed = 0;
         showInfo(`Preparing images... 0 of ${total}`);
         const results = await Promise.all(imageIds.map(async (id) => {
-            const blob = await fetchImageForShare(id);
+            const blob = await fetchImageForShare(id, mode);
             completed += 1;
             showInfo(`Preparing images... ${completed} of ${total}`);
             return { id, blob };
@@ -2263,14 +3021,13 @@ async function copySelectedImages() {
             ? ` (${failedCount} image${failedCount === 1 ? "" : "s"} couldn't be included.)`
             : "";
 
-        await shareBatchesSequentially(succeeded, skippedNote);
+        await shareBatchesSequentially(succeeded, skippedNote, mode);
         exitSelectMode();
     } catch (error) {
         showError((error && error.message) || "Sharing failed.");
     } finally {
-        if (copyBtn) {
-            updateSelectModeUI();
-        }
+        shareInProgress = false;
+        updateSelectModeUI();
     }
 }
 
@@ -2359,6 +3116,8 @@ function updateClearButtonVisibility() {
 function clearCarSelection() {
     setSelect2Value("#carSelect", null);
     exitSelectMode();
+    resetCategoryAssignState();
+    updateCategoryAssignModeUI();
     setUrlCarParam("");
     updateClearButtonVisibility();
 }
@@ -2427,6 +3186,8 @@ function initializeCarSelect() {
 
     select.on("select2:select", function () {
         exitSelectMode();
+        resetCategoryAssignState();
+        updateCategoryAssignModeUI();
         setUrlCarParam(this.value || "");
         loadDesigns();
         updateClearButtonVisibility();
@@ -2775,6 +3536,17 @@ function renderDesignItem(item, index) {
     const safeThumbnail = escapeHtml(thumbnailUrl);
     const imageId = mapped && item.image_id ? String(item.image_id) : "";
     const itemKey = `item-${index}`;
+    // Only ever set server-side via the admin-only /admin/assign_category
+    // route (see design_categories table) -- shown to admin AND customer
+    // views here, no separate visibility gate needed. Absent entirely (no
+    // ribbon, no empty-state placeholder) when the item has no category.
+    // Rendered as a corner ribbon on the thumbnail itself (see
+    // .category-ribbon) rather than a badge-row entry (Part 4) -- keeps
+    // .badge-row as the sole home for "Linked"/"Needs link", the one status
+    // that should stay immediately scannable in that familiar spot.
+    const category = item.category || "";
+    const escapedCategory = escapeHtml(category);
+    const categoryRibbon = category ? `<span class="category-ribbon">${escapedCategory.toUpperCase()}</span>` : "";
     const detailText = isCustomer
         ? ``
         : `
@@ -2783,13 +3555,16 @@ function renderDesignItem(item, index) {
 
     return `
         <li>
-            <div class="design-item${mapped ? '' : ' unmapped-card'}" data-image-id="${imageId}" data-item-key="${itemKey}">
-                <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" onclick="openImageModal(this)">
+            <div class="design-item${mapped ? '' : ' unmapped-card'}" data-image-id="${imageId}" data-item-key="${itemKey}" data-stock-item-name="${escapedTitle}" data-category="${escapedCategory}">
+                <button type="button" class="thumbnail-button" data-image-id="${imageId}" data-src="${safeThumbnail}" data-label="${escapedTitle}" data-category="${escapedCategory}" onclick="openImageModal(this)">
                     <img src="${thumbnailUrl}" alt="${escapedTitle}" class="design-thumbnail">
+                    ${categoryRibbon}
                     <span class="select-check" aria-hidden="true">&#10003;</span>
                 </button>
                 <div class="design-text">
-                    <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : 'Needs link'}</div>
+                    <div class="badge-row">
+                        <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : 'Needs link'}</div>
+                    </div>
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
                     ${isAdmin ? `<a href="${addImageUrl}" class="add-image-link" title="Find or upload a photo for this specific item">Add Image</a>` : ''}
@@ -2955,7 +3730,7 @@ window.addEventListener("DOMContentLoaded", () => {
         imageModalEl.addEventListener("touchcancel", handleModalTouchEnd, { passive: true });
     }
 
-    ["mainToolbarRow", "selectionToolbar", "batchContinueBar"].forEach(id => {
+    ["tier1Row", "tier2Row", "carScopedCluster", "generalActionsCluster", "selectionToolbar", "batchContinueBar"].forEach(id => {
         initScrollFadeTracking(document.getElementById(id));
     });
     window.addEventListener("resize", updateAllToolbarScrollFades, { passive: true });
@@ -2963,6 +3738,10 @@ window.addEventListener("DOMContentLoaded", () => {
 
 document.addEventListener("keydown", event => {
     if (event.key === "Escape") {
+        if (isMoreMenuOpen()) {
+            closeMoreMenu();
+            return;
+        }
         closeImageModal();
     }
 });
