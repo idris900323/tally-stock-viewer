@@ -498,6 +498,21 @@ def _all_stock_items():
     return STOCK_ITEMS_CACHE
 
 
+
+# Display-order rank for each material-tier category (Part 5 of the design-
+# list grouping spec) -- db.DESIGN_CATEGORY_CHOICES is already declared in
+# this exact Pearl/Pearl Designer/.../Napa Designer order, so this just
+# indexes it rather than re-listing the 7 names a second time somewhere they
+# could drift out of sync. Uncategorized items sort after every real
+# category (see _category_sort_key() below).
+_DESIGN_CATEGORY_SORT_RANK = {category: rank for rank, category in enumerate(db.DESIGN_CATEGORY_CHOICES)}
+_UNCATEGORIZED_SORT_RANK = len(db.DESIGN_CATEGORY_CHOICES)
+
+
+def _category_sort_key(category):
+    return _DESIGN_CATEGORY_SORT_RANK.get(category, _UNCATEGORIZED_SORT_RANK)
+
+
 def _build_design_payload(designs):
     stock_item_names = []
     seen = set()
@@ -536,6 +551,17 @@ def _build_design_payload(designs):
         # through the admin-only route.
         enriched_item["category"] = category_lookup.get(lookup_key)
         payload.append(enriched_item)
+
+    # Group by category in Pearl/Pearl Designer/Pearl Deluxe/Saka/Ruby/Napa
+    # Deluxe/Napa Designer/uncategorized-last order (Part 5), for both admin
+    # and customer views alike since both go through this one function --
+    # sorted() is stable, so within each category group items keep whatever
+    # order `designs` already handed in (the existing qty-scan/hierarchy
+    # order), no secondary sort key needed. Sharing (see copySelectedImages()
+    # in index.html, which reads cards in DOM/render order, not click order)
+    # automatically follows this same grouping as a result, with no separate
+    # client-side reordering required.
+    payload.sort(key=lambda item: _category_sort_key(item.get("category")))
     return payload
 
 
