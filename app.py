@@ -403,6 +403,17 @@ HIERARCHY_JSON_CACHE = {"fingerprint": None, "payload": []}
 PARENT_NAME_SET = set()
 DATA_CACHE_LOCK = threading.Lock()
 
+# Per-car completion stats behind the Needs Category / Needs Image Matching
+# dashboard queues (see _compute_car_completion_stats() below). Keyed on
+# (hierarchy file fingerprint, _QUEUE_STATS_VERSION) rather than the file
+# fingerprint alone: total_items comes from the hierarchy file (which already
+# invalidates the usual way), but image_linked_count/category_set_count come
+# from the mappings/design_categories tables, which have no file of their own
+# to fingerprint -- _QUEUE_STATS_VERSION is bumped by hand at every write
+# path that can change those counts (see _invalidate_queue_stats_cache()).
+QUEUE_STATS_CACHE = {"cache_key": None, "by_car": {}}
+_QUEUE_STATS_VERSION = 0
+
 
 def _invalidate_runtime_caches():
     global STOCK_ITEMS_CACHE, MAIN_ROWS_CACHE, STOCK_QTY_CACHE, PRODUCT_CATEGORY_CACHE, HIERARCHY_JSON_CACHE
@@ -411,6 +422,17 @@ def _invalidate_runtime_caches():
     STOCK_QTY_CACHE = {"fingerprint": None, "qty_map": {}}
     PRODUCT_CATEGORY_CACHE = {"fingerprint": None, "categories": []}
     HIERARCHY_JSON_CACHE = {"fingerprint": None, "payload": []}
+    _invalidate_queue_stats_cache()
+
+
+def _invalidate_queue_stats_cache():
+    """Call at every write path that can change a stock item's image-mapped
+    or category-assigned status (confirm/remove mapping, remove-missing-images,
+    assign_category) plus on Full Refresh, so /api/needs_category_queue and
+    /api/needs_image_matching_queue never serve stale completion counts."""
+    global _QUEUE_STATS_VERSION
+    with DATA_CACHE_LOCK:
+        _QUEUE_STATS_VERSION += 1
 
 
 def _load_main_hierarchy_payload():
@@ -563,6 +585,89 @@ def _build_design_payload(designs):
     # client-side reordering required.
     payload.sort(key=lambda item: _category_sort_key(item.get("category")))
     return payload
+
+
+def _compute_car_completion_stats():
+    """Per-car completion stats behind the Needs Category / Needs Image
+    Matching dashboard queues -- one pass across the whole catalog rather
+    than one hierarchy scan + one DB round-trip per car.
+
+    total_items is qty-agnostic (every hierarchy child under the car, same
+    scope as /api/get_all_items_for_car / get_stock_items_for_training_from_
+    hierarchy()) and counts raw hierarchy entries, not deduplicated by name --
+    matching how _build_design_payload() doesn't dedupe its output either, so
+    a car's total_items here always equals the length of what that car's
+    /api/get_all_items_for_car response would return.
+
+    Cached under (hierarchy file fingerprint, _QUEUE_STATS_VERSION) -- see
+    _invalidate_queue_stats_cache().
+    """
+    hierarchy_fingerprint = _file_fingerprint(MAIN_HIERARCHY_CACHE_JSON)
+    cache_key = (hierarchy_fingerprint, _QUEUE_STATS_VERSION)
+
+    with DATA_CACHE_LOCK:
+        if QUEUE_STATS_CACHE["cache_key"] == cache_key:
+            return QUEUE_STATS_CACHE["by_car"]
+
+    items = _load_training_hierarchy_items()
+
+    stock_names_by_car = {}
+    unique_names_by_key = {}
+    for item in items:
+        car_model = str(item.get("car_model") or "").strip()
+        stock_item_name = str(item.get("stock_item_name") or "").strip()
+        if not car_model or not stock_item_name:
+            continue
+        stock_names_by_car.setdefault(car_model, []).append(stock_item_name)
+        key = _normalize_lookup_key(stock_item_name)
+        if key and key not in unique_names_by_key:
+            unique_names_by_key[key] = stock_item_name
+
+    # get_mappings_for_stock_items() scans the whole mappings table once and
+    # filters in Python (no SQL IN-clause), so it's safe to call with every
+    # distinct stock item name in the catalog in one shot.
+    mapping_lookup = db.get_mappings_for_stock_items(list(unique_names_by_key.values()))
+
+    # get_categories_for_stock_items() DOES use a SQL "IN (...)" clause, and
+    # a full catalog's worth of distinct item names can run past SQLite's
+    # bound-parameter limit in one call -- chunk it the same way
+    # /api/search_all_stock_items caps its own result set, well under any
+    # realistic SQLITE_MAX_VARIABLE_NUMBER.
+    category_lookup = {}
+    unique_names = list(unique_names_by_key.values())
+    chunk_size = 500
+    for start in range(0, len(unique_names), chunk_size):
+        category_lookup.update(db.get_categories_for_stock_items(unique_names[start:start + chunk_size]))
+
+    by_car = {}
+    for car_model, stock_names in stock_names_by_car.items():
+        total_items = len(stock_names)
+        image_linked_count = 0
+        category_set_count = 0
+        fully_done_count = 0
+        for stock_item_name in stock_names:
+            key = _normalize_lookup_key(stock_item_name)
+            has_image = bool(mapping_lookup.get(key, {}).get("image_id")) if key else False
+            has_category = key in category_lookup if key else False
+            if has_image:
+                image_linked_count += 1
+            if has_category:
+                category_set_count += 1
+            if has_image and has_category:
+                fully_done_count += 1
+        by_car[car_model] = {
+            "car": car_model,
+            "total_items": total_items,
+            "image_linked_count": image_linked_count,
+            "category_set_count": category_set_count,
+            "fully_done_count": fully_done_count,
+        }
+
+    with DATA_CACHE_LOCK:
+        QUEUE_STATS_CACHE["cache_key"] = cache_key
+        QUEUE_STATS_CACHE["by_car"] = by_car
+
+    return by_car
 
 
 def _placeholder_response():
@@ -2181,6 +2286,132 @@ def get_all_items_for_car():
     return jsonify(_build_design_payload(designs_input))
 
 
+def _sort_queue_bucket(bucket, remaining_key):
+    bucket.sort(key=lambda entry: (-entry[remaining_key], entry["car"]))
+
+
+@app.route("/api/needs_category_queue")
+@admin_required
+def needs_category_queue():
+    """Prioritized "Needs Category" work queue for the Train Matches
+    dashboard. Tiers, in priority order:
+
+      Tier 1 "Finish the gaps" -- fully_done_count > 0 AND < total_items:
+        the car already has real progress on BOTH fronts, just isn't 100%
+        done yet. Same underlying signal as needs_image_matching_queue()'s
+        Tier 1.
+      Tier 2 "Ready to tag" -- every item already has an image
+        (image_linked_count == total_items) but zero categorization has
+        started (category_set_count == 0): a clean, uninterrupted batch.
+      Tier 3 -- everything else still missing at least one category (not
+        started on images either, or some other partial state).
+
+    Secondary sort within each tier: remaining (uncategorized) item count,
+    descending, then car name ascending -- surfaces the biggest tagging
+    opportunities first within a tier.
+    """
+    load_error = ensure_data_loaded()
+    if load_error:
+        return jsonify({"error": load_error}), 500
+
+    stats_by_car = _compute_car_completion_stats()
+    tier1, tier2, tier3 = [], [], []
+    for car_model, stats in stats_by_car.items():
+        total_items = stats["total_items"]
+        category_set_count = stats["category_set_count"]
+        if total_items <= 0 or category_set_count >= total_items:
+            continue  # fully categorized (or empty car) -- not in this queue
+
+        image_linked_count = stats["image_linked_count"]
+        fully_done_count = stats["fully_done_count"]
+        entry = {
+            "car": car_model,
+            "total_items": total_items,
+            "image_linked_count": image_linked_count,
+            "category_set_count": category_set_count,
+            "fully_done_count": fully_done_count,
+            "remaining": total_items - category_set_count,
+        }
+
+        if fully_done_count > 0 and fully_done_count < total_items:
+            entry["tier"] = 1
+            entry["tier_label"] = "Finish the gaps"
+            tier1.append(entry)
+        elif image_linked_count == total_items and category_set_count == 0:
+            entry["tier"] = 2
+            entry["tier_label"] = "Ready to tag"
+            tier2.append(entry)
+        else:
+            entry["tier"] = 3
+            entry["tier_label"] = "Needs category"
+            tier3.append(entry)
+
+    for bucket in (tier1, tier2, tier3):
+        _sort_queue_bucket(bucket, "remaining")
+
+    return jsonify({
+        "cars": tier1 + tier2 + tier3,
+        "secondary_sort": "remaining (uncategorized) item count, descending, then car name ascending",
+    })
+
+
+@app.route("/api/needs_image_matching_queue")
+@admin_required
+def needs_image_matching_queue():
+    """Prioritized "Needs Image Matching" work queue. Tiers:
+
+      Tier 1 "Finish the gaps" -- the same fully_done_count > 0 AND <
+        total_items signal as needs_category_queue()'s Tier 1 (shared across
+        both queues).
+      Tier 2 -- everything else still missing at least one image, sorted by
+        remaining (unmatched) item count descending. No mirrored "tags done,
+        images missing" tier here by design -- that state is expected to be
+        rare in practice, so it isn't worth a dedicated bucket.
+
+    Secondary sort within each tier: remaining (unmatched) item count,
+    descending, then car name ascending.
+    """
+    load_error = ensure_data_loaded()
+    if load_error:
+        return jsonify({"error": load_error}), 500
+
+    stats_by_car = _compute_car_completion_stats()
+    tier1, tier2 = [], []
+    for car_model, stats in stats_by_car.items():
+        total_items = stats["total_items"]
+        image_linked_count = stats["image_linked_count"]
+        if total_items <= 0 or image_linked_count >= total_items:
+            continue  # every item already has an image (or empty car)
+
+        category_set_count = stats["category_set_count"]
+        fully_done_count = stats["fully_done_count"]
+        entry = {
+            "car": car_model,
+            "total_items": total_items,
+            "image_linked_count": image_linked_count,
+            "category_set_count": category_set_count,
+            "fully_done_count": fully_done_count,
+            "remaining": total_items - image_linked_count,
+        }
+
+        if fully_done_count > 0 and fully_done_count < total_items:
+            entry["tier"] = 1
+            entry["tier_label"] = "Finish the gaps"
+            tier1.append(entry)
+        else:
+            entry["tier"] = 2
+            entry["tier_label"] = "Needs image matching"
+            tier2.append(entry)
+
+    for bucket in (tier1, tier2):
+        _sort_queue_bucket(bucket, "remaining")
+
+    return jsonify({
+        "cars": tier1 + tier2,
+        "secondary_sort": "remaining (unmatched) item count, descending, then car name ascending",
+    })
+
+
 @app.route("/api/resolve_car_from_folder")
 def resolve_car_from_folder():
     folder = (request.args.get("folder") or "").strip()
@@ -2529,6 +2760,9 @@ def assign_category():
         except ValueError as exc:
             failed.append({"stock_item": stock_item_name, "reason": str(exc)})
 
+    if assigned_names:
+        _invalidate_queue_stats_cache()
+
     # There's no dedicated admin-action audit table for anything other than
     # user-account lifecycle events (account_logs is FK'd to a target
     # users.id row, which a stock item category assignment has no
@@ -2673,6 +2907,8 @@ def remove_mapping():
         return jsonify({"error": "image not found"}), 404
 
     removed = db.remove_mapping_by_image_id(image_id)
+    if removed:
+        _invalidate_queue_stats_cache()
     return jsonify({
         "status": "removed" if removed else "no_mapping",
         "removed": bool(removed),
@@ -2697,6 +2933,7 @@ def _confirm_mapping_core(image_id, stock_item_name, car_model="", confidence=1.
     db.add_mapping(image_id, stock_item_name, resolved_car_model, confidence, confirmed_by=confirmed_by)
     if resolved_car_model and confidence >= 1.0 and stock_item_name not in ("", "__UNMATCHABLE__"):
         db.add_folder_mapping(image_record.get("car_folder", ""), resolved_car_model)
+    _invalidate_queue_stats_cache()
 
     return {
         "image_id": image_id,
@@ -3292,6 +3529,8 @@ def remove_missing_images():
     still_missing_ids = {row["id"] for row in missing["rows"]} & requested_ids
 
     images_removed, mappings_removed = db.remove_missing_image_rows(still_missing_ids)
+    if mappings_removed:
+        _invalidate_queue_stats_cache()
 
     return jsonify({
         "status": "removed",

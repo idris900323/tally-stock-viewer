@@ -677,52 +677,63 @@
         }
 
         /* Category ribbon (Part 4) -- lives on the thumbnail itself (see
-           renderDesignItem()), opposite corner from .select-check so the two
-           never collide. Sits on .thumbnail-button (position: relative
-           already), not on the <img> itself, so it still renders at full
-           opacity over a faded "No image mapped" placeholder thumbnail (see
-           .design-item.unmapped-card .design-thumbnail's opacity -- that rule
-           only targets .design-thumbnail, not this). pointer-events: none
-           keeps it purely decorative, never intercepting the thumbnail's own
-           click/select handling.
+           renderDesignItem()). Flush along the BOTTOM edge, not a top-left
+           corner pill (Part 7) -- keeps it clear of .select-check, which is
+           always top-right, with zero risk of the two overlapping when an
+           already-categorized card is selected. Sits on .thumbnail-button
+           (position: relative already), not on the <img> itself, so it
+           still renders at full opacity over a faded "No image mapped"
+           placeholder thumbnail (see .design-item.unmapped-card
+           .design-thumbnail's opacity -- that rule only targets
+           .design-thumbnail, not this). pointer-events: none keeps it
+           purely decorative, never intercepting the thumbnail's own
+           click/select handling. border-radius on the bottom two corners
+           only, 1px inside .design-thumbnail's own 12px so it hugs that
+           image's rounded silhouette instead of square corners poking past
+           the curve.
 
-           Root cause of the reported blurriness (Part 6): NOT a transform or
-           filter (there was never one on this element), and NOT font-size
-           alone -- it was the semi-transparent rgba(..., 0.85) background
-           sitting directly over a real product photo. Anti-aliased white
-           text blends its edge pixels against whatever is immediately behind
-           it; with a translucent backdrop that "behind" is the photo's own
-           texture/noise showing through at ~15% strength, not a flat color,
-           so every glyph edge picks up a slightly different fringe color
-           depending on what part of the photo is underneath. A fully opaque
-           background removes that variability -- text edges now anti-alias
-           against one flat, known color everywhere, which is what actually
-           reads as "crisp" vs "blurry" (confirmed by comparing against
-           .badge-row's already-crisp, always-opaque .badge pills). Bumped
-           font-size 10px->11px (matching .badge's own size) and dropped
-           font-weight 700->600 -- now safe since Part 6 also shortened the
-           displayed text to abbreviations (max 6 chars, e.g. "P.DSGN"),
-           so there's headroom that wasn't there when this had to fit
-           "Pearl Designer" at 10px; heavier weight was doing some of the
-           legibility work text-size alone should. text-rendering/
-           -webkit-font-smoothing made explicit rather than left at the
-           default "auto" (harmless, but removes doubt when
-           re-investigating any future rendering-crispness report). */
+           Root cause of the Part 6 blurriness complaint: the semi-
+           transparent rgba(..., 0.85) background sitting directly over a
+           real product photo (fixed then -- still opaque here). Root cause
+           of the STILL-hard-to-read complaint after that fix (Part 7,
+           confirmed via real 4x-DPI screenshots of "RUBY" vs "P.DSGN"):
+           NOT a rotation (there never was one -- transform was always
+           "none", confirmed via getComputedStyle) and NOT contrast (8.98:1,
+           confirmed via getComputedStyle color/background). It was the
+           top-left PILL shape itself -- border-radius:999px plus a fixed
+           6px inset on each side meant longer abbreviations like "P.DSGN"
+           had to cram into whatever width the pill's own curvature left
+           over, with the "." barely distinguishable from the surrounding
+           letters at that size ("RUBY", 4 characters, had plenty of room
+           in the same pill and read perfectly clearly -- this only bit
+           longer abbreviations). Switching to a full-width flush bar
+           removes that width ceiling entirely: font-size 11px->12px and
+           font-weight 600->700 (both reverted-and-then-some from Part 6's
+           reduction, which was based on the pill still being the
+           container) now have the whole thumbnail width to work with
+           instead of a pill's curved remainder. Abbreviations also dropped
+           their periods in favor of a space ("P.DSGN" -> "P DSGN") --
+           periods compress toward invisible at this size, a space reads as
+           a clear, unambiguous word break. text-rendering/
+           -webkit-font-smoothing left as explicit (harmless, prior art). */
         .category-ribbon {
             position: absolute;
-            top: 6px;
-            left: 6px;
-            max-width: calc(100% - 12px);
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100%;
+            box-sizing: border-box;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            font-size: 11px;
-            font-weight: 600;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 700;
             letter-spacing: 0.02em;
             color: #fff;
             background: #5b21b6;
-            padding: 3px 8px;
-            border-radius: 999px;
+            padding: 4px 6px;
+            border-radius: 0 0 11px 11px;
             pointer-events: none;
             z-index: 1;
             text-rendering: optimizeLegibility;
@@ -1687,14 +1698,17 @@ const BADGE_ICON_UNMAPPED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusab
 // ribbon's own title="..." tooltip (see renderDesignItem()). A category
 // with no entry here (shouldn't happen -- this covers every value in
 // db.DESIGN_CATEGORY_CHOICES) just falls back to its own full name.
+// Space, not a period, as the separator (Part 7) -- "P.DSGN" compresses the
+// "." toward invisible at real thumbnail size, where "P DSGN" reads as a
+// clear, unambiguous word break (confirmed via real 4x-DPI screenshots).
 const CATEGORY_RIBBON_ABBREVIATIONS = {
     "Pearl": "PEARL",
-    "Pearl Designer": "P.DSGN",
-    "Pearl Deluxe": "P.DLX",
+    "Pearl Designer": "P DSGN",
+    "Pearl Deluxe": "P DLX",
     "Saka": "SAKA",
     "Ruby": "RUBY",
-    "Napa Deluxe": "N.DLX",
-    "Napa Designer": "N.DSGN",
+    "Napa Deluxe": "N DLX",
+    "Napa Designer": "N DSGN",
 };
 const STAGE_LABELS = {
     car_master: "Stage 1/4 — Updating car master list from Tally...",
@@ -3363,11 +3377,37 @@ async function loadCars() {
         clearMessages();
         initializeCarSelect();
         restoreCarFromUrl();
+        maybeOpenCategorySessionFromUrl();
     } catch (error) {
         showError(`Error preparing car search: ${error.message}`);
     }
 
     updateTimestamp();
+}
+
+// Deep link from the Train Matches dashboard's "Needs Category" work queue
+// (see workQueues.needsCategory.buildHref() in train.html) -- lands on this
+// car (already selected by restoreCarFromUrl() just above, synchronously,
+// since setSelect2Value()'s .val().trigger("change") is not async) and opens
+// the continuous "Manage Categories" session immediately, the same session
+// enterCategoryAssignMode() opens from a manual "Assign Category" click.
+// One-shot: the query param is stripped as soon as it's read so a later
+// refresh/bookmark of this same URL (which keeps ?car=) doesn't reopen the
+// session on every visit.
+const MANAGE_CATEGORIES_QUERY_PARAM = "manage_categories";
+
+function maybeOpenCategorySessionFromUrl() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get(MANAGE_CATEGORIES_QUERY_PARAM) !== "1") {
+        return;
+    }
+    url.searchParams.delete(MANAGE_CATEGORIES_QUERY_PARAM);
+    history.replaceState(null, "", url.toString());
+
+    if (!isAdmin || !document.getElementById("carSelect").value) {
+        return;
+    }
+    enterCategoryAssignMode();
 }
 
 // Last refresh_status payload seen by updateTimestamp(), reused by
