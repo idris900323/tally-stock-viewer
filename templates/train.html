@@ -103,6 +103,134 @@
             font-weight: 700;
         }
 
+        .queues-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+
+        .queue-panel {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .queue-panel-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .queue-panel-head h2 {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        .queue-count {
+            font-size: 12px;
+            color: var(--muted);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .queue-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 360px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+
+        .queue-empty {
+            margin: 0;
+            padding: 10px 2px;
+            font-size: 13px;
+        }
+
+        .queue-tier-header {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--muted);
+            padding: 10px 2px 2px;
+        }
+
+        .queue-tier-header:first-child {
+            padding-top: 2px;
+        }
+
+        .queue-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #fbfdff;
+            text-decoration: none;
+            color: var(--text);
+            transition: background-color 0.12s ease, transform 0.12s ease;
+        }
+
+        .queue-item:hover {
+            background: #eef4fb;
+            transform: translateY(-1px);
+        }
+
+        .queue-item-main {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .queue-item-car {
+            font-size: 13px;
+            font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .queue-item-detail {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .queue-item-badge {
+            flex-shrink: 0;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: #dbeafe;
+            color: var(--accent-2);
+            white-space: nowrap;
+        }
+
+        .queue-item-badge.tier-1 {
+            background: #fee2e2;
+            color: var(--danger);
+        }
+
+        .queue-item-badge.tier-2 {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .queue-show-more {
+            margin-top: 10px;
+            align-self: flex-start;
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+
         .preview-wrap {
             display: grid;
             grid-template-columns: 1fr;
@@ -683,6 +811,10 @@
             .progress-card {
                 grid-template-columns: repeat(2, 1fr);
             }
+
+            .queues-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         @media (max-width: 640px) {
@@ -719,6 +851,18 @@
 
             .actions {
                 flex-direction: column;
+            }
+
+            .queue-list {
+                max-height: 280px;
+            }
+
+            .queue-item {
+                min-height: 44px;
+            }
+
+            .queue-show-more {
+                width: 100%;
             }
 
             .topbar {
@@ -830,6 +974,31 @@
             <span class="value" id="percentComplete">{{ mapping_stats.percent_complete }}%</span>
         </div>
     </div>
+
+    {% if is_admin %}
+    <div class="queues-grid" id="workQueuesGrid">
+        <div class="panel queue-panel">
+            <div class="queue-panel-head">
+                <h2>Needs Category</h2>
+                <span class="queue-count" id="needsCategoryCount"></span>
+            </div>
+            <div class="queue-list" id="needsCategoryList">
+                <p class="muted queue-empty" id="needsCategoryEmpty">Loading&hellip;</p>
+            </div>
+            <button type="button" class="secondary queue-show-more" id="needsCategoryShowMore" style="display:none;" onclick="toggleQueueExpanded('needsCategory')"></button>
+        </div>
+        <div class="panel queue-panel">
+            <div class="queue-panel-head">
+                <h2>Needs Image Matching</h2>
+                <span class="queue-count" id="needsImageMatchingCount"></span>
+            </div>
+            <div class="queue-list" id="needsImageMatchingList">
+                <p class="muted queue-empty" id="needsImageMatchingEmpty">Loading&hellip;</p>
+            </div>
+            <button type="button" class="secondary queue-show-more" id="needsImageMatchingShowMore" style="display:none;" onclick="toggleQueueExpanded('needsImageMatching')"></button>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="grid">
         <div class="panel preview-wrap">
@@ -971,6 +1140,166 @@ let currentMissingImages = [];
 
 function normalize(value) {
     return String(value || "").trim().toUpperCase();
+}
+
+// ============================================================
+// Work queues (Needs Category / Needs Image Matching) -- prioritized
+// cross-catalog lists backed by /api/needs_category_queue and
+// /api/needs_image_matching_queue. Admin-only (the DOM for this section
+// only exists when is_admin is true server-side, guarding #workQueuesGrid
+// above), so every function here assumes isAdmin is true and simply no-ops
+// if its container isn't in the page.
+// ============================================================
+
+const QUEUE_DISPLAY_CAP = 6;
+
+const TIER_LABELS = {
+    1: "Tier 1",
+    2: "Tier 2",
+    3: "Tier 3",
+};
+
+const workQueues = {
+    needsCategory: {
+        url: "/api/needs_category_queue",
+        cars: [],
+        expanded: false,
+        remainingNoun: "category",
+        buildHref: car => `/?car=${encodeURIComponent(car)}&manage_categories=1`,
+        buildDetail: entry => `${entry.remaining} of ${entry.total_items} item${entry.total_items === 1 ? "" : "s"} still need a category`,
+    },
+    needsImageMatching: {
+        url: "/api/needs_image_matching_queue",
+        cars: [],
+        expanded: false,
+        remainingNoun: "image",
+        buildHref: car => `/train?car=${encodeURIComponent(car)}`,
+        buildDetail: entry => `${entry.remaining} of ${entry.total_items} item${entry.total_items === 1 ? "" : "s"} still need an image`,
+    },
+};
+
+// Tier 2 in needsCategory ("Ready to tag") reads as more urgent/positive
+// than the generic Tier 1 red used elsewhere, so tier badge color is keyed
+// off the tier number directly rather than queue-specific -- same visual
+// language (red=1, green=2, blue=3/default) applies to both queues.
+function tierBadgeClass(tier) {
+    if (tier === 1) return "tier-1";
+    if (tier === 2) return "tier-2";
+    return "";
+}
+
+function renderQueueList(queueKey) {
+    const queue = workQueues[queueKey];
+    const listEl = document.getElementById(`${queueKey}List`);
+    const countEl = document.getElementById(`${queueKey}Count`);
+    const showMoreBtn = document.getElementById(`${queueKey}ShowMore`);
+    if (!listEl || !countEl || !showMoreBtn) {
+        return;
+    }
+
+    listEl.innerHTML = "";
+    countEl.textContent = queue.cars.length ? `${queue.cars.length} car${queue.cars.length === 1 ? "" : "s"}` : "";
+
+    if (!queue.cars.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted queue-empty";
+        empty.textContent = "Nothing needs attention here right now.";
+        listEl.appendChild(empty);
+        showMoreBtn.style.display = "none";
+        return;
+    }
+
+    const visibleCars = queue.expanded ? queue.cars : queue.cars.slice(0, QUEUE_DISPLAY_CAP);
+    let lastTier = null;
+
+    visibleCars.forEach(entry => {
+        if (entry.tier !== lastTier) {
+            const header = document.createElement("div");
+            header.className = "queue-tier-header";
+            header.textContent = entry.tier_label ? `${TIER_LABELS[entry.tier] || `Tier ${entry.tier}`} — ${entry.tier_label}` : (TIER_LABELS[entry.tier] || `Tier ${entry.tier}`);
+            listEl.appendChild(header);
+            lastTier = entry.tier;
+        }
+
+        const row = document.createElement("a");
+        row.className = "queue-item";
+        row.href = queue.buildHref(entry.car);
+        row.title = `Open ${entry.car} — ${queue.buildDetail(entry)}`;
+
+        const main = document.createElement("div");
+        main.className = "queue-item-main";
+
+        const carName = document.createElement("span");
+        carName.className = "queue-item-car";
+        carName.textContent = entry.car;
+        main.appendChild(carName);
+
+        const detail = document.createElement("span");
+        detail.className = "queue-item-detail";
+        detail.textContent = queue.buildDetail(entry);
+        main.appendChild(detail);
+
+        row.appendChild(main);
+
+        const badge = document.createElement("span");
+        badge.className = `queue-item-badge ${tierBadgeClass(entry.tier)}`.trim();
+        badge.textContent = `Tier ${entry.tier}`;
+        row.appendChild(badge);
+
+        listEl.appendChild(row);
+    });
+
+    const remainingCount = queue.cars.length - visibleCars.length;
+    if (remainingCount > 0) {
+        showMoreBtn.style.display = "";
+        showMoreBtn.textContent = `Show ${remainingCount} more`;
+    } else if (queue.expanded && queue.cars.length > QUEUE_DISPLAY_CAP) {
+        showMoreBtn.style.display = "";
+        showMoreBtn.textContent = "Show less";
+    } else {
+        showMoreBtn.style.display = "none";
+    }
+}
+
+function toggleQueueExpanded(queueKey) {
+    const queue = workQueues[queueKey];
+    if (!queue) {
+        return;
+    }
+    queue.expanded = !queue.expanded;
+    renderQueueList(queueKey);
+}
+
+async function loadWorkQueue(queueKey) {
+    const queue = workQueues[queueKey];
+    const listEl = document.getElementById(`${queueKey}List`);
+    if (!queue || !listEl) {
+        return;
+    }
+
+    try {
+        const res = await fetch(queue.url);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        queue.cars = Array.isArray(data.cars) ? data.cars : [];
+        renderQueueList(queueKey);
+    } catch (error) {
+        listEl.innerHTML = "";
+        const errorEl = document.createElement("p");
+        errorEl.className = "muted queue-empty";
+        errorEl.textContent = `Could not load this queue: ${error.message}`;
+        listEl.appendChild(errorEl);
+    }
+}
+
+function loadWorkQueues() {
+    if (!isAdmin || !document.getElementById("workQueuesGrid")) {
+        return;
+    }
+    loadWorkQueue("needsCategory");
+    loadWorkQueue("needsImageMatching");
 }
 
 function showNotice(type, message) {
@@ -2089,26 +2418,32 @@ async function initializePage() {
     if (isAdmin) {
         loadExistingFoldersList();
     }
+    loadWorkQueues();
     await loadImageQueue(selectedFolder);
 
-    // Pre-selection from index.html's "Add Image" link (?car=&stock_item=).
+    // Pre-selection from index.html's "Add Image" link (?car=&stock_item=)
+    // and from the Needs Image Matching work queue (?car= alone, no
+    // stock_item -- see workQueues.needsImageMatching.buildHref() above).
     // Reuses the exact same car-change -> loadStockItemsForCar ->
     // selectPreferredStockItem -> "change" dispatch -> handleStockItemSelection
     // chain a manual selection triggers; suppressCarFilterLoad only prevents
     // the car's own change handler from also firing loadStockItemsForCar
     // without the target stock item, since we call it ourselves right below
-    // with that value so it can be auto-selected in the same pass.
-    if (targetCar && targetStockItem) {
+    // with that value (when there is one) so it can be auto-selected in the
+    // same pass.
+    if (targetCar) {
         suppressCarFilterLoad = true;
         setSelect2Value("#carModelFilter", targetCar);
         suppressCarFilterLoad = false;
         try {
-            await loadStockItemsForCar(targetCar, targetStockItem);
-            const normalizedTarget = normalize(targetStockItem);
-            const stockSelect = document.getElementById("stockItemSelect");
-            const matched = Array.from(stockSelect.options).some(option => normalize(option.value) === normalizedTarget);
-            if (!matched) {
-                showNotice("error", "Could not find that exact item — please select manually");
+            await loadStockItemsForCar(targetCar, targetStockItem || "");
+            if (targetStockItem) {
+                const normalizedTarget = normalize(targetStockItem);
+                const stockSelect = document.getElementById("stockItemSelect");
+                const matched = Array.from(stockSelect.options).some(option => normalize(option.value) === normalizedTarget);
+                if (!matched) {
+                    showNotice("error", "Could not find that exact item — please select manually");
+                }
             }
         } catch (error) {
             showNotice("error", error.message);
