@@ -24,7 +24,7 @@ The runtime has five main layers:
 ### Data layer
 - `database.py` manages SQLite schema and queries
 - `data/mappings.db` stores images, mappings, users, and account logs (plus legacy pricing tables, see section 15)
-- `design_categories` stores the per-stock-item category assignments used by Bulk Match
+- `design_categories` stores the per-stock-item material-tier category assignments (Pearl, Ruby, Saka, ...) — see section 22. Not to be confused with the Bulk Match product-type/color buckets in section 13, which are derived on the fly from the item name and never stored
 
 ### Shared normalization layer
 - `utils/normalize.py` — whitespace/case normalization (`normalize_text`), the shared lookup key used on both the app and database sides (`normalize_lookup_key`), display-only shelf-code stripping (`strip_shelf_code_for_display`), and car base-name extraction (`extract_car_base_name`)
@@ -188,6 +188,8 @@ Authentication is form-based.
 - `STOCK_QTY_CACHE`
 - `PRODUCT_CATEGORY_CACHE`
   - Bulk Match category buckets, invalidated when `main_hierarchy.json`'s file fingerprint changes
+- `QUEUE_STATS_CACHE`
+  - per-car completion stats behind the Needs Category / Needs Image Matching work queues (section 23), keyed on `(hierarchy file fingerprint, _QUEUE_STATS_VERSION)` — see that section for the invalidation write paths
 - `last_refresh_status`
 
 `load_data()` is the core cache-building function.
@@ -395,6 +397,8 @@ The main page also exposes a share workflow for selected images:
 - `GET /get_share_image_badged/<image_id>` adds the item's category badge when available and falls back to the plain share image when it is not
 - `templates/index.html` provides the `Share Images` button that drives this flow
 
+The "category" here is the material-tier tag from section 22 (Pearl/Ruby/Saka/...), not the Bulk Match product-type bucket above — see section 22 for how it's assigned and section 23 for the dashboards that surface which cars still need it assigned.
+
 ## 14. Match suggestion heuristics
 
 `matcher.py` is currently heuristic, not AI-driven.
@@ -468,11 +472,14 @@ The templates map cleanly to the major workflows:
   - a SEPARATE, much longer threshold, `STALE_WARNING_THRESHOLD_SECONDS` (900s / 15 minutes), gates a clearly visible banner (`#staleDataNotice`, near the top of the page) plus a short matching hint next to the timestamp — both explain WHY the last auto-refresh failed in plain language (multiple Tally windows, Tally closed, Tally slow, or an unexpected issue with a pointer to the System panel). Both read off one shared classifier, `classifyRefreshIssueBucket()`, fed by the existing 30-second `/refresh_status` poll — `error_code` when present, falling back to the same message keywords `_classify_tally_exception` uses — so there is exactly one place that decides which reason it is, never two competing schemes. `updateStaleWarningUI()` additionally requires `hasRealRefreshAttempt()` (a non-null `timestamp` on the payload) before showing anything, so the pre-refresh placeholder (`{"success": false, "message": "Not yet run", "timestamp": null}`, set at `last_refresh_status`'s module-level default in `app.py`) can never be mistaken for a real failure — this is what used to cause a false-positive banner immediately after a fresh restart, since an old cached file's mtime could already read as "stale" before the app had done anything. The separate red `#statusMessage` "Last error: ..." line was removed entirely from the failure path (it used to show unconditionally and read as a second, disconnected fragment next to the muted hint); on failure `#statusMessage` now stays blank and the banner/hint pair is the single consolidated notice. Both banner and hint clear automatically once a refresh cycle succeeds again; no separate timer was added, everything piggybacks on the existing 30-second `/refresh_status` poll and `checkTimestampFreshness()`'s existing 10-second tick
   - every admin-view design card carries an "Add Image" pill (its own `.add-image-link` class, not the plain `.fix-link` shared with Logout) linking to `/train?car=...&stock_item=...` so Training Mode opens pre-selected
   - car names in the heading and info messages are shown shelf-code-stripped (see section 11); the raw name still drives `?car=` requests
+  - the `More` popover (`#moreMenu`, `toggleMoreMenu()`/`openMoreMenu()`/`closeMoreMenu()`) holds five items behind one trigger: `Full Refresh`, `Manage Accounts`, `System` (a visual divider below these three), then `Needs Category` and `Needs Image Matching` (section 23) — closes on item click, outside click, or Escape; every item runs through `handleMoreMenuAction()` so the menu can never linger open after a selection
+  - the car-scoped `Assign Category` button opens the continuous Manage Categories session described in section 22
 - `templates/train.html`
   - image mapping workflow
   - the "Currently Matched Image" preview (`#currentMatchImg`) is 280px on desktop / 200px on narrow screens (`@media (max-width: 640px)`), sized via CSS id rules rather than inline `max-width`/`max-height` so the mobile override can apply
   - admin-only `Upload Image` button opens a modal to pick a car folder and upload a photo straight to `POST /admin/upload_image`, skipping the manual copy-then-rescan flow
   - `Bulk Match` button links to `/bulk_match`
+  - the Needs Category / Needs Image Matching queue panels (section 23) are hidden by default; they only render when arriving via `?open_queue=` from the More menu above, and each has its own close control since this page has no other trigger to reopen one
 - `templates/bulk_match.html`
   - one-image-to-many-stock-items matching (see section 13): pick a shared image, find items by search or product category, confirm the checked set in one `POST /admin/bulk_confirm_mapping`
 - `templates/system.html`
@@ -569,7 +576,72 @@ Every panel route requires BOTH the admin session (`@admin_required`) AND a pair
 
 All git subprocess calls go through `_run_git_command()`, which passes `creationflags=subprocess.CREATE_NO_WINDOW` — the server runs under `pythonw.exe` (no console), so without this every git spawn flashed a visible terminal window on the office PC screen.
 
-## 22. Important code constraints and gotchas
+## 22. Material-tier category assignment
+
+Independent of the Bulk Match product-type/color categorization in section 13 (`utils/product_normalize.py`, derived on the fly from the item name and never stored), stock items can also be tagged with a material-tier category — Pearl, Pearl Designer, Pearl Deluxe, Saka, Ruby, Napa Deluxe, Napa Designer — for merchandising/display purposes.
+
+### Storage
+
+`database.py`'s `design_categories` table (section 6) stores one row per stock item, keyed on `normalize_lookup_key(stock_item_name)` — the same shared key `get_mappings_for_stock_items()` uses — with a SQL `CHECK` constraint restricting `category` to `db.DESIGN_CATEGORY_CHOICES`. Assignment is last-write-wins (`upsert_design_category()`, `ON CONFLICT(stock_item_key) DO UPDATE`): there is no assignment history and no "unassign" operation, only reassignment to a different value.
+
+### Backend
+
+- `POST /admin/assign_category` (`app.py`) — admin-only; takes `{category, stock_item_names: [...]}`, calls `db.upsert_design_category()` for each name, and returns `{assigned_count, category, failed}`. Also starts a background thread to pre-generate the badged share-image variant (section 13's share flow) for every just-tagged item that already has a mapped image, so the badge is warm before anyone shares it.
+- `_build_design_payload()` (`app.py`) attaches each item's category via a batched `db.get_categories_for_stock_items()` lookup (same shape as the mapping lookup) and sorts the whole payload by category rank (`_DESIGN_CATEGORY_SORT_RANK`, built once from `db.DESIGN_CATEGORY_CHOICES`'s own declared order), uncategorized items sorted last. The sort is stable, so within one category group items keep whatever order the qty-scan/hierarchy handed in. Both `/designs` (customer/admin browsing) and `/api/get_all_items_for_car` (section 23) go through this one function, so the grouping is identical everywhere a design list renders.
+
+### Frontend: the continuous "Manage Categories" session
+
+`templates/index.html` — a car-scoped, admin-only tagging session, opened via the `Assign Category` button in the car toolbar or the `enterCategoryAssignMode()` deep-link entry point the work-queue links use (section 23). Unlike a one-shot picker, the session stays open across as many category picks and batches as needed:
+
+1. `enterCategoryAssignMode()` loads every item for the selected car via `/api/get_all_items_for_car` (qty-agnostic — zero-stock and unmapped items are taggable too, not just what customers currently see), reusing `renderDesignItem()` so cards look identical to the normal browsing view.
+2. `handleCategoryActivePick()` sets which category the next `Apply` click will use, independent of the current selection.
+3. Ticking cards accumulates `categorySelectedKeys`; `applyCategoryToSelection()` posts the current batch to `/admin/assign_category`, then — on success — updates only those cards' ribbons in place (`updateCardCategoryBadge()`) and clears just that batch's checkmarks, without reloading the list or closing the session.
+4. `closeCategorySession()` (the `Done` button) is the only thing that ends the session; every `Apply` along the way already committed on its own, so there is nothing left to save on close.
+
+### Category ribbon on thumbnails
+
+Categorized items render a small label along the BOTTOM edge of their thumbnail (`.category-ribbon`, `templates/index.html`) — not a rotated corner ribbon, and not a top-left pill. An earlier version WAS a top-left rounded pill; it read fine for short names like "RUBY" but cramped longer ones like "P.DSGN" against the pill's own curvature. Switching to a full-width flush bar removed that width ceiling. Deliberately anchored to the bottom, not the top, to never collide with `.select-check` (always top-right).
+
+- `CATEGORY_RIBBON_ABBREVIATIONS` (JS) shortens the seven category names for the ribbon only (e.g. "Pearl Designer" -> "P DSGN") — a space, not a period, separates the parts; a period compresses toward invisible at real thumbnail size, a space reads as an unambiguous break. The full, unabbreviated name is still shown via the ribbon's own `title="..."` tooltip and in the full-screen image modal.
+- A category with no entry in the abbreviation map falls back to its own full name — should never happen since the map covers every value in `db.DESIGN_CATEGORY_CHOICES`, but fails safe rather than showing blank.
+
+## 23. Prioritized work queues (Needs Category / Needs Image Matching)
+
+Two admin-only dashboards surface the highest-value catalog work first — cars with real, partial progress ahead of cars barely started. Both live on `templates/train.html`, reachable from `templates/index.html`'s More menu (section 18) rather than rendering inline by default.
+
+### Per-car completion stats
+
+`_compute_car_completion_stats()` (`app.py`) computes, in one pass over the whole catalog (never one query per car):
+- `total_items` — qty-agnostic count of every hierarchy child under the car (same scope, same non-deduplicated count, as `/api/get_all_items_for_car`)
+- `image_linked_count` / `category_set_count` — how many of those items have a mapped image / an assigned category
+- `fully_done_count` — how many have BOTH
+
+Built from `_load_training_hierarchy_items()` (already fingerprint-cached against `main_hierarchy.json`) plus one batched `db.get_mappings_for_stock_items()` call and one batched `db.get_categories_for_stock_items()` call, chunked at 500 names per call to stay under SQLite's bound-parameter limit — never one lookup per car.
+
+### Caching and invalidation
+
+`QUEUE_STATS_CACHE` (section 8) is keyed on `(hierarchy file fingerprint, _QUEUE_STATS_VERSION)`. The fingerprint half follows the same convention as `HIERARCHY_JSON_CACHE`/`PRODUCT_CATEGORY_CACHE`; the version half exists because `image_linked_count`/`category_set_count` come from SQLite tables with no file of their own to fingerprint. `_invalidate_queue_stats_cache()` (a counter bump under `DATA_CACHE_LOCK`) is called from every write path that can change those counts: `assign_category()`, `_confirm_mapping_core()` (covers both `/confirm_mapping` and `/admin/upload_image`), `remove_mapping()`, `remove_missing_images()`, and `_invalidate_runtime_caches()` (so a Full Refresh also forces a recompute).
+
+### Tiering
+
+- `GET /api/needs_category_queue` — cars with at least one item still missing a category, in three tiers: Tier 1 "Finish the gaps" (`fully_done_count > 0` and `< total_items` — real progress on both fronts, not yet complete), Tier 2 "Ready to tag" (every item already has an image, zero categorization started), Tier 3 (everything else). Secondary sort within each tier: remaining (uncategorized) item count descending, then car name ascending.
+- `GET /api/needs_image_matching_queue` — cars with at least one item still missing an image, in two tiers: Tier 1 (the same "Finish the gaps" signal, shared with the queue above), Tier 2 (everything else, remaining-count descending). No mirrored "tags done, images missing" tier — that state is rare enough in practice not to warrant a dedicated bucket.
+
+Both routes are `@admin_required` and return `{cars: [...], secondary_sort: "..."}`.
+
+### Dashboard UI and deep-linking
+
+`templates/train.html` — both queue panels are `display:none` by default. `initWorkQueuesFromUrl()` reads `?open_queue=category|image_matching`, opens the matching panel full-width (a `.single-queue` class collapses the two-column grid to one column), lazy-loads that queue's data on first open, and strips the param via `history.replaceState` — the same one-shot pattern `templates/index.html` uses for `?manage_categories=1` below. Each open panel has its own small close ("×") button; closing hides that panel and the wrapping grid, since this page has no other trigger to reopen one.
+
+Each queue entry is a real link, not a JS click handler:
+- Needs Category rows link to `/?car=<car>&manage_categories=1`. `templates/index.html`'s `maybeOpenCategorySessionFromUrl()` (called from `loadCars()`, right after `restoreCarFromUrl()` — which resolves `?car=` synchronously) opens the same continuous Manage Categories session from section 22, pre-selected to that car, and strips the param the same way.
+- Needs Image Matching rows link to `/train?car=<car>` — reusing the `target_car`/`target_stock_item` mechanism the "Add Image" link (section 18) already used, just without a specific `stock_item`; `initializePage()` in `train.html` pre-fills `#carModelFilter` and loads that car's stock items whenever `targetCar` is present, whether or not a specific item came with it.
+
+### Entry point: the More menu
+
+`templates/index.html`'s existing More popover (Full Refresh / Manage Accounts / System, section 18) gained two more items below a visual divider — `Needs Category` and `Needs Image Matching` — linking to the `?open_queue=` URLs above. The popover's own open/close mechanics (`toggleMoreMenu()`, outside-click, Escape) are unchanged; the two new items run through the same `handleMoreMenuAction()` every existing item already used.
+
+## 24. Important code constraints and gotchas
 
 - `first_time_setup.bat` always installs into `C:\tally_stock`
 - the app assumes Windows and uses Windows-specific launcher behavior
@@ -594,8 +666,12 @@ All git subprocess calls go through `_run_git_command()`, which passes `creation
 - `updateTimestamp()` in `templates/index.html` declares `statusEl` once, before both of its `try` blocks. It used to be declared inside the first `try` block only, so the second block referenced it out of scope and threw a `ReferenceError` on every single `/refresh_status` poll — caught and logged to the console, never surfaced, so the auto-refresh hint text silently never updated in any real browser despite looking correct on a read of the code. Reading the code was not enough to catch this; it only showed up by actually executing the script. Keep both status-fetching blocks sharing the one `statusEl` reference
 - `accounts_access_required`'s rate limit key (`accounts:<username>`) is deliberately namespaced away from the plain `<username>` key `/login` uses in the same `LOGIN_ATTEMPTS` dict — don't collapse them, or a user's login attempts and their accounts-password attempts would consume the same budget
 - the stale-data warning banner/hint (`templates/index.html`) must never fire off `success === false` alone — always also check `hasRealRefreshAttempt()` (a real `timestamp`) and the separate `STALE_WARNING_THRESHOLD_SECONDS` (900s) staleness check. `last_refresh_status`'s pre-refresh placeholder in `app.py` is also `success: false`; treating that as a real failure is exactly what caused the banner to appear immediately after every fresh restart
+- `design_categories` has no delete/unassign function — only `upsert_design_category()` (insert-or-overwrite). "Removing" a category means reassigning it to a different value; there is no way to return an item to "uncategorized" through the UI or a single API call
+- any write path that changes a stock item's image-mapped or category-assigned status MUST call `_invalidate_queue_stats_cache()` (section 23), or the Needs Category / Needs Image Matching queues silently serve stale counts. The four current call sites (`assign_category()`, `_confirm_mapping_core()`, `remove_mapping()`, `remove_missing_images()`) are the complete list as of this writing — a new mapping/category write path needs the same call added
+- `.category-ribbon` (`templates/index.html`) must stay a bottom-flush full-width bar, not a top-left pill and not rotated — both were tried and produced real, confirmed-via-screenshot legibility problems (see section 22). It must also stay anchored to the bottom, not the top, or it will visually collide with `.select-check` (always top-right) whenever a categorized card is selected in Share Images mode
+- `?open_queue=` (`templates/train.html`) and `?manage_categories=1` (`templates/index.html`) are both one-shot: read once on page load, then stripped from the URL via `history.replaceState` so a later refresh or bookmark of that URL doesn't keep forcing the same panel/session open. Any new deep-link query param added to either page should follow the same read-then-strip pattern rather than leaving itself in the URL indefinitely
 
-## 23. File map for maintenance
+## 25. File map for maintenance
 
 If you need to change a behavior, start here:
 
@@ -612,3 +688,5 @@ If you need to change a behavior, start here:
 - Tally timing diagnostics: `scripts/measure_tally.ps1`, `/admin/system/tally_perf_test`
 - admin and customer UI: `templates/`
 - install/update scripts: `first_time_setup.bat`, `update_app.bat`
+- material-tier category assignment: `app.py` (`/admin/assign_category`, `_build_design_payload`), `database.py` (`design_categories`, `upsert_design_category`, `get_categories_for_stock_items`), `templates/index.html` (Manage Categories session, `.category-ribbon`)
+- Needs Category / Needs Image Matching work queues: `app.py` (`_compute_car_completion_stats`, `/api/needs_category_queue`, `/api/needs_image_matching_queue`, `_invalidate_queue_stats_cache`), `templates/train.html` (queue panels, `initWorkQueuesFromUrl`), `templates/index.html` (More menu entries, `maybeOpenCategorySessionFromUrl`)

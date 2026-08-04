@@ -203,6 +203,27 @@ Two shortcuts that save time:
 - On the main stock page, every design card has an `Add Image` button. Clicking it opens Training Mode with that car and stock item already selected — no re-searching.
 - For products where ONE photo applies to many stock items (floor mats, curtains, and similar items that repeat across hundreds of car variants), use the `Bulk Match` button on the `Train Matches` page. Pick the shared photo, find the stock items by search or by product category (e.g. "7D MAT / BLACK"), tick all that apply, and confirm them in one go instead of one at a time.
 
+### Assign material-tier categories to designs
+
+Each design can be tagged with a material tier — Pearl, Pearl Designer, Pearl Deluxe, Saka, Ruby, Napa Deluxe, Napa Designer — shown to customers as a small colored label on the thumbnail.
+
+1. Log in as admin, pick a car on the main screen
+2. Click `Assign Category` in the car's toolbar
+3. Choose a category from the dropdown
+4. Tick every design that belongs to it, then click `Apply` — it saves right away and the checkmarks clear so you can pick the next batch
+5. Repeat for as many categories or batches as you need — the session stays open the whole time
+6. Click `Done` when finished (there's nothing left to save at that point; every `Apply` already went through)
+
+Hovering a categorized thumbnail's label, or opening the full-size image, shows the full category name — the on-thumbnail label itself is abbreviated to keep it compact.
+
+### Find what still needs category or image work
+
+Click `More` on the main page for two extra shortcuts, below a divider under `Full Refresh`/`Manage Accounts`/`System`:
+- `Needs Category` — every car with at least one design still missing a category, cars closest to fully tagged listed first
+- `Needs Image Matching` — every car with at least one design still missing a photo, cars closest to fully matched listed first
+
+Either one opens `Train Matches` with that list already showing. Click a car in the list to jump straight into the right screen (Assign Category or Training Mode) with that car already selected — no need to search for it again. Click the small `x` on the list to close it once you're done; it stays out of the way otherwise, so `Train Matches` doesn't default to showing it.
+
 ### Manage customer accounts
 
 1. Log in as admin
