@@ -136,6 +136,46 @@
             white-space: nowrap;
         }
 
+        .queue-panel-head-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* !important: this page's own mobile media query below sets a
+           generic width/min-height on every <button> for touch targets --
+           see .car-clear-btn in templates/index.html for the identical
+           precedent this follows. Without it, this close "x" would stretch
+           to a full-width 44px-tall bar like Confirm Match/Rescan Images. */
+        .queue-close-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            width: 26px !important;
+            height: 26px !important;
+            min-width: 26px !important;
+            min-height: 26px !important;
+            max-width: 26px !important;
+            max-height: 26px !important;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            line-height: 1;
+            color: var(--muted);
+            cursor: pointer;
+        }
+
+        .queue-close-btn:hover {
+            background: #e9eef6;
+            color: var(--text);
+        }
+
+        .queues-grid.single-queue {
+            grid-template-columns: 1fr;
+        }
+
         .queue-list {
             display: flex;
             flex-direction: column;
@@ -976,21 +1016,31 @@
     </div>
 
     {% if is_admin %}
-    <div class="queues-grid" id="workQueuesGrid">
-        <div class="panel queue-panel">
+    <!-- Hidden by default (Part 3 of the More-menu round) -- only revealed
+         via ?open_queue=category|image_matching (see initWorkQueuesFromUrl(),
+         reached from index.html's More menu) or the same-page close control
+         below, since this page no longer has its own trigger for these. -->
+    <div class="queues-grid" id="workQueuesGrid" style="display:none;">
+        <div class="panel queue-panel" id="needsCategoryPanel" style="display:none;">
             <div class="queue-panel-head">
                 <h2>Needs Category</h2>
-                <span class="queue-count" id="needsCategoryCount"></span>
+                <div class="queue-panel-head-right">
+                    <span class="queue-count" id="needsCategoryCount"></span>
+                    <button type="button" class="queue-close-btn" onclick="closeQueuePanel('needsCategory')" title="Close this queue" aria-label="Close Needs Category queue">&times;</button>
+                </div>
             </div>
             <div class="queue-list" id="needsCategoryList">
                 <p class="muted queue-empty" id="needsCategoryEmpty">Loading&hellip;</p>
             </div>
             <button type="button" class="secondary queue-show-more" id="needsCategoryShowMore" style="display:none;" onclick="toggleQueueExpanded('needsCategory')"></button>
         </div>
-        <div class="panel queue-panel">
+        <div class="panel queue-panel" id="needsImageMatchingPanel" style="display:none;">
             <div class="queue-panel-head">
                 <h2>Needs Image Matching</h2>
-                <span class="queue-count" id="needsImageMatchingCount"></span>
+                <div class="queue-panel-head-right">
+                    <span class="queue-count" id="needsImageMatchingCount"></span>
+                    <button type="button" class="queue-close-btn" onclick="closeQueuePanel('needsImageMatching')" title="Close this queue" aria-label="Close Needs Image Matching queue">&times;</button>
+                </div>
             </div>
             <div class="queue-list" id="needsImageMatchingList">
                 <p class="muted queue-empty" id="needsImageMatchingEmpty">Loading&hellip;</p>
@@ -1162,7 +1212,9 @@ const TIER_LABELS = {
 const workQueues = {
     needsCategory: {
         url: "/api/needs_category_queue",
+        panelId: "needsCategoryPanel",
         cars: [],
+        loaded: false,
         expanded: false,
         remainingNoun: "category",
         buildHref: car => `/?car=${encodeURIComponent(car)}&manage_categories=1`,
@@ -1170,12 +1222,20 @@ const workQueues = {
     },
     needsImageMatching: {
         url: "/api/needs_image_matching_queue",
+        panelId: "needsImageMatchingPanel",
         cars: [],
+        loaded: false,
         expanded: false,
         remainingNoun: "image",
         buildHref: car => `/train?car=${encodeURIComponent(car)}`,
         buildDetail: entry => `${entry.remaining} of ${entry.total_items} item${entry.total_items === 1 ? "" : "s"} still need an image`,
     },
+};
+
+// URL param -> workQueues key, consumed by initWorkQueuesFromUrl() below.
+const OPEN_QUEUE_PARAM_MAP = {
+    category: "needsCategory",
+    image_matching: "needsImageMatching",
 };
 
 // Tier 2 in needsCategory ("Ready to tag") reads as more urgent/positive
@@ -1284,6 +1344,7 @@ async function loadWorkQueue(queueKey) {
         }
         const data = await res.json();
         queue.cars = Array.isArray(data.cars) ? data.cars : [];
+        queue.loaded = true;
         renderQueueList(queueKey);
     } catch (error) {
         listEl.innerHTML = "";
@@ -1294,12 +1355,71 @@ async function loadWorkQueue(queueKey) {
     }
 }
 
-function loadWorkQueues() {
-    if (!isAdmin || !document.getElementById("workQueuesGrid")) {
+// ============================================================
+// Opening/closing a queue panel (Part 3 of the More-menu round) -- both
+// panels are display:none by default now (they used to render inline on
+// every page load); the only entry point is index.html's More menu linking
+// here with ?open_queue=category|image_matching (see
+// initWorkQueuesFromUrl()), and the only way back is this same close
+// control, since this page no longer has its own trigger to reopen one.
+// At most one panel is ever open at a time -- opening one closes the other,
+// and #workQueuesGrid itself stays hidden whenever neither is open.
+// ============================================================
+
+function openQueuePanel(queueKey) {
+    const queue = workQueues[queueKey];
+    const grid = document.getElementById("workQueuesGrid");
+    if (!isAdmin || !queue || !grid) {
         return;
     }
-    loadWorkQueue("needsCategory");
-    loadWorkQueue("needsImageMatching");
+
+    Object.keys(workQueues).forEach(key => {
+        const panel = document.getElementById(workQueues[key].panelId);
+        if (panel) {
+            panel.style.display = key === queueKey ? "" : "none";
+        }
+    });
+
+    grid.style.display = "";
+    grid.classList.add("single-queue");
+
+    if (!queue.loaded) {
+        loadWorkQueue(queueKey);
+    }
+}
+
+function closeQueuePanel(queueKey) {
+    const queue = workQueues[queueKey];
+    const grid = document.getElementById("workQueuesGrid");
+    const panel = queue && document.getElementById(queue.panelId);
+    if (panel) {
+        panel.style.display = "none";
+    }
+    if (grid) {
+        grid.style.display = "none";
+        grid.classList.remove("single-queue");
+    }
+}
+
+// One-shot, same pattern as index.html's manage_categories param: read
+// ?open_queue=, open the matching panel if the value is recognized, then
+// strip the param so refreshing/bookmarking this URL later doesn't keep
+// forcing a queue open every visit.
+function initWorkQueuesFromUrl() {
+    const url = new URL(window.location.href);
+    const requested = url.searchParams.get("open_queue");
+    if (url.searchParams.has("open_queue")) {
+        url.searchParams.delete("open_queue");
+        history.replaceState(null, "", url.toString());
+    }
+
+    if (!isAdmin || !requested) {
+        return;
+    }
+    const queueKey = OPEN_QUEUE_PARAM_MAP[requested];
+    if (queueKey) {
+        openQueuePanel(queueKey);
+    }
 }
 
 function showNotice(type, message) {
@@ -2418,7 +2538,7 @@ async function initializePage() {
     if (isAdmin) {
         loadExistingFoldersList();
     }
-    loadWorkQueues();
+    initWorkQueuesFromUrl();
     await loadImageQueue(selectedFolder);
 
     // Pre-selection from index.html's "Add Image" link (?car=&stock_item=)

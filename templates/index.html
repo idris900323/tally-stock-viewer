@@ -259,6 +259,17 @@
             transform: none;
         }
 
+        /* Separates the pre-existing "page actions" (Full Refresh/Manage
+           Accounts/System) from the "work queues" pair added below them --
+           five items in one flat list read as a grab-bag; this one-line
+           split costs nothing and tells the two groups apart at a glance,
+           still inside the same single popover (no new mechanics). */
+        .more-menu-divider {
+            height: 1px;
+            margin: 6px 4px;
+            background: var(--border);
+        }
+
         /* Consolidated status line (Part 3) -- replaces the old bordered
            white ".panel" status card. Deliberately plain text, no
            background/border, so it reads as a quiet footnote under the
@@ -1560,6 +1571,9 @@
                         <button type="button" role="menuitem" id="fullRefreshBtn" class="more-menu-item" onclick="handleMoreMenuAction(startFullRefresh)" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">Full Refresh</button>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/accounts')" title="Manage customer login accounts">Manage Accounts</button>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
+                        <div class="more-menu-divider" role="separator"></div>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=category')" title="Open Train Matches with the prioritized Needs Category work queue already visible">Needs Category</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=image_matching')" title="Open Train Matches with the prioritized Needs Image Matching work queue already visible">Needs Image Matching</button>
                     </div>
                 </div>
             </div>
