@@ -2988,11 +2988,25 @@ function chunkArray(items, size) {
     return chunks;
 }
 
+// Zero-padded so filenames sort lexicographically in the same order this
+// array puts them in (image_01, image_02, ..., image_10) -- unpadded names
+// (image_1, image_2, ..., image_10) sort as image_1, image_10, image_2, ...,
+// image_9 under a plain string sort, which is what at least some Web Share
+// receiving apps (chat apps, gallery pickers) display multi-file shares in
+// instead of respecting the File[] array order navigator.share() was given.
+// That reorders the 10th file to right after the 1st in exactly those
+// apps -- invisible for selections under 10 images (no two-digit index to
+// collide) and invisible for receivers that honor array order, which is why
+// it only ever showed up "sometimes." Padding width matches SHARE_BATCH_SIZE
+// (batches never exceed it) rather than this batch's own length, so it's
+// wide enough even for a shorter final batch.
 function buildShareFiles(batch) {
+    const padWidth = String(SHARE_BATCH_SIZE).length;
     return batch.map((r, i) => {
         const mime = r.blob.type || "image/jpeg";
         const extension = (mime.split("/")[1] || "jpg").toLowerCase();
-        return new File([r.blob], `image_${i + 1}.${extension}`, { type: mime });
+        const index = String(i + 1).padStart(padWidth, "0");
+        return new File([r.blob], `image_${index}.${extension}`, { type: mime });
     });
 }
 
