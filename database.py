@@ -17,10 +17,13 @@ DB_PATH = Config.DB_PATH if os.path.isabs(Config.DB_PATH) else os.path.join(BASE
 IMAGE_ROOT = os.path.join(BASE_DIR, "data", "S.S IMAGE")
 logger = logging.getLogger(__name__)
 
-# The material-tier "Assign Category" tags (see design_categories table below).
-# A fixed, exact list -- validated against on both the DB CHECK constraint and
-# every Python entry point (upsert_design_category()), so an invalid value
-# can never sneak in through either layer alone.
+# The material-tier "Assign Category" tags (see design_categories table below)
+# used to be this fixed tuple, validated against on both a DB CHECK
+# constraint and every Python entry point. Categories are now admin-editable
+# (see the `categories` table / _seed_categories_table() below) -- this tuple
+# survives only as the one-time seed data so an existing install's 8
+# categories come through the upgrade with identical names, order, and
+# abbreviations (see DESIGN_CATEGORY_ABBREVIATIONS_SEED below).
 DESIGN_CATEGORY_CHOICES = (
     "Pearl",
     "Pearl Designer",
@@ -30,7 +33,42 @@ DESIGN_CATEGORY_CHOICES = (
     "Napa Deluxe",
     "Napa Designer",
 )
-_DESIGN_CATEGORY_CHOICES_SQL = ",".join("'" + choice.replace("'", "''") + "'" for choice in DESIGN_CATEGORY_CHOICES)
+
+# Hand-curated short forms, previously duplicated as CATEGORY_RIBBON_ABBREVIATIONS
+# in templates/index.html -- now the seed for categories.abbreviation, the
+# single live source both the on-thumbnail ribbon and the burned share-image
+# badge read from going forward.
+DESIGN_CATEGORY_ABBREVIATIONS_SEED = {
+    "Pearl": "PEARL",
+    "Pearl Designer": "P DSGN",
+    "Pearl Deluxe": "P DLX",
+    "Saka": "SAKA",
+    "Ruby": "RUBY",
+    "Napa Deluxe": "N DLX",
+    "Napa Designer": "N DSGN",
+}
+
+CATEGORY_ABBREVIATION_MAX_LENGTH = 16
+CATEGORY_NAME_MAX_LENGTH = 100
+
+
+def generate_category_abbreviation(name):
+    """Auto-generated fallback abbreviation for a category created without
+    an explicit override (Part 2): up to the first 4 letters of each of the
+    first 2 significant (non-empty) words, uppercased and space-joined, capped
+    at a reasonable total length so it can never blow up the on-thumbnail
+    ribbon or the burned share-image badge the way an admin typing a long
+    category name otherwise could. Deliberately simple/unpolished -- the
+    System panel's abbreviation override exists specifically to fix any
+    result that comes out looking awkward."""
+    words = [word for word in str(name or "").split() if word]
+    parts = []
+    for word in words[:2]:
+        letters = "".join(ch for ch in word if ch.isalnum())
+        if letters:
+            parts.append(letters[:4].upper())
+    abbreviation = " ".join(parts)
+    return (abbreviation or "CAT")[:12]
 
 
 def _canonicalize_filepath(filepath):
@@ -266,18 +304,39 @@ def init_database():
             """
         )
         conn.execute(
-            f"""
+            """
             CREATE TABLE IF NOT EXISTS design_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 stock_item_key TEXT NOT NULL UNIQUE,
                 stock_item_name TEXT NOT NULL,
-                category TEXT NOT NULL CHECK(category IN ({_DESIGN_CATEGORY_CHOICES_SQL})),
+                category TEXT NOT NULL,
                 assigned_at TEXT NOT NULL,
                 assigned_by INTEGER,
                 FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
             )
             """
         )
+        # Admin-editable category list (Part 1 of the category-settings
+        # upgrade) -- design_categories.category above stores the category
+        # NAME as a plain string, not a foreign key to this table, matching
+        # how it always worked; membership is now validated in Python against
+        # this live table (see category_exists()) instead of a fixed CHECK
+        # constraint. name's uniqueness is case-insensitive (see the LOWER()
+        # unique index below) because add/rename block an exact case-
+        # insensitive duplicate at the application layer -- the index is the
+        # hard backstop against a race doing the same.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL,
+                abbreviation TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_ci ON categories(LOWER(name))")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_images_car_folder ON images(car_folder)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_images_car_folder_id ON images(car_folder, id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mappings_stock_item ON mappings(stock_item_name)")
@@ -291,6 +350,7 @@ def init_database():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_account_logs_timestamp ON account_logs(timestamp)")
         seed_default_data(conn)
+        _seed_categories_table(conn)
         try:
             normalized_count = _normalize_legacy_absolute_image_paths(conn)
             if normalized_count:
@@ -300,6 +360,7 @@ def init_database():
 
     _migrate_remove_image_id_unique()
     _migrate_drop_pricing_tables()
+    _migrate_remove_design_categories_check_constraint()
 
 
 DB_BACKUP_RETENTION_COUNT = 5
@@ -506,6 +567,89 @@ def seed_default_data(conn=None):
     finally:
         if own_connection and conn is not None:
             conn.close()
+
+
+def _seed_categories_table(conn):
+    """One-time seed of the `categories` table (Part 1.2) from the previous
+    fixed DESIGN_CATEGORY_CHOICES tuple and its hand-curated abbreviations,
+    preserving the exact existing names/order/abbreviations so an upgrade is
+    a transparent no-visible-change event for the current 7 categories.
+    Guarded like seed_default_data() -- runs only while the table is empty,
+    so it's a no-op on every startup after the first."""
+    row = conn.execute("SELECT COUNT(*) AS count FROM categories").fetchone()
+    if int(row["count"] if row else 0) > 0:
+        return
+    conn.executemany(
+        "INSERT INTO categories (name, sort_order, abbreviation) VALUES (?, ?, ?)",
+        [
+            (name, sort_order, DESIGN_CATEGORY_ABBREVIATIONS_SEED.get(name) or generate_category_abbreviation(name))
+            for sort_order, name in enumerate(DESIGN_CATEGORY_CHOICES)
+        ],
+    )
+
+
+def _migrate_remove_design_categories_check_constraint():
+    """One-time migration: rebuild design_categories without its old
+    CHECK(category IN (...)) constraint tied to the now-retired fixed
+    DESIGN_CATEGORY_CHOICES tuple (Part 1.3).
+
+    Category membership is validated in Python against the live `categories`
+    table now (see category_exists()), so the CHECK would otherwise block
+    admin-added categories from ever being assigned. Same guarded,
+    backup-then-rebuild-in-a-transaction pattern as
+    _migrate_remove_image_id_unique() / _migrate_drop_pricing_tables():
+    checked via the table's own recorded CREATE TABLE sql in sqlite_master,
+    backed up first, rolled back and the backup preserved on any failure.
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='design_categories'"
+        ).fetchone()
+        table_sql = row["sql"] if row else None
+        if not table_sql or "CHECK" not in table_sql.upper():
+            return
+
+        backup_path = _backup_database_file()
+        logger.info(
+            "Migrating design_categories to remove fixed CHECK(category IN (...)) constraint; backup at %s",
+            backup_path,
+        )
+
+        conn.execute("BEGIN")
+        try:
+            conn.execute(
+                """
+                CREATE TABLE design_categories_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_item_key TEXT NOT NULL UNIQUE,
+                    stock_item_name TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    assigned_at TEXT NOT NULL,
+                    assigned_by INTEGER,
+                    FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO design_categories_new (id, stock_item_key, stock_item_name, category, assigned_at, assigned_by)
+                SELECT id, stock_item_key, stock_item_name, category, assigned_at, assigned_by FROM design_categories
+                """
+            )
+            conn.execute("DROP TABLE design_categories")
+            conn.execute("ALTER TABLE design_categories_new RENAME TO design_categories")
+            conn.commit()
+            logger.info("Migration succeeded: design_categories CHECK constraint removed.")
+        except Exception:
+            conn.rollback()
+            logger.exception(
+                "Migration failed removing design_categories CHECK constraint; rolled back. Backup preserved at %s",
+                backup_path,
+            )
+            raise
+    finally:
+        conn.close()
 
 
 def _row_to_dict(row):
@@ -761,6 +905,248 @@ def get_mappings_for_stock_items(stock_item_names):
     return result
 
 
+def get_all_categories():
+    """All categories in display order (Part 6's reorder controls change
+    sort_order; this is the one place that order is read back)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, name, sort_order, abbreviation FROM categories ORDER BY sort_order ASC, id ASC"
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def category_exists(name):
+    value = str(name or "").strip()
+    if not value:
+        return False
+    with _connect() as conn:
+        row = conn.execute("SELECT 1 FROM categories WHERE name = ? LIMIT 1", (value,)).fetchone()
+    return row is not None
+
+
+def get_category_by_name(name):
+    value = str(name or "").strip()
+    if not value:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, name, sort_order, abbreviation FROM categories WHERE name = ? LIMIT 1", (value,)
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def find_category_by_name_ci(name, exclude_name=None):
+    """Case-insensitive category lookup, optionally excluding one exact name.
+
+    Used by the rename route to tell a same-category case tweak (e.g. "Saka"
+    -> "SAKA") apart from a real merge conflict with a DIFFERENT existing
+    category (Part 3.2)."""
+    value = str(name or "").strip()
+    if not value:
+        return None
+    with _connect() as conn:
+        if exclude_name is not None:
+            row = conn.execute(
+                "SELECT id, name, sort_order, abbreviation FROM categories WHERE LOWER(name) = LOWER(?) AND name != ? LIMIT 1",
+                (value, exclude_name),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, name, sort_order, abbreviation FROM categories WHERE LOWER(name) = LOWER(?) LIMIT 1",
+                (value,),
+            ).fetchone()
+    return _row_to_dict(row)
+
+
+def count_items_for_category(name):
+    """How many design_categories rows are currently tagged with `name` --
+    the affected-item count shown in the rename-merge and delete warnings
+    (Part 3.2/3.3)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM design_categories WHERE category = ?", (name,)
+        ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def add_category(name):
+    """Adds a new category (Part 3.1): auto-generated abbreviation, always
+    appended to the end of the display order. Raises ValueError on a blank
+    name, an oversized name, or an exact case-insensitive duplicate."""
+    value = str(name or "").strip()
+    if not value:
+        raise ValueError("category name is required")
+    if len(value) > CATEGORY_NAME_MAX_LENGTH:
+        raise ValueError(f"category name exceeds {CATEGORY_NAME_MAX_LENGTH} characters")
+    if find_category_by_name_ci(value):
+        raise ValueError(f"a category named '{value}' already exists")
+
+    abbreviation = generate_category_abbreviation(value)
+    try:
+        with _connect() as conn:
+            row = conn.execute("SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM categories").fetchone()
+            next_order = int(row["max_order"] if row else -1) + 1
+            cursor = conn.execute(
+                "INSERT INTO categories (name, sort_order, abbreviation) VALUES (?, ?, ?)",
+                (value, next_order, abbreviation),
+            )
+            category_id = cursor.lastrowid
+    except sqlite3.IntegrityError as exc:
+        raise ValueError(f"a category named '{value}' already exists") from exc
+    return {"id": category_id, "name": value, "sort_order": next_order, "abbreviation": abbreviation}
+
+
+def rename_category(old_name, new_name):
+    """Renames a category and cascades the new name onto every
+    design_categories row that referenced the old one, atomically (Part
+    3.2's non-conflict path). Caller is responsible for having already ruled
+    out a merge conflict with a DIFFERENT existing category via
+    find_category_by_name_ci() -- this function does not itself check for
+    one, so calling it when a real conflict exists would raise a plain
+    UNIQUE-constraint IntegrityError instead of the friendlier merge flow.
+    Returns the number of design_categories rows updated."""
+    old_value = str(old_name or "").strip()
+    new_value = str(new_name or "").strip()
+    if not new_value:
+        raise ValueError("new category name is required")
+    if len(new_value) > CATEGORY_NAME_MAX_LENGTH:
+        raise ValueError(f"category name exceeds {CATEGORY_NAME_MAX_LENGTH} characters")
+
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        try:
+            row = conn.execute("SELECT id FROM categories WHERE name = ?", (old_value,)).fetchone()
+            if not row:
+                raise ValueError(f"category '{old_value}' not found")
+            conn.execute("UPDATE categories SET name = ? WHERE name = ?", (new_value, old_value))
+            cursor = conn.execute(
+                "UPDATE design_categories SET category = ? WHERE category = ?", (new_value, old_value)
+            )
+            affected = cursor.rowcount
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+    return affected
+
+
+def merge_categories(source_name, target_name):
+    """Moves every design_categories row from source_name to target_name,
+    then deletes the now-empty source category row, atomically (Part 3.2's
+    confirmed-merge path). Returns the number of design_categories rows
+    moved."""
+    source_value = str(source_name or "").strip()
+    target_value = str(target_name or "").strip()
+
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        try:
+            source_row = conn.execute("SELECT id FROM categories WHERE name = ?", (source_value,)).fetchone()
+            target_row = conn.execute("SELECT id FROM categories WHERE name = ?", (target_value,)).fetchone()
+            if not source_row:
+                raise ValueError(f"category '{source_value}' not found")
+            if not target_row:
+                raise ValueError(f"category '{target_value}' not found")
+            cursor = conn.execute(
+                "UPDATE design_categories SET category = ? WHERE category = ?", (target_value, source_value)
+            )
+            affected = cursor.rowcount
+            conn.execute("DELETE FROM categories WHERE name = ?", (source_value,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+    return affected
+
+
+def delete_category(name):
+    """Deletes the category row and REMOVES (not blanks) every
+    design_categories row that had it, atomically (Part 3.3) -- reverting
+    those stock items to the same "uncategorized" state as an item that was
+    never tagged. Returns the list of stock_item_names that were affected,
+    so the caller can clean up their now-orphaned cached badge images."""
+    value = str(name or "").strip()
+    conn = _connect()
+    try:
+        conn.execute("BEGIN")
+        try:
+            row = conn.execute("SELECT id FROM categories WHERE name = ?", (value,)).fetchone()
+            if not row:
+                raise ValueError(f"category '{value}' not found")
+            affected_rows = conn.execute(
+                "SELECT stock_item_name FROM design_categories WHERE category = ?", (value,)
+            ).fetchall()
+            affected_names = [r["stock_item_name"] for r in affected_rows]
+            conn.execute("DELETE FROM design_categories WHERE category = ?", (value,))
+            conn.execute("DELETE FROM categories WHERE name = ?", (value,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+    return affected_names
+
+
+def update_category_abbreviation(name, abbreviation):
+    """System panel abbreviation override (Part 6.3)."""
+    value = str(name or "").strip()
+    abbr_value = str(abbreviation or "").strip()
+    if not abbr_value:
+        raise ValueError("abbreviation is required")
+    if len(abbr_value) > CATEGORY_ABBREVIATION_MAX_LENGTH:
+        raise ValueError(f"abbreviation exceeds {CATEGORY_ABBREVIATION_MAX_LENGTH} characters")
+    with _connect() as conn:
+        cursor = conn.execute("UPDATE categories SET abbreviation = ? WHERE name = ?", (abbr_value, value))
+        if cursor.rowcount == 0:
+            raise ValueError(f"category '{value}' not found")
+    return abbr_value
+
+
+def move_category(name, direction):
+    """Swaps sort_order with the immediate neighbor above/below (Part 6.2's
+    up/down arrow buttons) -- a simple adjacent swap, no drag-and-drop
+    reindexing needed. Returns False (no-op) if `name` is already at that
+    edge of the list."""
+    value = str(name or "").strip()
+    if direction not in ("up", "down"):
+        raise ValueError("direction must be 'up' or 'down'")
+
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, sort_order FROM categories ORDER BY sort_order ASC, id ASC"
+        ).fetchall()
+        ordered = [dict(r) for r in rows]
+        index = next((i for i, r in enumerate(ordered) if r["name"] == value), None)
+        if index is None:
+            raise ValueError(f"category '{value}' not found")
+
+        neighbor_index = index - 1 if direction == "up" else index + 1
+        if neighbor_index < 0 or neighbor_index >= len(ordered):
+            return False
+
+        current = ordered[index]
+        neighbor = ordered[neighbor_index]
+        conn.execute("BEGIN")
+        try:
+            conn.execute("UPDATE categories SET sort_order = ? WHERE id = ?", (neighbor["sort_order"], current["id"]))
+            conn.execute("UPDATE categories SET sort_order = ? WHERE id = ?", (current["sort_order"], neighbor["id"]))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return True
+    finally:
+        conn.close()
+
+
 def upsert_design_category(stock_item_name, category, assigned_by):
     """Assign/overwrite a stock item's material-tier category (last-write-wins,
     see design_categories table). Keyed on normalize_lookup_key() so the same
@@ -768,7 +1154,7 @@ def upsert_design_category(stock_item_name, category, assigned_by):
     (get_mappings_for_stock_items(), _build_design_payload()) also governs
     category lookups."""
     stock_item_name = _validate_stock_item_name(stock_item_name)
-    if category not in DESIGN_CATEGORY_CHOICES:
+    if not category_exists(category):
         raise ValueError(f"invalid category: {category!r}")
     key = normalize_lookup_key(stock_item_name)
     if not key:

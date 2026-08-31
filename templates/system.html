@@ -253,6 +253,57 @@
             padding: 2px 0;
         }
 
+        .category-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+
+        .category-row:last-child { border-bottom: 0; }
+
+        .category-row-position {
+            flex: 0 0 auto;
+            width: 28px;
+            color: var(--muted);
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .category-row-name {
+            flex: 1 1 160px;
+            min-width: 0;
+            font-weight: 700;
+            font-size: 14px;
+            word-break: break-word;
+        }
+
+        .category-row-abbr-input {
+            flex: 0 1 140px;
+            min-width: 90px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        .category-row-move {
+            flex: 0 0 auto;
+            display: flex;
+            gap: 4px;
+        }
+
+        .category-row button {
+            padding: 8px 10px;
+            font-size: 12.5px;
+        }
+
+        .category-row-move button:disabled {
+            opacity: 0.35;
+        }
+
         @media (max-width: 640px) {
             .page { padding: 18px 12px 28px; }
             .header h1 { font-size: 24px; }
@@ -351,6 +402,21 @@
             <button class="secondary" id="perfTestBtn" onclick="runTallyPerfTest()" title="Sends 4 real test requests to Tally and times each one, to help diagnose why Tally slows down during stock refresh. Safe to run anytime — read-only, changes nothing.">Run Test</button>
         </div>
         <div id="perfTestResults" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Categories <span class="badge muted" id="categoriesBadge"></span></h2>
+        <p class="muted">Advanced controls for the material-tier categories (Pearl, Ruby, Saka, etc.): reorder the display order (also used for grouping and share order) and override an auto-generated abbreviation if it comes out looking awkward. Everyday add/rename/delete lives on the main page's More menu &rarr; Category Settings.</p>
+        <div class="actions" style="margin-bottom:6px;">
+            <button class="secondary" onclick="loadCategoriesPanel()" title="Reload the category list">Refresh</button>
+        </div>
+        <div id="categoriesList" style="margin-top:6px;"></div>
+        <!-- Purely informational, same non-blocking spirit as the main
+             page's #badgeRegenStatus -- badges are already guaranteed
+             correct on every request regardless of this job's progress. -->
+        <p class="muted" id="badgeRegenStatus" style="display:none; margin-top:8px;" role="status" aria-live="polite"></p>
+        <div class="notice success" id="categoriesSuccess"></div>
+        <div class="notice error" id="categoriesError"></div>
     </div>
 
     <div class="panel">
@@ -641,10 +707,152 @@ async function runTallyPerfTest() {
     }
 }
 
+// ============================================================
+// Categories (Part 6) -- advanced controls: reorder (simple adjacent
+// up/down swap of sort_order, no drag-and-drop) and abbreviation override.
+// Everyday add/rename/delete lives in the main page's Category Settings
+// panel instead (templates/index.html); this section only ever calls the
+// /admin/system/categories* routes, gated behind the same admin +
+// device-pairing check as every other System panel feature.
+// ============================================================
+
+function clearCategoriesNotices() {
+    document.getElementById("categoriesSuccess").style.display = "none";
+    document.getElementById("categoriesError").style.display = "none";
+}
+
+function showCategoriesError(message) {
+    const el = document.getElementById("categoriesError");
+    el.textContent = message;
+    el.style.display = "block";
+}
+
+function showCategoriesSuccess(message) {
+    const el = document.getElementById("categoriesSuccess");
+    el.textContent = message;
+    el.style.display = "block";
+}
+
+function renderCategoriesList(categories) {
+    const list = document.getElementById("categoriesList");
+    if (!categories.length) {
+        list.innerHTML = '<p class="muted">No categories yet.</p>';
+        return;
+    }
+    list.innerHTML = categories.map((category, index) => `
+        <div class="category-row" data-category-name="${escapeHtml(category.name)}">
+            <span class="category-row-position">${index + 1}</span>
+            <span class="category-row-name">${escapeHtml(category.name)}</span>
+            <input type="text" class="category-row-abbr-input" value="${escapeHtml(category.abbreviation)}" maxlength="16">
+            <button class="secondary" onclick="saveCategoryAbbreviation(this)" title="Save this abbreviation -- regenerates its badged share images">Save</button>
+            <div class="category-row-move">
+                <button class="secondary" onclick="moveCategoryRow(this, 'up')" title="Move up" ${index === 0 ? "disabled" : ""}>&#8593;</button>
+                <button class="secondary" onclick="moveCategoryRow(this, 'down')" title="Move down" ${index === categories.length - 1 ? "disabled" : ""}>&#8595;</button>
+            </div>
+        </div>
+    `).join("");
+}
+
+async function loadCategoriesPanel() {
+    const badge = document.getElementById("categoriesBadge");
+    clearCategoriesNotices();
+    setBadge(badge, "Loading...", "muted");
+    try {
+        const data = await fetchJson("/admin/system/categories");
+        const categories = data.categories || [];
+        renderCategoriesList(categories);
+        setBadge(badge, `${categories.length} categor${categories.length === 1 ? "y" : "ies"}`, "ok");
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        showCategoriesError(error.message);
+    }
+}
+
+async function moveCategoryRow(button, direction) {
+    const row = button.closest(".category-row");
+    if (!row) return;
+    const name = row.dataset.categoryName;
+    clearCategoriesNotices();
+    button.disabled = true;
+    try {
+        const data = await fetchJson("/admin/system/categories/move", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, direction }),
+        });
+        renderCategoriesList(data.categories || []);
+        showCategoriesSuccess(`Moved "${name}" ${direction}.`);
+    } catch (error) {
+        showCategoriesError(error.message);
+        button.disabled = false;
+    }
+}
+
+async function saveCategoryAbbreviation(button) {
+    const row = button.closest(".category-row");
+    if (!row) return;
+    const name = row.dataset.categoryName;
+    const input = row.querySelector(".category-row-abbr-input");
+    const abbreviation = (input && input.value || "").trim();
+    clearCategoriesNotices();
+    button.disabled = true;
+    try {
+        const data = await fetchJson("/admin/system/categories/abbreviation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, abbreviation }),
+        });
+        showCategoriesSuccess(
+            `Saved "${data.abbreviation}" for "${name}" -- regenerating ${data.affected_count} badged share image(s) in the background.`
+        );
+        startBadgeRegenPolling();
+    } catch (error) {
+        showCategoriesError(error.message);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+// Same lightweight polling shape as templates/index.html's identically-named
+// function -- purely informational (see the #badgeRegenStatus comment
+// above), never blocks anything on this page either.
+let badgeRegenPoller = null;
+
+async function pollBadgeRegenStatus() {
+    const el = document.getElementById("badgeRegenStatus");
+    if (!el) return;
+    try {
+        const res = await fetch("/admin/categories/regen_status");
+        if (!res.ok) return;
+        const status = await res.json();
+        if (status.show) {
+            el.textContent = `Updating ${status.completed} of ${status.total} images...`;
+            el.style.display = "block";
+        } else {
+            el.style.display = "none";
+        }
+        if (!status.running && badgeRegenPoller) {
+            clearInterval(badgeRegenPoller);
+            badgeRegenPoller = null;
+        }
+    } catch (error) {
+        // Best-effort -- a missed poll just delays the indicator, never a
+        // wrong "safe to share" signal (there isn't one to give).
+    }
+}
+
+function startBadgeRegenPolling() {
+    if (badgeRegenPoller) return;
+    pollBadgeRegenStatus();
+    badgeRegenPoller = setInterval(pollBadgeRegenStatus, 1000);
+}
+
 window.addEventListener("DOMContentLoaded", () => {
     loadDeploymentStatus();
     refreshEnvironment();
     loadLogs();
+    loadCategoriesPanel();
+    startBadgeRegenPolling();
 });
 </script>
 </body>
