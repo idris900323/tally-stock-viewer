@@ -320,6 +320,13 @@ def add_security_headers(response):
 @app.context_processor
 def inject_session_context():
     role = _current_role()
+    # Queried fresh on every render (not cached) -- the categories table is
+    # tiny, and this is what lets the Category Settings panel's changes show
+    # up the moment any page next renders, with zero extra cache-invalidation
+    # wiring. design_categories_json feeds the on-thumbnail ribbon and the
+    # "Assign Category" picker on the client (see index.html); design_category_choices
+    # keeps the same shape existing templates already iterate over.
+    live_categories = db.get_all_categories()
     return {
         "current_role": role,
         "current_user_id": _current_user_id(),
@@ -327,7 +334,8 @@ def inject_session_context():
         "is_admin": role == "admin",
         "is_customer": role == "customer",
         "is_viewer": role == "customer",
-        "design_category_choices": db.DESIGN_CATEGORY_CHOICES,
+        "design_category_choices": [c["name"] for c in live_categories],
+        "design_categories_json": live_categories,
     }
 
 
@@ -521,18 +529,17 @@ def _all_stock_items():
 
 
 
-# Display-order rank for each material-tier category (Part 5 of the design-
-# list grouping spec) -- db.DESIGN_CATEGORY_CHOICES is already declared in
-# this exact Pearl/Pearl Designer/.../Napa Designer order, so this just
-# indexes it rather than re-listing the 7 names a second time somewhere they
-# could drift out of sync. Uncategorized items sort after every real
-# category (see _category_sort_key() below).
-_DESIGN_CATEGORY_SORT_RANK = {category: rank for rank, category in enumerate(db.DESIGN_CATEGORY_CHOICES)}
-_UNCATEGORIZED_SORT_RANK = len(db.DESIGN_CATEGORY_CHOICES)
-
-
-def _category_sort_key(category):
-    return _DESIGN_CATEGORY_SORT_RANK.get(category, _UNCATEGORIZED_SORT_RANK)
+# Display-order rank for each category (Part 5 of the design-list grouping
+# spec). Categories are now admin-editable (System panel reordering, Part 6),
+# so this is built fresh from the live `categories` table on every call
+# rather than once at import time from a fixed tuple -- it's a small table,
+# and _build_design_payload() below only calls this once per payload (not
+# once per item), so there's no hot-path cost to staying live. Uncategorized
+# items sort after every real category.
+def _category_sort_rank_map():
+    categories = db.get_all_categories()
+    rank_map = {c["name"]: rank for rank, c in enumerate(categories)}
+    return rank_map, len(categories)
 
 
 def _build_design_payload(designs):
@@ -583,7 +590,8 @@ def _build_design_payload(designs):
     # in index.html, which reads cards in DOM/render order, not click order)
     # automatically follows this same grouping as a result, with no separate
     # client-side reordering required.
-    payload.sort(key=lambda item: _category_sort_key(item.get("category")))
+    rank_map, uncategorized_rank = _category_sort_rank_map()
+    payload.sort(key=lambda item: rank_map.get(item.get("category"), uncategorized_rank))
     return payload
 
 
@@ -2742,8 +2750,8 @@ def assign_category():
     category = str(payload.get("category") or "").strip()
     stock_item_names = payload.get("stock_item_names")
 
-    if category not in db.DESIGN_CATEGORY_CHOICES:
-        return jsonify({"error": f"category must be one of {list(db.DESIGN_CATEGORY_CHOICES)}"}), 400
+    if not db.category_exists(category):
+        return jsonify({"error": f"category '{category}' does not exist"}), 400
     if not isinstance(stock_item_names, list) or not stock_item_names:
         return jsonify({"error": "stock_item_names must be a non-empty list"}), 400
 
@@ -2794,6 +2802,171 @@ def assign_category():
         "category": category,
         "failed": failed,
     })
+
+
+@app.route("/api/categories")
+def list_categories():
+    """Live category list -- {name, abbreviation, sort_order} in display
+    order. Read-only and not admin-gated (unlike every mutation route below):
+    the on-thumbnail ribbon and category badge are visible to customers too
+    (see _build_design_payload()'s comment), so this needs to be reachable by
+    any logged-in role, not just admin. Used by index.html to rebuild the
+    ribbon abbreviation map and the "Assign Category" picker immediately
+    after a Category Settings change, without a full page reload (Part 5.7)."""
+    return jsonify({"categories": db.get_all_categories()})
+
+
+@app.route("/admin/categories/add", methods=["POST"])
+@admin_required
+def add_category_route():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    try:
+        category = db.add_category(name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    _invalidate_queue_stats_cache()
+    logger.info("Category '%s' added by user_id=%s", category["name"], _current_user_id())
+    return jsonify({"category": category})
+
+
+@app.route("/admin/categories/<string:name>/usage")
+@admin_required
+def category_usage(name):
+    """Preview step (Part 3.3) -- how many items currently carry this
+    category, so the frontend can show the real affected-item count in the
+    delete warning before the admin confirms anything."""
+    if not db.category_exists(name):
+        return jsonify({"error": f"category '{name}' does not exist"}), 404
+    return jsonify({"name": name, "affected_count": db.count_items_for_category(name)})
+
+
+@app.route("/admin/categories/rename", methods=["POST"])
+@admin_required
+def rename_category_route():
+    payload = request.get_json(silent=True) or {}
+    old_name = str(payload.get("old_name") or "").strip()
+    new_name = str(payload.get("new_name") or "").strip()
+
+    if not db.category_exists(old_name):
+        return jsonify({"error": f"category '{old_name}' does not exist"}), 404
+    if not new_name:
+        return jsonify({"error": "new_name is required"}), 400
+
+    # A DIFFERENT existing category (case-insensitive) blocks a direct
+    # rename -- the frontend needs to offer a merge instead (Part 3.2).
+    # Renaming to the exact same name only with different casing (e.g. "Saka"
+    # -> "SAKA") is not a conflict with a different category, so that still
+    # goes through the normal rename path below.
+    conflict = db.find_category_by_name_ci(new_name, exclude_name=old_name)
+    if conflict:
+        return jsonify({
+            "conflict": True,
+            "existing_name": conflict["name"],
+            "affected_count": db.count_items_for_category(old_name),
+        })
+
+    try:
+        affected = db.rename_category(old_name, new_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    _invalidate_queue_stats_cache()
+    logger.info(
+        "Category '%s' renamed to '%s' by user_id=%s (%d item(s) affected)",
+        old_name, new_name, _current_user_id(), affected,
+    )
+    if affected:
+        _regenerate_badges_for_stock_items(_stock_item_names_for_category(new_name), category_name=new_name)
+
+    return jsonify({"category": new_name, "affected_count": affected})
+
+
+@app.route("/admin/categories/merge", methods=["POST"])
+@admin_required
+def merge_categories_route():
+    payload = request.get_json(silent=True) or {}
+    source_name = str(payload.get("source_name") or "").strip()
+    target_name = str(payload.get("target_name") or "").strip()
+
+    if not db.category_exists(source_name):
+        return jsonify({"error": f"category '{source_name}' does not exist"}), 404
+    if not db.category_exists(target_name):
+        return jsonify({"error": f"category '{target_name}' does not exist"}), 404
+
+    try:
+        affected = db.merge_categories(source_name, target_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    _invalidate_queue_stats_cache()
+    logger.info(
+        "Category '%s' merged into '%s' by user_id=%s (%d item(s) affected)",
+        source_name, target_name, _current_user_id(), affected,
+    )
+    if affected:
+        _regenerate_badges_for_stock_items(_stock_item_names_for_category(target_name), category_name=target_name)
+
+    return jsonify({"category": target_name, "affected_count": affected})
+
+
+@app.route("/admin/categories/delete", methods=["POST"])
+@admin_required
+def delete_category_route():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+
+    if not db.category_exists(name):
+        return jsonify({"error": f"category '{name}' does not exist"}), 404
+
+    try:
+        affected_names = db.delete_category(name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    _invalidate_queue_stats_cache()
+    logger.info(
+        "Category '%s' deleted by user_id=%s (%d item(s) reverted to uncategorized)",
+        name, _current_user_id(), len(affected_names),
+    )
+
+    # The now-uncategorized items have nothing left to badge -- clean up
+    # (not regenerate) their stale cached badge files synchronously (plain
+    # filesystem deletes, fast enough not to need a background thread).
+    if affected_names:
+        mapping_lookup = db.get_mappings_for_stock_items(affected_names)
+        for mapping in mapping_lookup.values():
+            image_id = mapping.get("image_id")
+            if image_id:
+                _remove_badge_cache_for_image(image_id)
+
+    return jsonify({"category": name, "affected_count": len(affected_names)})
+
+
+def _stock_item_names_for_category(category_name):
+    """All stock_item_name values currently tagged with category_name --
+    used to scope badge regeneration to exactly the items a rename/merge/
+    abbreviation-override just affected."""
+    with db.get_connection() as conn:
+        rows = conn.execute(
+            "SELECT stock_item_name FROM design_categories WHERE category = ?", (category_name,)
+        ).fetchall()
+    return [row["stock_item_name"] for row in rows]
+
+
+@app.route("/admin/categories/regen_status")
+@admin_required
+def category_badge_regen_status():
+    """Polling endpoint for the "Updating N of M images..." indicator
+    (see _BADGE_REGEN_STATUS above) -- purely informational. Badges are
+    already guaranteed correct on every request regardless of this job's
+    progress (see _get_category_info_for_image()/_ensure_badged_share_cached()),
+    so `show` only gates whether a UI is worth displaying, never anything
+    that blocks Share Images or any other action."""
+    status = _badge_regen_status_snapshot()
+    status["show"] = bool(status["running"] and status["total"] > _BADGE_REGEN_PROGRESS_THRESHOLD)
+    return jsonify(status)
 
 
 @app.route("/get_unmapped_images")
@@ -3344,38 +3517,58 @@ def _cleanup_stale_badge_variants(image_id, current_category):
                 pass
 
 
-def _get_category_for_image(image_id):
+def _get_category_info_for_image(image_id):
+    """Returns {"name": ..., "abbreviation": ...} for image_id's assigned
+    category, or None if it has no mapped stock item or no category. The
+    abbreviation (categories.abbreviation, admin-editable via the System
+    panel -- Part 6) is what actually gets burned onto the badged share image
+    (see _ensure_badged_share_cached() below) -- capped short by design (Part
+    2) so it never produces an oversized badge, unlike the full category name
+    it replaces."""
     mapping = db.get_mapping_by_image_id(image_id)
     if not mapping or not mapping.get("stock_item_name"):
         return None
-    return db.get_category_for_stock_item(mapping["stock_item_name"])
+    category_name = db.get_category_for_stock_item(mapping["stock_item_name"])
+    if not category_name:
+        return None
+    category_row = db.get_category_by_name(category_name)
+    abbreviation = category_row["abbreviation"] if category_row else category_name
+    return {"name": category_name, "abbreviation": abbreviation}
 
 
-def _ensure_badged_share_cached(image_id):
-    """Builds (if missing/stale) and returns the cache path for image_id's
-    badged share variant, or None if there's nothing to badge (no mapped
-    image, unresolvable source file, or no category assigned). This is the
-    ONE code path that builds this cache -- both get_share_image_badged()
-    (on-demand, from the share flow) and the Part 3 background
-    pre-generation trigger (assign_category()) call this exact function, so
-    there is no duplicate image-generation logic to drift out of sync."""
+def _ensure_badged_share_cached(image_id, force=False):
+    """Builds (if missing/stale/forced) and returns the cache path for
+    image_id's badged share variant, or None if there's nothing to badge (no
+    mapped image, unresolvable source file, or no category assigned). This is
+    the ONE code path that builds this cache -- get_share_image_badged()
+    (on-demand, from the share flow) and every fire-and-forget pre-generation/
+    regeneration trigger (assign_category(), and Part 4/6's rename/merge/
+    abbreviation-override paths via _regenerate_badges_for_stock_items())
+    call this exact function, so there is no duplicate image-generation logic
+    to drift out of sync.
+
+    force=True bypasses the mtime staleness check and always rebuilds --
+    needed when the category's NAME or its abbreviation text changed but the
+    source photo itself didn't, which the passive mtime comparison alone
+    would never notice (Part 4/6's regeneration is otherwise always
+    forced=True)."""
     image_record = db.get_image_by_id(image_id)
     if not image_record:
         return None
     source_path = _resolve_stored_image_path(image_record.get("filepath"))
     if not source_path:
         return None
-    category = _get_category_for_image(image_id)
-    if not category:
+    category_info = _get_category_info_for_image(image_id)
+    if not category_info:
         return None
 
     os.makedirs(SHARE_IMAGE_CACHE_DIR, exist_ok=True)
-    cache_path = _badged_share_cache_path(image_id, category)
-    stale = not os.path.exists(cache_path) or os.path.getmtime(cache_path) < os.path.getmtime(source_path)
+    cache_path = _badged_share_cache_path(image_id, category_info["name"])
+    stale = force or not os.path.exists(cache_path) or os.path.getmtime(cache_path) < os.path.getmtime(source_path)
     if stale:
         tmp_path = f"{cache_path}.tmp{os.getpid()}_{image_id}"
         try:
-            _build_badged_share_image(source_path, tmp_path, category)
+            _build_badged_share_image(source_path, tmp_path, category_info["abbreviation"])
             os.replace(tmp_path, cache_path)
         except Exception:
             try:
@@ -3383,8 +3576,91 @@ def _ensure_badged_share_cached(image_id):
             except OSError:
                 pass
             raise
-        _cleanup_stale_badge_variants(image_id, category)
+        _cleanup_stale_badge_variants(image_id, category_info["name"])
     return cache_path
+
+
+def _remove_badge_cache_for_image(image_id):
+    """Deletes every cached badge variant for image_id outright (Part 3.3) --
+    used when an item is deleted back to uncategorized, where there is no
+    longer any category to regenerate a badge FOR, so the stale cached file
+    must simply be cleaned up rather than rebuilt."""
+    pattern = os.path.join(SHARE_IMAGE_CACHE_DIR, f"{image_id}_badge_*.jpg")
+    for stale_path in glob.glob(pattern):
+        try:
+            os.remove(stale_path)
+        except OSError:
+            pass
+
+
+# Progress visibility for bulk badge regeneration (rename/merge/abbreviation-
+# override) -- NOT a correctness mechanism (see _get_category_info_for_image()/
+# _ensure_badged_share_cached(): every request already derives its cache key
+# and burned text from a live DB lookup, so a request during an in-flight
+# regeneration job is always served fresh/correct, never stale -- confirmed
+# by a real concurrent-request test, not just this comment). This is purely
+# so an admin isn't left wondering whether a bulk change has "taken" yet.
+# Same lightweight global-status-dict + polling-endpoint shape as
+# full_refresh_status/_run_full_refresh_job() above -- counters accumulate
+# additively across overlapping jobs (e.g. a rename immediately followed by
+# an abbreviation override) rather than one job's start clobbering another's
+# in-flight progress.
+_BADGE_REGEN_PROGRESS_THRESHOLD = 3  # only worth surfacing a UI for real bulk jobs
+_BADGE_REGEN_LOCK = threading.Lock()
+_BADGE_REGEN_STATUS = {"running": False, "total": 0, "completed": 0, "category": None}
+
+
+def _badge_regen_status_snapshot():
+    with _BADGE_REGEN_LOCK:
+        return dict(_BADGE_REGEN_STATUS)
+
+
+def _start_badge_regen_job(count, category_name=None):
+    if count <= 0:
+        return
+    with _BADGE_REGEN_LOCK:
+        if not _BADGE_REGEN_STATUS["running"]:
+            _BADGE_REGEN_STATUS["total"] = 0
+            _BADGE_REGEN_STATUS["completed"] = 0
+        _BADGE_REGEN_STATUS["total"] += count
+        _BADGE_REGEN_STATUS["running"] = True
+        _BADGE_REGEN_STATUS["category"] = category_name
+
+
+def _mark_badge_regen_progress():
+    with _BADGE_REGEN_LOCK:
+        _BADGE_REGEN_STATUS["completed"] += 1
+        if _BADGE_REGEN_STATUS["completed"] >= _BADGE_REGEN_STATUS["total"]:
+            _BADGE_REGEN_STATUS["running"] = False
+
+
+def _regenerate_badges_for_stock_items(stock_item_names, category_name=None):
+    """Reusable trigger (Part 4) for forcing the badged share cache to
+    rebuild for every mapped image behind the given stock item names --
+    extracted from the single-item pre-generation assign_category() already
+    used, so a rename/merge (Part 3.2) or an abbreviation override (Part 6.3)
+    affecting many items at once shares the exact same generation logic.
+    Fire-and-forget on a background daemon thread, same as the existing
+    per-item trigger, so the admin's request never waits on however many
+    images need re-badging. `category_name` is display-only context for the
+    progress status (see _BADGE_REGEN_STATUS above)."""
+    if not stock_item_names:
+        return
+    mapping_lookup = db.get_mappings_for_stock_items(stock_item_names)
+    image_ids = [m["image_id"] for m in mapping_lookup.values() if m.get("image_id")]
+    if image_ids:
+        _start_badge_regen_job(len(image_ids), category_name)
+        threading.Thread(target=_force_regenerate_badged_images, args=(image_ids,), daemon=True).start()
+
+
+def _force_regenerate_badged_images(image_ids):
+    for image_id in image_ids:
+        try:
+            _ensure_badged_share_cached(image_id, force=True)
+        except Exception:
+            logger.exception("Background badge regeneration failed for image_id=%s", image_id)
+        finally:
+            _mark_badge_regen_progress()
 
 
 def _pregenerate_badged_images(image_ids):
@@ -4200,6 +4476,71 @@ def system_uptime():
         "uptime_seconds": round(elapsed, 1),
         "uptime_human": _format_uptime(elapsed),
     })
+
+
+# ----------------------------
+# System panel: category reorder + abbreviation override (Part 6, advanced
+# controls tucked behind the same admin + device-pairing gate as every other
+# System panel feature -- the everyday add/rename/delete flow lives instead
+# in index.html's lightweight Category Settings panel, see Part 5).
+# ----------------------------
+
+@app.route("/admin/system/categories")
+@admin_required
+@system_device_required
+def system_list_categories():
+    return jsonify({"categories": db.get_all_categories()})
+
+
+@app.route("/admin/system/categories/move", methods=["POST"])
+@admin_required
+@system_device_required
+def system_move_category():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    direction = str(payload.get("direction") or "").strip().lower()
+
+    if not db.category_exists(name):
+        return jsonify({"error": f"category '{name}' does not exist"}), 404
+    if direction not in ("up", "down"):
+        return jsonify({"error": "direction must be 'up' or 'down'"}), 400
+
+    try:
+        moved = db.move_category(name, direction)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"moved": moved, "categories": db.get_all_categories()})
+
+
+@app.route("/admin/system/categories/abbreviation", methods=["POST"])
+@admin_required
+@system_device_required
+def system_update_category_abbreviation():
+    payload = request.get_json(silent=True) or {}
+    name = str(payload.get("name") or "").strip()
+    abbreviation = payload.get("abbreviation")
+
+    if not db.category_exists(name):
+        return jsonify({"error": f"category '{name}' does not exist"}), 404
+
+    try:
+        new_abbreviation = db.update_category_abbreviation(name, abbreviation)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    logger.info("Category '%s' abbreviation set to '%s' by user_id=%s", name, new_abbreviation, _current_user_id())
+
+    # Abbreviation feeds the burned share-image badge text directly (see
+    # _get_category_info_for_image()) -- unlike a rename, the category NAME
+    # (and hence the cache filename) doesn't change here, so the passive
+    # mtime staleness check would never notice; force=True regeneration is
+    # what makes this override actually visible on next share.
+    affected_names = _stock_item_names_for_category(name)
+    if affected_names:
+        _regenerate_badges_for_stock_items(affected_names, category_name=name)
+
+    return jsonify({"name": name, "abbreviation": new_abbreviation, "affected_count": len(affected_names)})
 
 
 set_search_dependencies(

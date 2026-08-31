@@ -270,6 +270,17 @@
             background: var(--border);
         }
 
+        /* "Updating N of M images..." (Part 3 of the badge-regen follow-up)
+           -- a quiet inline footnote next to the More button, same spirit as
+           .status-summary below: no border/background/spinner, so it never
+           reads as a blocking gate on anything nearby. */
+        .badge-regen-status {
+            font-size: 12px;
+            color: var(--muted);
+            white-space: nowrap;
+            align-self: center;
+        }
+
         /* Consolidated status line (Part 3) -- replaces the old bordered
            white ".panel" status card. Deliberately plain text, no
            background/border, so it reads as a quiet footnote under the
@@ -1150,6 +1161,157 @@
             flex: 0 0 auto;
         }
 
+        /* Category Settings (Part 5) -- a lightweight overlay panel, not a
+           full modal-panel like the image preview above (no dark body, no
+           nav arrows) since this is a short, plain list, not media. */
+        .category-settings-panel {
+            position: relative;
+            z-index: 1;
+            width: min(92vw, 480px);
+            max-height: 86vh;
+            background: #fff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.35);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .category-settings-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            flex: 0 0 auto;
+        }
+
+        .category-settings-head strong {
+            font-size: 16px;
+        }
+
+        .category-settings-hint {
+            margin: 12px 16px 0;
+            font-size: 12.5px;
+            color: var(--muted);
+        }
+
+        .category-add-row {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            flex: 0 0 auto;
+        }
+
+        .category-add-row input {
+            flex: 1;
+            min-width: 0;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .category-add-row button {
+            flex: 0 0 auto;
+            padding: 10px 14px;
+        }
+
+        .category-settings-notice {
+            margin: 0 16px 10px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        .category-settings-notice.success {
+            background: var(--success-bg);
+            color: var(--success-text);
+        }
+
+        .category-settings-notice.error {
+            background: var(--error-bg);
+            color: var(--error-text);
+        }
+
+        .category-settings-list {
+            list-style: none;
+            margin: 0;
+            padding: 0 16px 16px;
+            overflow-y: auto;
+            flex: 1 1 auto;
+        }
+
+        .category-settings-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .category-settings-row:last-child {
+            border-bottom: 0;
+        }
+
+        .category-settings-row .category-row-name {
+            flex: 1;
+            min-width: 0;
+            font-weight: 600;
+            font-size: 14px;
+            word-break: break-word;
+        }
+
+        .category-settings-row input.category-rename-input {
+            flex: 1;
+            min-width: 0;
+            padding: 7px 9px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 13.5px;
+        }
+
+        .category-settings-row .category-row-actions {
+            display: flex;
+            gap: 6px;
+            flex: 0 0 auto;
+        }
+
+        .category-settings-row button {
+            padding: 7px 10px;
+            font-size: 12.5px;
+        }
+
+        .category-confirm-panel {
+            width: min(92vw, 420px);
+            padding-bottom: 4px;
+        }
+
+        .category-confirm-panel p {
+            margin: 12px 16px;
+            font-size: 13.5px;
+            color: var(--text);
+        }
+
+        .category-confirm-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            background: #f8fafc;
+        }
+
+        button.danger {
+            background: #fdecea;
+            color: #b42318;
+        }
+
+        button.danger:hover {
+            background: #fbdad5;
+        }
+
         .contact-footer {
             margin-top: 24px;
             padding: 18px 20px;
@@ -1572,10 +1734,21 @@
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/accounts')" title="Manage customer login accounts">Manage Accounts</button>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
                         <div class="more-menu-divider" role="separator"></div>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openCategorySettingsModal)" title="Add, rename, or delete material-tier categories (Pearl, Ruby, Saka, etc.) -- not to be confused with Assign Category, which tags individual items">Category Settings</button>
+                        <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=category')" title="Open Train Matches with the prioritized Needs Category work queue already visible">Needs Category</button>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=image_matching')" title="Open Train Matches with the prioritized Needs Image Matching work queue already visible">Needs Image Matching</button>
                     </div>
                 </div>
+                <!-- Purely informational (Part 3 of the badge-regen race-
+                     condition follow-up) -- badges are already guaranteed
+                     correct on every request regardless of this job's
+                     progress, so this never blocks Share Images or anything
+                     else; it just answers "is it still working on it?" while
+                     a rename/merge/abbreviation-override affecting many
+                     items catches up in the background. See
+                     pollBadgeRegenStatus(). -->
+                <span id="badgeRegenStatus" class="badge-regen-status" style="display:none;" role="status" aria-live="polite"></span>
             </div>
         </div>
         {% endif %}
@@ -1696,6 +1869,68 @@
     </div>
 </div>
 
+{% if is_admin %}
+<!-- "Category Settings" (Part 5) -- the everyday add/rename/delete flow,
+     reached from the More menu. Deliberately a lightweight overlay, not a
+     page navigation, so it opens and closes fast. Not to be confused with
+     "Assign Category"/"Manage Categories for [Car]" (per-item tagging,
+     elsewhere in this file) -- this panel only edits the category LIST
+     itself. Advanced controls (reorder, abbreviation override) live in the
+     System panel instead (Part 6), gated to admin + paired device there. -->
+<div class="modal" id="categorySettingsModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeCategorySettingsModal()"></div>
+    <div class="category-settings-panel" role="dialog" aria-modal="true" aria-label="Category Settings">
+        <div class="category-settings-head">
+            <strong>Category Settings</strong>
+            <button class="secondary" onclick="closeCategorySettingsModal()">Close</button>
+        </div>
+        <p class="category-settings-hint">Add, rename, or delete the material-tier categories used across every car's designs. Renaming or deleting affects every item currently tagged with that category.</p>
+
+        <form id="addCategoryForm" class="category-add-row" onsubmit="return handleAddCategorySubmit(event)">
+            <input type="text" id="newCategoryNameInput" placeholder="New category name" maxlength="100" autocomplete="off">
+            <button type="submit" id="addCategoryBtn">Add Category</button>
+        </form>
+
+        <div id="categorySettingsNotice" class="category-settings-notice" style="display:none;"></div>
+
+        <ul id="categorySettingsList" class="category-settings-list"></ul>
+    </div>
+</div>
+
+<!-- Rename-triggered merge confirmation (Part 3.2/5.3) -- shown only when
+     the backend reports the new name collides (case-insensitively) with a
+     DIFFERENT existing category. -->
+<div class="modal" id="categoryMergeModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeCategoryMergeModal()"></div>
+    <div class="category-settings-panel category-confirm-panel" role="dialog" aria-modal="true" aria-label="Confirm category merge">
+        <div class="category-settings-head">
+            <strong>Merge categories?</strong>
+        </div>
+        <p id="categoryMergeText"></p>
+        <div class="category-confirm-actions">
+            <button class="secondary" onclick="closeCategoryMergeModal()">Cancel</button>
+            <button id="categoryMergeConfirmBtn" class="danger" onclick="confirmCategoryMerge()">Merge</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete warning (Part 3.3/5.4) -- always shows the real affected-item
+     count fetched from the server before anything is deleted. -->
+<div class="modal" id="categoryDeleteModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeCategoryDeleteModal()"></div>
+    <div class="category-settings-panel category-confirm-panel" role="dialog" aria-modal="true" aria-label="Confirm category deletion">
+        <div class="category-settings-head">
+            <strong>Delete category?</strong>
+        </div>
+        <p id="categoryDeleteText"></p>
+        <div class="category-confirm-actions">
+            <button class="secondary" onclick="closeCategoryDeleteModal()">Cancel</button>
+            <button id="categoryDeleteConfirmBtn" class="danger" onclick="confirmCategoryDelete()">Delete Anyway</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <script>
 const isAdmin = {{ is_admin|tojson }};
 const isCustomer = {{ is_customer|tojson }};
@@ -1706,24 +1941,76 @@ const isCustomer = {{ is_customer|tojson }};
 // below) so each picks up its badge's existing text color automatically.
 const BADGE_ICON_LINKED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="12" height="12"><path fill="currentColor" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.7-9.3a1 1 0 00-1.4-1.4L9 10.6 7.7 9.3a1 1 0 00-1.4 1.4l2 2a1 1 0 001.4 0l4-4z"/></svg>';
 const BADGE_ICON_UNMAPPED = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false" width="12" height="12"><path fill="currentColor" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l6.518 11.598c.75 1.334-.213 3.003-1.743 3.003H3.482c-1.53 0-2.493-1.669-1.743-3.003L8.257 3.1zM10 8a1 1 0 00-1 1v3a1 1 0 002 0V9a1 1 0 00-1-1zm0 7a1.125 1.125 0 100-2.25A1.125 1.125 0 0010 15z"/></svg>';
-// Short forms for the on-thumbnail .category-ribbon ONLY (Part 6) -- the
-// full name (item.category, unabbreviated) still goes everywhere else: the
+// Short forms for the on-thumbnail .category-ribbon ONLY -- the full name
+// (item.category, unabbreviated) still goes everywhere else: the
 // full-screen modal's badge (see displayModalImage()), and this same
 // ribbon's own title="..." tooltip (see renderDesignItem()). A category
-// with no entry here (shouldn't happen -- this covers every value in
-// db.DESIGN_CATEGORY_CHOICES) just falls back to its own full name.
+// with no entry here (shouldn't happen -- every live category has an
+// abbreviation, auto-generated or admin-overridden, see database.py's
+// categories table) just falls back to its own full name.
 // Space, not a period, as the separator (Part 7) -- "P.DSGN" compresses the
 // "." toward invisible at real thumbnail size, where "P DSGN" reads as a
 // clear, unambiguous word break (confirmed via real 4x-DPI screenshots).
-const CATEGORY_RIBBON_ABBREVIATIONS = {
-    "Pearl": "PEARL",
-    "Pearl Designer": "P DSGN",
-    "Pearl Deluxe": "P DLX",
-    "Saka": "SAKA",
-    "Ruby": "RUBY",
-    "Napa Deluxe": "N DLX",
-    "Napa Designer": "N DSGN",
-};
+//
+// Categories are now admin-editable (Category Settings in the More menu,
+// System panel reorder/abbreviation override), so this is no longer a fixed
+// literal -- it's seeded server-side from design_categories_json (fresh on
+// every page render, see inject_session_context() in app.py) and rebuilt in
+// place by refreshCategoryData() below whenever the Category Settings panel
+// adds/renames/merges/deletes a category, with no full page reload needed
+// (Part 5.7).
+let CATEGORY_RIBBON_ABBREVIATIONS = {};
+// Ordered list of {name, abbreviation, sort_order} -- the live source for
+// both the ribbon map above and the "Assign Category" <select> options
+// (see rebuildCategoryPickerOptions()).
+let LIVE_CATEGORIES = {{ design_categories_json|tojson }};
+
+function applyCategoryData(categories) {
+    LIVE_CATEGORIES = Array.isArray(categories) ? categories : [];
+    CATEGORY_RIBBON_ABBREVIATIONS = {};
+    LIVE_CATEGORIES.forEach(category => {
+        CATEGORY_RIBBON_ABBREVIATIONS[category.name] = category.abbreviation || category.name;
+    });
+    rebuildCategoryPickerOptions();
+}
+
+// Keeps the "Assign Category" / "Manage Categories for [Car]" picker in sync
+// with the live category list -- called on load and after every Category
+// Settings change (Part 5.7), never requiring a page reload.
+function rebuildCategoryPickerOptions() {
+    const select = document.getElementById("categoryActiveSelect");
+    if (!select) {
+        return;
+    }
+    const previousValue = select.value;
+    select.innerHTML = '<option value="" selected>Choose category&hellip;</option>' +
+        LIVE_CATEGORIES.map(category => {
+            const safeName = escapeHtml(category.name);
+            return `<option value="${safeName}">${safeName}</option>`;
+        }).join("");
+    if (previousValue && LIVE_CATEGORIES.some(category => category.name === previousValue)) {
+        select.value = previousValue;
+    }
+}
+
+// Re-fetches the live category list from the server (Part 5.7) -- called
+// after any Category Settings add/rename/merge/delete so the ribbon map and
+// the Assign Category picker reflect the change immediately, with no full
+// page reload.
+async function refreshCategoryData() {
+    try {
+        const res = await fetch("/api/categories");
+        if (!res.ok) {
+            return;
+        }
+        const data = await res.json();
+        applyCategoryData(data.categories || []);
+    } catch (error) {
+        // Best-effort -- the page keeps working off whatever it already had.
+    }
+}
+
+applyCategoryData(LIVE_CATEGORIES);
 const STAGE_LABELS = {
     car_master: "Stage 1/4 — Updating car master list from Tally...",
     main_hierarchy: "Stage 2/4 — Updating main hierarchy from Tally...",
@@ -2415,6 +2702,363 @@ function handleMoreMenuOutsideClick(event) {
 function handleMoreMenuAction(action) {
     closeMoreMenu();
     action();
+}
+
+// ============================================================
+// "Category Settings" (Part 5) -- the simple, everyday add/rename/delete
+// panel reached from the More menu. Deliberately separate from the
+// "Assign Category"/"Manage Categories for [Car]" session above: that one
+// tags individual items with an EXISTING category; this one edits the
+// category LIST itself. Advanced controls (reorder, abbreviation override)
+// live in the System panel instead (see templates/system.html).
+// ============================================================
+
+let pendingCategoryMergeSource = null;
+let pendingCategoryMergeTarget = null;
+let pendingCategoryDeleteName = null;
+
+function renderCategorySettingsRow(category) {
+    const safeName = escapeHtml(category.name);
+    return `
+        <li class="category-settings-row" data-category-name="${safeName}">
+            <span class="category-row-name">${safeName}</span>
+            <div class="category-row-actions">
+                <button type="button" class="secondary" onclick="startRenameCategory(this)">Rename</button>
+                <button type="button" class="danger" onclick="promptDeleteCategory(this)">Delete</button>
+            </div>
+        </li>
+    `;
+}
+
+function renderCategorySettingsList() {
+    const list = document.getElementById("categorySettingsList");
+    if (!list) {
+        return;
+    }
+    if (!LIVE_CATEGORIES.length) {
+        list.innerHTML = '<li class="category-settings-row"><span class="category-row-name" style="color:var(--muted); font-weight:400;">No categories yet -- add one above.</span></li>';
+        return;
+    }
+    list.innerHTML = LIVE_CATEGORIES.map(renderCategorySettingsRow).join("");
+}
+
+function showCategorySettingsNotice(message, level) {
+    const notice = document.getElementById("categorySettingsNotice");
+    if (!notice) {
+        return;
+    }
+    notice.textContent = message;
+    notice.className = `category-settings-notice ${level}`;
+    notice.style.display = "block";
+}
+
+function clearCategorySettingsNotice() {
+    const notice = document.getElementById("categorySettingsNotice");
+    if (notice) {
+        notice.style.display = "none";
+    }
+}
+
+function openCategorySettingsModal() {
+    if (!isAdmin) {
+        return;
+    }
+    clearCategorySettingsNotice();
+    renderCategorySettingsList();
+    const input = document.getElementById("newCategoryNameInput");
+    if (input) {
+        input.value = "";
+    }
+    const modal = document.getElementById("categorySettingsModal");
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function closeCategorySettingsModal() {
+    const modal = document.getElementById("categorySettingsModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+// Add flow (Part 5.5) -- type a name, submit, done. No further steps: the
+// backend auto-generates the abbreviation and appends it to the end.
+async function handleAddCategorySubmit(event) {
+    event.preventDefault();
+    const input = document.getElementById("newCategoryNameInput");
+    const btn = document.getElementById("addCategoryBtn");
+    const name = ((input && input.value) || "").trim();
+    if (!name) {
+        return false;
+    }
+
+    clearCategorySettingsNotice();
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch("/admin/categories/add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            showCategorySettingsNotice(data.error || `Failed to add category (HTTP ${res.status})`, "error");
+            return false;
+        }
+        if (input) input.value = "";
+        await refreshCategoryData();
+        renderCategorySettingsList();
+        showCategorySettingsNotice(`Added "${data.category.name}".`, "success");
+    } catch (error) {
+        showCategorySettingsNotice((error && error.message) || "Failed to add category.", "error");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+    return false;
+}
+
+// Rename flow (Part 5.3) -- inline edit in place of the row's normal
+// Rename/Delete actions, so this stays a same-panel, minimal-click flow
+// rather than a separate prompt/page.
+function startRenameCategory(button) {
+    const row = button.closest(".category-settings-row");
+    if (!row) {
+        return;
+    }
+    const currentName = row.dataset.categoryName;
+    row.innerHTML = `
+        <input type="text" class="category-rename-input" value="${escapeHtml(currentName)}" maxlength="100">
+        <div class="category-row-actions">
+            <button type="button" onclick="submitRenameCategory(this)">Save</button>
+            <button type="button" class="secondary" onclick="renderCategorySettingsList()">Cancel</button>
+        </div>
+    `;
+    const input = row.querySelector(".category-rename-input");
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
+async function submitRenameCategory(button) {
+    const row = button.closest(".category-settings-row");
+    if (!row) {
+        return;
+    }
+    const oldName = row.dataset.categoryName;
+    const input = row.querySelector(".category-rename-input");
+    const newName = ((input && input.value) || "").trim();
+    if (!newName || newName === oldName) {
+        renderCategorySettingsList();
+        return;
+    }
+
+    clearCategorySettingsNotice();
+    button.disabled = true;
+    try {
+        const res = await fetch("/admin/categories/rename", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ old_name: oldName, new_name: newName }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            showCategorySettingsNotice(data.error || `Failed to rename category (HTTP ${res.status})`, "error");
+            renderCategorySettingsList();
+            return;
+        }
+        if (data.conflict) {
+            renderCategorySettingsList();
+            openCategoryMergeModal(oldName, data.existing_name, data.affected_count || 0);
+            return;
+        }
+        await refreshCategoryData();
+        renderCategorySettingsList();
+        showCategorySettingsNotice(`Renamed "${oldName}" to "${data.category}".`, "success");
+        startBadgeRegenPolling();
+    } catch (error) {
+        showCategorySettingsNotice((error && error.message) || "Failed to rename category.", "error");
+        renderCategorySettingsList();
+    }
+}
+
+// Merge confirmation (Part 3.2/5.3) -- shown only when the rename above
+// collides (case-insensitively) with a DIFFERENT existing category.
+function openCategoryMergeModal(sourceName, targetName, affectedCount) {
+    pendingCategoryMergeSource = sourceName;
+    pendingCategoryMergeTarget = targetName;
+    const text = document.getElementById("categoryMergeText");
+    if (text) {
+        text.textContent = `A category named "${targetName}" already exists. Merge "${sourceName}" into it? `
+            + `${affectedCount} item${affectedCount === 1 ? "" : "s"} will be retagged.`;
+    }
+    const modal = document.getElementById("categoryMergeModal");
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function closeCategoryMergeModal() {
+    pendingCategoryMergeSource = null;
+    pendingCategoryMergeTarget = null;
+    const modal = document.getElementById("categoryMergeModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+async function confirmCategoryMerge() {
+    if (!pendingCategoryMergeSource || !pendingCategoryMergeTarget) {
+        closeCategoryMergeModal();
+        return;
+    }
+    const source = pendingCategoryMergeSource;
+    const target = pendingCategoryMergeTarget;
+    const btn = document.getElementById("categoryMergeConfirmBtn");
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch("/admin/categories/merge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source_name: source, target_name: target }),
+        });
+        const data = await res.json().catch(() => ({}));
+        closeCategoryMergeModal();
+        if (!res.ok) {
+            showCategorySettingsNotice(data.error || `Failed to merge categories (HTTP ${res.status})`, "error");
+            return;
+        }
+        await refreshCategoryData();
+        renderCategorySettingsList();
+        const count = data.affected_count || 0;
+        showCategorySettingsNotice(`Merged "${source}" into "${target}" (${count} item${count === 1 ? "" : "s"}).`, "success");
+        startBadgeRegenPolling();
+    } catch (error) {
+        closeCategoryMergeModal();
+        showCategorySettingsNotice((error && error.message) || "Failed to merge categories.", "error");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// Delete flow (Part 3.3/5.4) -- always fetches the real affected-item count
+// first so the warning is accurate, before anything is actually deleted.
+async function promptDeleteCategory(button) {
+    const row = button.closest(".category-settings-row");
+    if (!row) {
+        return;
+    }
+    const name = row.dataset.categoryName;
+    clearCategorySettingsNotice();
+    button.disabled = true;
+    try {
+        const res = await fetch(`/admin/categories/${encodeURIComponent(name)}/usage`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            showCategorySettingsNotice(data.error || `Failed to check category usage (HTTP ${res.status})`, "error");
+            return;
+        }
+        pendingCategoryDeleteName = name;
+        const count = data.affected_count || 0;
+        const text = document.getElementById("categoryDeleteText");
+        if (text) {
+            text.textContent = count > 0
+                ? `${count} item${count === 1 ? " is" : "s are"} tagged "${name}" and will become uncategorized.`
+                : `No items are currently tagged "${name}".`;
+        }
+        const modal = document.getElementById("categoryDeleteModal");
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+    } catch (error) {
+        showCategorySettingsNotice((error && error.message) || "Failed to check category usage.", "error");
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function closeCategoryDeleteModal() {
+    pendingCategoryDeleteName = null;
+    const modal = document.getElementById("categoryDeleteModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+async function confirmCategoryDelete() {
+    if (!pendingCategoryDeleteName) {
+        closeCategoryDeleteModal();
+        return;
+    }
+    const name = pendingCategoryDeleteName;
+    const btn = document.getElementById("categoryDeleteConfirmBtn");
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch("/admin/categories/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+        });
+        const data = await res.json().catch(() => ({}));
+        closeCategoryDeleteModal();
+        if (!res.ok) {
+            showCategorySettingsNotice(data.error || `Failed to delete category (HTTP ${res.status})`, "error");
+            return;
+        }
+        await refreshCategoryData();
+        renderCategorySettingsList();
+        const count = data.affected_count || 0;
+        showCategorySettingsNotice(`Deleted "${name}" (${count} item${count === 1 ? "" : "s"} now uncategorized).`, "success");
+    } catch (error) {
+        closeCategoryDeleteModal();
+        showCategorySettingsNotice((error && error.message) || "Failed to delete category.", "error");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ============================================================
+// Badge regeneration progress indicator (Part 3 of the badge-regen
+// race-condition follow-up) -- purely informational. Correctness of what
+// /get_share_image_badged serves does NOT depend on this job's progress
+// (every request derives its own cache key/content from a live DB lookup,
+// confirmed by a real concurrent-request test) -- this only answers "is it
+// still catching up?" so an admin isn't left wondering right after a bulk
+// rename/merge/abbreviation-override. Never disables Share Images or
+// anything else. Same lightweight setInterval-polling shape as
+// startFullRefresh()'s fullRefreshPoller above.
+// ============================================================
+
+let badgeRegenPoller = null;
+
+async function pollBadgeRegenStatus() {
+    const el = document.getElementById("badgeRegenStatus");
+    if (!el) {
+        return;
+    }
+    try {
+        const res = await fetch("/admin/categories/regen_status");
+        if (!res.ok) {
+            return;
+        }
+        const status = await res.json();
+        if (status.show) {
+            el.textContent = `Updating ${status.completed} of ${status.total} images...`;
+            el.style.display = "";
+        } else {
+            el.style.display = "none";
+        }
+        if (!status.running && badgeRegenPoller) {
+            clearInterval(badgeRegenPoller);
+            badgeRegenPoller = null;
+        }
+    } catch (error) {
+        // Best-effort -- a missed poll just means the indicator lags a beat,
+        // never a wrong "safe to share" signal (there isn't one to give).
+    }
+}
+
+function startBadgeRegenPolling() {
+    if (badgeRegenPoller || !isAdmin) {
+        return;
+    }
+    pollBadgeRegenStatus();
+    badgeRegenPoller = setInterval(pollBadgeRegenStatus, 1000);
 }
 
 function updateSelectModeUI() {
@@ -3924,6 +4568,11 @@ window.addEventListener("DOMContentLoaded", () => {
         setInterval(() => {
             updateTimestamp();
         }, 30000);
+        // Picks up a still-running badge regeneration job on page load too --
+        // e.g. an abbreviation override just triggered from the System panel,
+        // then the admin navigated back here. pollBadgeRegenStatus() itself
+        // is a no-op (hides the indicator) if nothing is running.
+        startBadgeRegenPolling();
     }
     setInterval(checkTimestampFreshness, 10000);
 
@@ -3956,9 +4605,26 @@ document.addEventListener("keydown", event => {
             closeMoreMenu();
             return;
         }
+        if (isModalOpen("categoryDeleteModal")) {
+            closeCategoryDeleteModal();
+            return;
+        }
+        if (isModalOpen("categoryMergeModal")) {
+            closeCategoryMergeModal();
+            return;
+        }
+        if (isModalOpen("categorySettingsModal")) {
+            closeCategorySettingsModal();
+            return;
+        }
         closeImageModal();
     }
 });
+
+function isModalOpen(modalId) {
+    const modal = document.getElementById(modalId);
+    return Boolean(modal && modal.classList.contains("open"));
+}
 
 document.getElementById("imageModal").addEventListener("click", event => {
     if (event.target.id === "imageModal") {
