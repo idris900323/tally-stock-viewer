@@ -74,3 +74,8 @@ data/
 archived_unneeded/
 
 .env
+
+# =========================
+# AI try-on experimentation (isolated, not part of the app)
+# =========================
+ai_tryon_test/

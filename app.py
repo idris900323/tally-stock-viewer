@@ -3520,11 +3520,13 @@ def _cleanup_stale_badge_variants(image_id, current_category):
 def _get_category_info_for_image(image_id):
     """Returns {"name": ..., "abbreviation": ...} for image_id's assigned
     category, or None if it has no mapped stock item or no category. The
-    abbreviation (categories.abbreviation, admin-editable via the System
-    panel -- Part 6) is what actually gets burned onto the badged share image
-    (see _ensure_badged_share_cached() below) -- capped short by design (Part
-    2) so it never produces an oversized badge, unlike the full category name
-    it replaces."""
+    full name is what gets burned onto the badged share image (see
+    _ensure_badged_share_cached() below) -- the width-cap/font-shrink
+    legibility logic in _draw_category_badge() handles long full names
+    (it was originally built and tested against them, before the
+    abbreviation field existed). The abbreviation is only for the
+    on-thumbnail .category-ribbon (client-side, see index.html) and is not
+    used here."""
     mapping = db.get_mapping_by_image_id(image_id)
     if not mapping or not mapping.get("stock_item_name"):
         return None
@@ -3568,7 +3570,7 @@ def _ensure_badged_share_cached(image_id, force=False):
     if stale:
         tmp_path = f"{cache_path}.tmp{os.getpid()}_{image_id}"
         try:
-            _build_badged_share_image(source_path, tmp_path, category_info["abbreviation"])
+            _build_badged_share_image(source_path, tmp_path, category_info["name"])
             os.replace(tmp_path, cache_path)
         except Exception:
             try:
@@ -4531,11 +4533,14 @@ def system_update_category_abbreviation():
 
     logger.info("Category '%s' abbreviation set to '%s' by user_id=%s", name, new_abbreviation, _current_user_id())
 
-    # Abbreviation feeds the burned share-image badge text directly (see
-    # _get_category_info_for_image()) -- unlike a rename, the category NAME
-    # (and hence the cache filename) doesn't change here, so the passive
-    # mtime staleness check would never notice; force=True regeneration is
-    # what makes this override actually visible on next share.
+    # The burned share-image badge now uses the category's full NAME, not
+    # the abbreviation (see _get_category_info_for_image()), so this
+    # regeneration no longer changes the badge's visible text -- kept as-is
+    # since it's harmless (same text re-burned) and this route is Category
+    # Settings territory, out of scope for the badge-source fix above. Only
+    # the on-thumbnail .category-ribbon (client-side) actually reflects an
+    # abbreviation edit, and it updates instantly via refreshCategoryData()
+    # with no server-side regeneration needed.
     affected_names = _stock_item_names_for_category(name)
     if affected_names:
         _regenerate_badges_for_stock_items(affected_names, category_name=name)
