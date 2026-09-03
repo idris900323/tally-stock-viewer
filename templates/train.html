@@ -116,30 +116,37 @@
             min-width: 0;
         }
 
-        .queue-panel-head {
-            display: flex;
-            align-items: baseline;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-
-        .queue-panel-head h2 {
-            margin: 0;
-            font-size: 16px;
-        }
-
-        .queue-count {
-            font-size: 12px;
-            color: var(--muted);
-            font-weight: 600;
-            white-space: nowrap;
-        }
-
-        .queue-panel-head-right {
+        /* Tab toggle between the two queues sharing one panel (Part 5 of
+           the queue restructure) -- replaces each queue's own <h2>/count
+           header; the active tab's own count is baked into its label by
+           renderQueueList() instead of a separate element. */
+        .queue-tabs {
             display: flex;
             align-items: center;
             gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .queue-tab {
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: #fff;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--muted);
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .queue-tab.active {
+            background: var(--accent-2);
+            border-color: var(--accent-2);
+            color: #fff;
+        }
+
+        .queue-tabs .queue-close-btn {
+            margin-left: auto;
         }
 
         /* !important: this page's own mobile media query below sets a
@@ -241,6 +248,17 @@
         .queue-item-detail {
             font-size: 12px;
             color: var(--muted);
+        }
+
+        /* Hybrid display (Part 3 of the queue restructure) -- the specific
+           item names driving a car's presence in the queue. Unlike
+           .queue-item-car/.queue-item-detail above, this is allowed to wrap
+           since a handful of real item names easily run past one line. */
+        .queue-item-names {
+            font-size: 11px;
+            color: var(--muted);
+            white-space: normal;
+            overflow-wrap: anywhere;
         }
 
         .queue-item-badge {
@@ -905,6 +923,14 @@
                 width: 100%;
             }
 
+            /* Same !important pattern as .queue-close-btn above -- without
+               it the generic `button { width: 100% }` mobile rule would
+               stack the two tabs full-width instead of side by side. */
+            .queue-tab {
+                width: auto !important;
+                min-height: 36px !important;
+            }
+
             .topbar {
                 position: sticky;
                 top: 0;
@@ -1015,33 +1041,51 @@
         </div>
     </div>
 
+    <!-- Category-completion stat (Part 4 of the queue restructure) -- same
+         Linked/Total/Remaining/Complete shape as the image-matching card
+         above, but for categories; refreshed in place (no reload) after any
+         category set/clear via updateCategoryStats(), the same way
+         updateProgress() already refreshes the image card. -->
+    <div class="progress-card" id="categoryStatsCard">
+        <div class="metric">
+            <span class="label">Categorized</span>
+            <span class="value" id="categorizedCount">{{ category_stats.categorized_items }}</span>
+        </div>
+        <div class="metric">
+            <span class="label">Total Items</span>
+            <span class="value" id="categoryTotalCount">{{ category_stats.total_items }}</span>
+        </div>
+        <div class="metric">
+            <span class="label">Remaining</span>
+            <span class="value" id="categoryRemainingCount">{{ category_stats.remaining_items }}</span>
+        </div>
+        <div class="metric">
+            <span class="label">Complete</span>
+            <span class="value" id="categoryPercentComplete">{{ category_stats.percent_complete }}%</span>
+        </div>
+    </div>
+
     {% if is_admin %}
-    <!-- Hidden by default (Part 3 of the More-menu round) -- only revealed
-         via ?open_queue=category|image_matching (see initWorkQueuesFromUrl(),
-         reached from index.html's More menu) or the same-page close control
-         below, since this page no longer has its own trigger for these. -->
-    <div class="queues-grid" id="workQueuesGrid" style="display:none;">
+    <!-- Hidden by default -- only revealed via ?open_queue=work|category|
+         image_matching (see initWorkQueuesFromUrl(), reached from
+         index.html's single "Work Queue" More-menu entry) or the same-page
+         close control below, since this page no longer has its own trigger
+         for this. The two queues now share one panel with a tab toggle
+         (switchQueueTab()) instead of each having its own separate More-menu
+         entry -- see Part 5 of the queue-restructure round. -->
+    <div class="queues-grid single-queue" id="workQueuesGrid" style="display:none;">
+        <div class="queue-tabs" role="tablist" aria-label="Work queue">
+            <button type="button" class="queue-tab" id="queueTabBtn-needsCategory" role="tab" onclick="switchQueueTab('needsCategory')">Needs Category</button>
+            <button type="button" class="queue-tab" id="queueTabBtn-needsImageMatching" role="tab" onclick="switchQueueTab('needsImageMatching')">Needs Image Matching</button>
+            <button type="button" class="queue-close-btn" onclick="closeQueuePanel()" title="Close this queue" aria-label="Close work queue">&times;</button>
+        </div>
         <div class="panel queue-panel" id="needsCategoryPanel" style="display:none;">
-            <div class="queue-panel-head">
-                <h2>Needs Category</h2>
-                <div class="queue-panel-head-right">
-                    <span class="queue-count" id="needsCategoryCount"></span>
-                    <button type="button" class="queue-close-btn" onclick="closeQueuePanel('needsCategory')" title="Close this queue" aria-label="Close Needs Category queue">&times;</button>
-                </div>
-            </div>
             <div class="queue-list" id="needsCategoryList">
                 <p class="muted queue-empty" id="needsCategoryEmpty">Loading&hellip;</p>
             </div>
             <button type="button" class="secondary queue-show-more" id="needsCategoryShowMore" style="display:none;" onclick="toggleQueueExpanded('needsCategory')"></button>
         </div>
         <div class="panel queue-panel" id="needsImageMatchingPanel" style="display:none;">
-            <div class="queue-panel-head">
-                <h2>Needs Image Matching</h2>
-                <div class="queue-panel-head-right">
-                    <span class="queue-count" id="needsImageMatchingCount"></span>
-                    <button type="button" class="queue-close-btn" onclick="closeQueuePanel('needsImageMatching')" title="Close this queue" aria-label="Close Needs Image Matching queue">&times;</button>
-                </div>
-            </div>
             <div class="queue-list" id="needsImageMatchingList">
                 <p class="muted queue-empty" id="needsImageMatchingEmpty">Loading&hellip;</p>
             </div>
@@ -1104,9 +1148,24 @@
                     <div id="currentMatchEmpty" style="display:none; color:#94a3b8; font-size:13px;">
                         No image currently matched to this stock item.
                     </div>
+                    <div id="currentMatchCategoryLabel" class="muted" style="margin-top:8px; font-size:12px;"></div>
                 </div>
 
                 {% if is_admin %}
+                <!-- Additional entry point (alongside the standalone Assign
+                     Category / "Manage Categories for [Car]" flow on the
+                     main page, left untouched) -- lets an admin set/change
+                     this stock item's category at the exact moment they
+                     confirm its image match, instead of a separate trip.
+                     Populated live from /api/categories and defaulted to
+                     whatever category the selected item already has (see
+                     loadCurrentMatchPreview()), so leaving it untouched and
+                     confirming never changes or clears the category. -->
+                <div class="field" id="matchCategoryField" style="display:none; margin-top:12px;" title="Optionally set, change, or clear this stock item's category in the same action as confirming its image match">
+                    <label for="matchCategorySelect">Category</label>
+                    <select id="matchCategorySelect"></select>
+                </div>
+
                 <div class="actions">
                     <button class="primary" onclick="confirmSelectedMatch()" title="Save this image as matched to the selected stock item">Confirm Match</button>
                     <button class="ghost" onclick="removeCurrentMatch()" title="Unlink this image from its current stock item so it can be remapped">Remove Match</button>
@@ -1161,6 +1220,13 @@
                 <input type="text" id="uploadFolderInput" list="existingFoldersList" placeholder="e.g. ALCAZAR(7)(WA)" />
                 <datalist id="existingFoldersList"></datalist>
             </div>
+            <!-- Same additional category entry point as Confirm Match's
+                 matchCategoryField, defaulted the same way -- so a brand-new
+                 image can be matched and categorized in one action. -->
+            <div class="field" title="Optionally set, change, or clear this stock item's category in the same action as uploading and matching this image">
+                <label for="uploadCategorySelect">Category</label>
+                <select id="uploadCategorySelect"></select>
+            </div>
         </div>
         <div class="modal-actions">
             <button class="secondary" onclick="cancelUploadModal()">Cancel</button>
@@ -1213,6 +1279,7 @@ const workQueues = {
     needsCategory: {
         url: "/api/needs_category_queue",
         panelId: "needsCategoryPanel",
+        tabLabel: "Needs Category",
         cars: [],
         loaded: false,
         expanded: false,
@@ -1223,6 +1290,7 @@ const workQueues = {
     needsImageMatching: {
         url: "/api/needs_image_matching_queue",
         panelId: "needsImageMatchingPanel",
+        tabLabel: "Needs Image Matching",
         cars: [],
         loaded: false,
         expanded: false,
@@ -1233,7 +1301,13 @@ const workQueues = {
 };
 
 // URL param -> workQueues key, consumed by initWorkQueuesFromUrl() below.
+// "work" is the single merged More-menu entry (Part 5 of the queue
+// restructure) -- it opens the panel without forcing a tab, so
+// initWorkQueuesFromUrl() picks whichever queue has more outstanding work
+// (see openWorkQueuePanelWithDefaultTab()). The old per-queue params still
+// resolve directly to a tab, for any existing bookmarks/links.
 const OPEN_QUEUE_PARAM_MAP = {
+    work: null,
     category: "needsCategory",
     image_matching: "needsImageMatching",
 };
@@ -1251,14 +1325,17 @@ function tierBadgeClass(tier) {
 function renderQueueList(queueKey) {
     const queue = workQueues[queueKey];
     const listEl = document.getElementById(`${queueKey}List`);
-    const countEl = document.getElementById(`${queueKey}Count`);
     const showMoreBtn = document.getElementById(`${queueKey}ShowMore`);
-    if (!listEl || !countEl || !showMoreBtn) {
+    const tabBtn = document.getElementById(`queueTabBtn-${queueKey}`);
+    if (!listEl || !showMoreBtn) {
         return;
     }
 
+    if (tabBtn) {
+        tabBtn.textContent = queue.loaded ? `${queue.tabLabel} (${queue.cars.length})` : queue.tabLabel;
+    }
+
     listEl.innerHTML = "";
-    countEl.textContent = queue.cars.length ? `${queue.cars.length} car${queue.cars.length === 1 ? "" : "s"}` : "";
 
     if (!queue.cars.length) {
         const empty = document.createElement("p");
@@ -1298,6 +1375,19 @@ function renderQueueList(queueKey) {
         detail.className = "queue-item-detail";
         detail.textContent = queue.buildDetail(entry);
         main.appendChild(detail);
+
+        // Hybrid display (Part 3 of the queue restructure) -- the specific
+        // item names actually driving this car's presence in the queue,
+        // capped server-side (QUEUE_ITEM_NAME_DISPLAY_CAP) with an
+        // items_more count for anything beyond the cap, so the admin can
+        // scan what's outstanding without clicking in.
+        if (Array.isArray(entry.items) && entry.items.length) {
+            const namesLine = document.createElement("span");
+            namesLine.className = "queue-item-names";
+            const moreSuffix = entry.items_more > 0 ? `, +${entry.items_more} more` : "";
+            namesLine.textContent = `${entry.items.join(", ")}${moreSuffix}`;
+            main.appendChild(namesLine);
+        }
 
         row.appendChild(main);
 
@@ -1356,17 +1446,21 @@ async function loadWorkQueue(queueKey) {
 }
 
 // ============================================================
-// Opening/closing a queue panel (Part 3 of the More-menu round) -- both
-// panels are display:none by default now (they used to render inline on
-// every page load); the only entry point is index.html's More menu linking
-// here with ?open_queue=category|image_matching (see
-// initWorkQueuesFromUrl()), and the only way back is this same close
-// control, since this page no longer has its own trigger to reopen one.
-// At most one panel is ever open at a time -- opening one closes the other,
-// and #workQueuesGrid itself stays hidden whenever neither is open.
+// Switching between/closing the merged work-queue panel's tabs (Part 5 of
+// the queue restructure -- the panel is display:none by default; the only
+// entry point is index.html's single "Work Queue" More-menu item linking
+// here with ?open_queue=work (see initWorkQueuesFromUrl()), and the only
+// way back is this same close control, since this page no longer has its
+// own trigger to reopen it. Exactly one tab's panel is ever visible at a
+// time -- switching tabs never reloads the page, it just toggles which
+// queue's already-fetched (or freshly-fetched) list is shown, and re-uses
+// whatever that queue last had loaded so flipping back and forth doesn't
+// re-fetch every time. Clicking a car inside either tab still navigates
+// away exactly as before (buildHref()) -- this is purely a display/tab
+// mechanic layered on top.
 // ============================================================
 
-function openQueuePanel(queueKey) {
+function switchQueueTab(queueKey) {
     const queue = workQueues[queueKey];
     const grid = document.getElementById("workQueuesGrid");
     if (!isAdmin || !queue || !grid) {
@@ -1378,33 +1472,50 @@ function openQueuePanel(queueKey) {
         if (panel) {
             panel.style.display = key === queueKey ? "" : "none";
         }
+        const tabBtn = document.getElementById(`queueTabBtn-${key}`);
+        if (tabBtn) {
+            const isActive = key === queueKey;
+            tabBtn.classList.toggle("active", isActive);
+            tabBtn.setAttribute("aria-selected", isActive ? "true" : "false");
+        }
     });
 
     grid.style.display = "";
-    grid.classList.add("single-queue");
 
     if (!queue.loaded) {
         loadWorkQueue(queueKey);
     }
 }
 
-function closeQueuePanel(queueKey) {
-    const queue = workQueues[queueKey];
+function closeQueuePanel() {
     const grid = document.getElementById("workQueuesGrid");
-    const panel = queue && document.getElementById(queue.panelId);
-    if (panel) {
-        panel.style.display = "none";
-    }
     if (grid) {
         grid.style.display = "none";
-        grid.classList.remove("single-queue");
     }
 }
 
+// Arriving via the merged "Work Queue" menu entry (?open_queue=work) names
+// no specific tab, so this loads both queues and defaults to whichever has
+// more real outstanding cars -- the one an admin would actually want to
+// see first. Ties (including both empty) default to Needs Category, since
+// it's the first tab and, in practice, category tagging tends to be the
+// faster of the two jobs to clear, so it's the more natural "start here".
+async function openWorkQueuePanelWithDefaultTab() {
+    const grid = document.getElementById("workQueuesGrid");
+    if (grid) {
+        grid.style.display = "";
+    }
+    await Promise.all(Object.keys(workQueues).map(key => loadWorkQueue(key)));
+    const defaultKey = workQueues.needsImageMatching.cars.length > workQueues.needsCategory.cars.length
+        ? "needsImageMatching"
+        : "needsCategory";
+    switchQueueTab(defaultKey);
+}
+
 // One-shot, same pattern as index.html's manage_categories param: read
-// ?open_queue=, open the matching panel if the value is recognized, then
+// ?open_queue=, open the matching tab if the value is recognized, then
 // strip the param so refreshing/bookmarking this URL later doesn't keep
-// forcing a queue open every visit.
+// forcing the panel open every visit.
 function initWorkQueuesFromUrl() {
     const url = new URL(window.location.href);
     const requested = url.searchParams.get("open_queue");
@@ -1413,12 +1524,15 @@ function initWorkQueuesFromUrl() {
         history.replaceState(null, "", url.toString());
     }
 
-    if (!isAdmin || !requested) {
+    if (!isAdmin || !requested || !(requested in OPEN_QUEUE_PARAM_MAP)) {
         return;
     }
+
     const queueKey = OPEN_QUEUE_PARAM_MAP[requested];
     if (queueKey) {
-        openQueuePanel(queueKey);
+        switchQueueTab(queueKey);
+    } else {
+        openWorkQueuePanelWithDefaultTab();
     }
 }
 
@@ -1641,6 +1755,18 @@ function updateProgress(stats) {
     document.getElementById("totalCount").textContent = stats.total_images;
     document.getElementById("remainingCount").textContent = stats.unmapped_images;
     document.getElementById("percentComplete").textContent = `${stats.percent_complete}%`;
+}
+
+// Mirrors updateProgress() above but for the category-completion card
+// (Part 4 of the queue restructure) -- called with the category_stats a
+// confirm-match/upload-image response includes whenever it actually
+// changed a category (see _apply_confirm_category_update() in app.py).
+function updateCategoryStats(stats) {
+    if (!stats) return;
+    document.getElementById("categorizedCount").textContent = stats.categorized_items;
+    document.getElementById("categoryTotalCount").textContent = stats.total_items;
+    document.getElementById("categoryRemainingCount").textContent = stats.remaining_items;
+    document.getElementById("categoryPercentComplete").textContent = `${stats.percent_complete}%`;
 }
 
 function getPlaceholderImage() {
@@ -2083,6 +2209,13 @@ async function confirmImageUpload() {
         formData.append("file", file);
         formData.append("car_folder", carFolder);
         formData.append("stock_item", stockItem);
+        // Same picker/defaulting as Confirm Match (see submitMapping()) --
+        // untouched means "round-trip the item's existing category", not
+        // "clear it".
+        const uploadCategorySelect = document.getElementById("uploadCategorySelect");
+        if (uploadCategorySelect) {
+            formData.append("category", uploadCategorySelect.value);
+        }
 
         const response = await fetch("/admin/upload_image", {
             method: "POST",
@@ -2096,8 +2229,15 @@ async function confirmImageUpload() {
         closeUploadModal();
         resetUploadSelection();
 
-        showNotice("success", `Image uploaded and matched to "${stockItem}" in folder "${result.car_folder}".`);
+        if (result.category_update && result.category_update.error) {
+            showNotice("error", `Image uploaded and matched to "${stockItem}", but the category was not saved: ${result.category_update.error}`);
+        } else {
+            showNotice("success", `Image uploaded and matched to "${stockItem}" in folder "${result.car_folder}".`);
+        }
         updateProgress(result.stats || null);
+        if (result.category_stats) {
+            updateCategoryStats(result.category_stats);
+        }
         await loadCurrentMatchPreview(stockItem);
         refreshQueueFolderOptions();
         await loadExistingFoldersList();
@@ -2362,16 +2502,29 @@ async function submitMapping(stockItemName, confidence, confirmedBy) {
         return;
     }
 
+    // matchCategorySelect only exists in the is_admin block, which is also
+    // the only place submitMapping() is ever reached from (guarded above) --
+    // its value is the picker's current selection, defaulted by
+    // loadCurrentMatchPreview()/setMatchCategoryPickers() to the item's
+    // existing category, so leaving it untouched round-trips the same value
+    // and _apply_confirm_category_update() on the backend treats that as a
+    // no-op (see PART 1 of the category-picker round).
+    const categorySelect = document.getElementById("matchCategorySelect");
+    const requestBody = {
+        image_id: currentImage.id,
+        stock_item_name: stockItemName || "",
+        confidence: confidence,
+        confirmed_by: confirmedBy,
+        car_model: document.getElementById("carModelFilter").value || currentImage.car_folder || ""
+    };
+    if (categorySelect) {
+        requestBody.category = categorySelect.value;
+    }
+
     const response = await fetch("/confirm_mapping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            image_id: currentImage.id,
-            stock_item_name: stockItemName || "",
-            confidence: confidence,
-            confirmed_by: confirmedBy,
-            car_model: document.getElementById("carModelFilter").value || currentImage.car_folder || ""
-        })
+        body: JSON.stringify(requestBody)
     });
 
     const payload = await response.json();
@@ -2380,7 +2533,19 @@ async function submitMapping(stockItemName, confidence, confirmedBy) {
     }
 
     updateProgress(payload.stats || null);
-    showNotice("success", "Match saved.");
+    if (payload.category_stats) {
+        updateCategoryStats(payload.category_stats);
+    }
+    if (payload.category_update && payload.category_update.error) {
+        showNotice("error", `Match saved, but the category was not saved: ${payload.category_update.error}`);
+    } else {
+        showNotice("success", "Match saved.");
+    }
+
+    // Refresh the preview/picker for the just-confirmed item now, in case
+    // the queue navigation below lands on a different item (or none) --
+    // otherwise a stale category default could linger on screen.
+    await loadCurrentMatchPreview(stockItemName || "");
 
     const queueFolder = document.getElementById("ssCarQueueSelect").value || "";
     const showingFolderQueue = Boolean(queueFolder);
@@ -2403,13 +2568,91 @@ async function submitMapping(stockItemName, confidence, confirmedBy) {
     updateImageView(null);
 }
 
+// ============================================================
+// Category picker in Training Mode's Confirm Match / Upload Image flows --
+// additional entry point alongside the standalone Assign Category / "Manage
+// Categories for [Car]" flow on the main page (both left completely
+// unchanged). Populated live from /api/categories, same as index.html's
+// rebuildCategoryPickerOptions(), and always defaulted to the currently
+// selected stock item's own category (currentItemCategoryValue) so leaving
+// either picker untouched and confirming never changes or clears anything.
+// ============================================================
+
+let LIVE_CATEGORIES = [];
+// The selected stock item's current category ("" means it genuinely has
+// none) -- the single source of truth both pickers are defaulted to,
+// re-applied by rebuildCategoryPickerOptions() too so a categories reload
+// racing with a stock item selection can't leave a picker showing the
+// wrong default.
+let currentItemCategoryValue = "";
+
+async function loadLiveCategories() {
+    try {
+        const res = await fetch("/api/categories");
+        if (res.ok) {
+            const data = await res.json();
+            LIVE_CATEGORIES = Array.isArray(data.categories) ? data.categories : [];
+        }
+    } catch (err) {
+        // Best-effort -- pickers still work with "(No category)" plus
+        // whatever was already loaded.
+    }
+    rebuildCategoryPickerOptions();
+}
+
+function rebuildCategoryPickerOptions() {
+    const knownNames = new Set(LIVE_CATEGORIES.map(category => category.name));
+    let optionsHtml = '<option value="">(No category)</option>' +
+        LIVE_CATEGORIES.map(category => {
+            const safeName = escapeHtml(category.name);
+            return `<option value="${safeName}">${safeName}</option>`;
+        }).join("");
+    // Guards against a stale/deleted category name silently falling back to
+    // "(No category)" in the <select> while still being sent as unchanged --
+    // keeps it selectable (and thus visibly distinct from "(No category)")
+    // until the admin explicitly picks something else.
+    if (currentItemCategoryValue && !knownNames.has(currentItemCategoryValue)) {
+        const safeName = escapeHtml(currentItemCategoryValue);
+        optionsHtml += `<option value="${safeName}">${safeName} (no longer exists)</option>`;
+    }
+
+    ["matchCategorySelect", "uploadCategorySelect"].forEach(id => {
+        const select = document.getElementById(id);
+        if (!select) return;
+        select.innerHTML = optionsHtml;
+        select.value = currentItemCategoryValue;
+    });
+}
+
+// category === null means "no stock item selected" (hides the Confirm
+// Match picker entirely, same gating as currentMatchPreview); "" means the
+// selected item genuinely has no category ("(No category)" default).
+function setMatchCategoryPickers(category) {
+    const matchField = document.getElementById("matchCategoryField");
+    if (category === null) {
+        currentItemCategoryValue = "";
+        if (matchField) {
+            matchField.style.display = "none";
+        }
+        return;
+    }
+
+    currentItemCategoryValue = category || "";
+    if (matchField) {
+        matchField.style.display = "";
+    }
+    rebuildCategoryPickerOptions();
+}
+
 async function loadCurrentMatchPreview(stockItemName) {
     const preview = document.getElementById("currentMatchPreview");
     const img = document.getElementById("currentMatchImg");
     const empty = document.getElementById("currentMatchEmpty");
+    const categoryLabel = document.getElementById("currentMatchCategoryLabel");
 
     if (!stockItemName) {
         preview.style.display = "none";
+        setMatchCategoryPickers(null);
         return;
     }
 
@@ -2425,8 +2668,13 @@ async function loadCurrentMatchPreview(stockItemName) {
             img.style.display = "none";
             empty.style.display = "block";
         }
+        if (categoryLabel) {
+            categoryLabel.textContent = `Category: ${data.category || "(No category)"}`;
+        }
+        setMatchCategoryPickers(data.category || "");
     } catch (err) {
         preview.style.display = "none";
+        setMatchCategoryPickers(null);
     }
 }
 
@@ -2537,6 +2785,7 @@ async function initializePage() {
     updateItemCount(0, "");
     if (isAdmin) {
         loadExistingFoldersList();
+        loadLiveCategories();
     }
     initWorkQueuesFromUrl();
     await loadImageQueue(selectedFolder);

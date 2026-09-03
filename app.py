@@ -422,6 +422,12 @@ DATA_CACHE_LOCK = threading.Lock()
 QUEUE_STATS_CACHE = {"cache_key": None, "by_car": {}}
 _QUEUE_STATS_VERSION = 0
 
+# Cap on how many specific item names the hybrid queue display (Part 3 of
+# the queue restructure) shows per car before falling back to "+N more" --
+# keeps each car's queue row scannable instead of dumping its whole item
+# list inline.
+QUEUE_ITEM_NAME_DISPLAY_CAP = 5
+
 
 def _invalidate_runtime_caches():
     global STOCK_ITEMS_CACHE, MAIN_ROWS_CACHE, STOCK_QTY_CACHE, PRODUCT_CATEGORY_CACHE, HIERARCHY_JSON_CACHE
@@ -653,14 +659,28 @@ def _compute_car_completion_stats():
         image_linked_count = 0
         category_set_count = 0
         fully_done_count = 0
+        # Capped, in-scan-order lists of the actual item names still missing
+        # a category / image -- the hybrid queue display's "specific item
+        # names" (Part 3 of the queue restructure) reads straight off these
+        # instead of a second pass or a separate endpoint. Capped at
+        # collection time (QUEUE_ITEM_NAME_DISPLAY_CAP) since the queue only
+        # ever shows a handful per car; the *count* of remaining items is
+        # still the exact image_linked_count/category_set_count math below,
+        # not len() of these lists.
+        missing_category_items = []
+        missing_image_items = []
         for stock_item_name in stock_names:
             key = _normalize_lookup_key(stock_item_name)
             has_image = bool(mapping_lookup.get(key, {}).get("image_id")) if key else False
             has_category = key in category_lookup if key else False
             if has_image:
                 image_linked_count += 1
+            elif len(missing_image_items) < QUEUE_ITEM_NAME_DISPLAY_CAP:
+                missing_image_items.append(stock_item_name)
             if has_category:
                 category_set_count += 1
+            elif len(missing_category_items) < QUEUE_ITEM_NAME_DISPLAY_CAP:
+                missing_category_items.append(stock_item_name)
             if has_image and has_category:
                 fully_done_count += 1
         by_car[car_model] = {
@@ -669,6 +689,8 @@ def _compute_car_completion_stats():
             "image_linked_count": image_linked_count,
             "category_set_count": category_set_count,
             "fully_done_count": fully_done_count,
+            "missing_category_items": missing_category_items,
+            "missing_image_items": missing_image_items,
         }
 
     with DATA_CACHE_LOCK:
@@ -676,6 +698,25 @@ def _compute_car_completion_stats():
         QUEUE_STATS_CACHE["by_car"] = by_car
 
     return by_car
+
+
+def _compute_category_completion_stats():
+    """Category-completion stat for the Train Matches dashboard (Part 4 of
+    the queue restructure) -- same Linked/Total/Remaining/Complete shape as
+    db.get_mapping_stats(), but for categories instead of images. Sums
+    _compute_car_completion_stats()'s per-car totals (the exact numbers
+    already driving the queue tiers) rather than a separate query, so this
+    can never disagree with what the queues show."""
+    stats_by_car = _compute_car_completion_stats()
+    total_items = sum(stats["total_items"] for stats in stats_by_car.values())
+    categorized_items = sum(stats["category_set_count"] for stats in stats_by_car.values())
+    percent = round((categorized_items / total_items) * 100, 2) if total_items else 0.0
+    return {
+        "total_items": total_items,
+        "categorized_items": categorized_items,
+        "remaining_items": max(total_items - categorized_items, 0),
+        "percent_complete": percent,
+    }
 
 
 def _placeholder_response():
@@ -2298,6 +2339,19 @@ def _sort_queue_bucket(bucket, remaining_key):
     bucket.sort(key=lambda entry: (-entry[remaining_key], entry["car"]))
 
 
+def _queue_item_name_fields(stats, missing_items_key, remaining):
+    """Builds the hybrid display's per-car {"items": [...], "items_more": n}
+    fields (Part 3 of the queue restructure) from the already-capped list
+    _compute_car_completion_stats() collected, plus the exact `remaining`
+    count the caller already computed -- items_more is the gap between the
+    two, never a second count of its own, so it can't drift out of sync."""
+    items = stats.get(missing_items_key) or []
+    return {
+        "items": items,
+        "items_more": max(0, remaining - len(items)),
+    }
+
+
 @app.route("/api/needs_category_queue")
 @admin_required
 def needs_category_queue():
@@ -2317,6 +2371,11 @@ def needs_category_queue():
     Secondary sort within each tier: remaining (uncategorized) item count,
     descending, then car name ascending -- surfaces the biggest tagging
     opportunities first within a tier.
+
+    Each car entry also carries "items" (up to QUEUE_ITEM_NAME_DISPLAY_CAP
+    real stock item names still missing a category) and "items_more" (how
+    many beyond that cap), so the dashboard can show specifics without a
+    click-through (Part 3 of the queue restructure).
     """
     load_error = ensure_data_loaded()
     if load_error:
@@ -2332,13 +2391,15 @@ def needs_category_queue():
 
         image_linked_count = stats["image_linked_count"]
         fully_done_count = stats["fully_done_count"]
+        remaining = total_items - category_set_count
         entry = {
             "car": car_model,
             "total_items": total_items,
             "image_linked_count": image_linked_count,
             "category_set_count": category_set_count,
             "fully_done_count": fully_done_count,
-            "remaining": total_items - category_set_count,
+            "remaining": remaining,
+            **_queue_item_name_fields(stats, "missing_category_items", remaining),
         }
 
         if fully_done_count > 0 and fully_done_count < total_items:
@@ -2366,25 +2427,34 @@ def needs_category_queue():
 @app.route("/api/needs_image_matching_queue")
 @admin_required
 def needs_image_matching_queue():
-    """Prioritized "Needs Image Matching" work queue. Tiers:
+    """Prioritized "Needs Image Matching" work queue. Tiers, in priority
+    order:
 
       Tier 1 "Finish the gaps" -- the same fully_done_count > 0 AND <
         total_items signal as needs_category_queue()'s Tier 1 (shared across
         both queues).
-      Tier 2 -- everything else still missing at least one image, sorted by
-        remaining (unmatched) item count descending. No mirrored "tags done,
-        images missing" tier here by design -- that state is expected to be
-        rare in practice, so it isn't worth a dedicated bucket.
+      Tier 2 "Has category, needs image" (restored) -- every item already
+        has a category (category_set_count == total_items) but the car
+        still has zero fully-done items, i.e. zero images linked either.
+        Previously deprioritized as rare; brought back as its own bucket
+        between "finish the gaps" and the general remaining-items tier.
+      Tier 3 -- everything else still missing at least one image (no
+        category progress either, or some other partial state).
 
     Secondary sort within each tier: remaining (unmatched) item count,
     descending, then car name ascending.
+
+    Each car entry also carries "items" (up to QUEUE_ITEM_NAME_DISPLAY_CAP
+    real stock item names still missing an image) and "items_more" (how
+    many beyond that cap), so the dashboard can show specifics without a
+    click-through (Part 3 of the queue restructure).
     """
     load_error = ensure_data_loaded()
     if load_error:
         return jsonify({"error": load_error}), 500
 
     stats_by_car = _compute_car_completion_stats()
-    tier1, tier2 = [], []
+    tier1, tier2, tier3 = [], [], []
     for car_model, stats in stats_by_car.items():
         total_items = stats["total_items"]
         image_linked_count = stats["image_linked_count"]
@@ -2393,29 +2463,35 @@ def needs_image_matching_queue():
 
         category_set_count = stats["category_set_count"]
         fully_done_count = stats["fully_done_count"]
+        remaining = total_items - image_linked_count
         entry = {
             "car": car_model,
             "total_items": total_items,
             "image_linked_count": image_linked_count,
             "category_set_count": category_set_count,
             "fully_done_count": fully_done_count,
-            "remaining": total_items - image_linked_count,
+            "remaining": remaining,
+            **_queue_item_name_fields(stats, "missing_image_items", remaining),
         }
 
         if fully_done_count > 0 and fully_done_count < total_items:
             entry["tier"] = 1
             entry["tier_label"] = "Finish the gaps"
             tier1.append(entry)
-        else:
+        elif category_set_count >= total_items:
             entry["tier"] = 2
-            entry["tier_label"] = "Needs image matching"
+            entry["tier_label"] = "Has category, needs image"
             tier2.append(entry)
+        else:
+            entry["tier"] = 3
+            entry["tier_label"] = "Needs image matching"
+            tier3.append(entry)
 
-    for bucket in (tier1, tier2):
+    for bucket in (tier1, tier2, tier3):
         _sort_queue_bucket(bucket, "remaining")
 
     return jsonify({
-        "cars": tier1 + tier2,
+        "cars": tier1 + tier2 + tier3,
         "secondary_sort": "remaining (unmatched) item count, descending, then car name ascending",
     })
 
@@ -2608,6 +2684,7 @@ def train():
         target_car=car,
         ss_image_folders=db.get_image_folders(),
         mapping_stats=db.get_mapping_stats(),
+        category_stats=_compute_category_completion_stats(),
         selected_role=_current_role(),
         max_image_size=Config.MAX_IMAGE_SIZE,
         allowed_image_extensions=sorted(Config.ALLOWED_IMAGE_EXTENSIONS),
@@ -3115,6 +3192,48 @@ def _confirm_mapping_core(image_id, stock_item_name, car_model="", confidence=1.
     }
 
 
+def _apply_confirm_category_update(stock_item_name, category_raw):
+    """Optional category set/clear alongside a confirm-match/upload-image
+    save (Training Mode's category picker, additive to the standalone
+    Assign Category flow). Reuses upsert_design_category()/
+    db.remove_design_category() for all validation and writes -- this only
+    decides whether a write is even needed and reuses the same badge-
+    regen/queue-cache-invalidation triggers assign_category() already uses.
+
+    Returns None if nothing needed doing: category_raw is None (field
+    omitted from the request -- keeps old callers like bulk_confirm_mapping
+    byte-for-byte unchanged) or it already matches the item's current
+    category (skips the write entirely so assigned_at/assigned_by aren't
+    bumped for a no-op, which upsert_design_category would otherwise do).
+    Otherwise returns {"changed": bool, "category": str|None, "error": str|None}
+    describing the outcome, so the caller can report partial success if the
+    mapping saved but this failed.
+    """
+    if category_raw is None:
+        return None
+
+    category = str(category_raw).strip()
+    current_category = db.get_category_for_stock_item(stock_item_name)
+    if category == (current_category or ""):
+        return None
+
+    admin_user_id = _current_user_id()
+    try:
+        if category:
+            db.upsert_design_category(stock_item_name, category, admin_user_id)
+        else:
+            db.remove_design_category(stock_item_name)
+    except ValueError as exc:
+        return {"changed": False, "category": current_category, "error": str(exc)}
+    except Exception:
+        logger.exception("Category update failed for stock_item_name=%s", stock_item_name)
+        return {"changed": False, "category": current_category, "error": "failed to save category"}
+
+    _invalidate_queue_stats_cache()
+    _regenerate_badges_for_stock_items([stock_item_name], category_name=category or None)
+    return {"changed": True, "category": category or None, "error": None}
+
+
 @app.route("/confirm_mapping", methods=["POST"])
 @admin_required
 def confirm_mapping():
@@ -3142,12 +3261,31 @@ def confirm_mapping():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 404
 
-    return jsonify({
+    response = {
         "status": "saved",
         "image_id": result["image_id"],
         "next_image": result["next_image"],
         "stats": result["stats"],
-    })
+    }
+
+    # Optional category set/clear in the same request (Training Mode's
+    # category picker) -- "category" only appears in the payload at all when
+    # the picker sent one, so a caller that never mentions it (e.g.
+    # bulk_confirm_mapping's own JSON body) leaves categories untouched,
+    # identical to before this existed.
+    if "category" in payload and stock_item_name not in ("", "__UNMATCHABLE__"):
+        category_update = _apply_confirm_category_update(stock_item_name, payload.get("category"))
+        if category_update is not None:
+            response["category_update"] = category_update
+            if category_update.get("error"):
+                response["status"] = "saved_category_failed"
+            if category_update.get("changed"):
+                # Lets the dashboard's category-completion stat card (Part 4
+                # of the queue restructure) refresh itself in place, the
+                # same way updateProgress() already does for mapping_stats.
+                response["category_stats"] = _compute_category_completion_stats()
+
+    return jsonify(response)
 
 
 def _sanitize_upload_car_folder(raw_name):
@@ -3240,7 +3378,7 @@ def admin_upload_image():
         logger.exception("Failed to confirm mapping for uploaded image")
         return jsonify({"success": False, "error": f"Image saved but failed to confirm match: {exc}"}), 500
 
-    return jsonify({
+    response_payload = {
         "success": True,
         "image_id": image_id,
         "image_url": f"/get_image/{image_id}",
@@ -3248,7 +3386,21 @@ def admin_upload_image():
         "stock_item": stock_item_name,
         "mapped": True,
         "stats": confirm_result.get("stats"),
-    }), 200
+    }
+
+    # Same optional category set/clear as /confirm_mapping (Training Mode's
+    # Upload Image modal gets the identical picker) -- "category" is a
+    # regular multipart form field here rather than JSON.
+    if "category" in request.form:
+        category_update = _apply_confirm_category_update(stock_item_name, request.form.get("category"))
+        if category_update is not None:
+            response_payload["category_update"] = category_update
+            if category_update.get("error"):
+                response_payload["success_partial"] = "category_failed"
+            if category_update.get("changed"):
+                response_payload["category_stats"] = _compute_category_completion_stats()
+
+    return jsonify(response_payload), 200
 
 
 def _resolve_stored_image_path(stored_path):
@@ -3740,11 +3892,16 @@ def get_share_image_badged(image_id):
 def get_current_mapping_image():
     stock_item_name = request.args.get("stock_item", "")
     if not stock_item_name:
-        return jsonify({"has_mapping": False, "image_id": None, "image_url": None, "confidence": None})
+        return jsonify({"has_mapping": False, "image_id": None, "image_url": None, "confidence": None, "category": None})
+
+    # category is looked up regardless of has_mapping -- Training Mode's
+    # category picker (and the current-match preview's category label) need
+    # to know the item's category even when it has no image yet.
+    category = db.get_category_for_stock_item(stock_item_name)
 
     mapping = db.get_mapping_for_stock_item(stock_item_name)
     if not mapping:
-        return jsonify({"has_mapping": False, "image_id": None, "image_url": None, "confidence": None})
+        return jsonify({"has_mapping": False, "image_id": None, "image_url": None, "confidence": None, "category": category})
 
     image_id = mapping.get("image_id")
     return jsonify({
@@ -3752,6 +3909,7 @@ def get_current_mapping_image():
         "image_id": image_id,
         "image_url": f"/get_image/{image_id}",
         "confidence": mapping.get("confidence"),
+        "category": category,
     })
 
 

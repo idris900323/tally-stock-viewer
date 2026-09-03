@@ -1192,6 +1192,24 @@ def get_category_for_stock_item(stock_item_name):
     return row["category"] if row else None
 
 
+def remove_design_category(stock_item_name):
+    """Clears a single stock item's category assignment -- the explicit
+    "(No category)" clear action in Training Mode's confirm-match category
+    picker. Distinct from delete_category() above, which removes every
+    item's assignment for an entire category name at once; this only ever
+    touches the one item. Returns True if a row was actually removed."""
+    key = normalize_lookup_key(stock_item_name)
+    if not key:
+        return False
+    try:
+        with _connect() as conn:
+            cursor = conn.execute("DELETE FROM design_categories WHERE stock_item_key = ?", (key,))
+        return cursor.rowcount > 0
+    except Exception:
+        logger.exception("remove_design_category failed for stock_item_name=%s", stock_item_name)
+        raise
+
+
 def get_categories_for_stock_items(stock_item_names):
     """Batched form of get_category_for_stock_item() -- same shape/spirit as
     get_mappings_for_stock_items() above. Returns {normalized_key: category}."""
