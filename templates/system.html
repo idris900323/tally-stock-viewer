@@ -374,6 +374,16 @@
     </div>
 
     <div class="panel">
+        <h2>Badge Cache <span class="badge muted" id="badgeCacheBadge"></span></h2>
+        <p class="muted">Lists every file in the real share_cache/ folder on this machine (filename, size, real modified time) so a stale cached badge can be confirmed by mtime instead of guesswork. Badged files (<code>*_badge_*.jpg</code>) carry the badge-drawing code's own version number in their filename (see BADGE_FORMAT_VERSION in app.py) -- any future change to how badges are drawn bumps that constant, which makes every existing badge file miss its cache key and regenerate fresh automatically, with no manual clearing needed. "Clear Badge Cache" below is the on-demand manual option for right now.</p>
+        <div class="actions">
+            <button class="secondary" onclick="checkBadgeCache()" title="List every file currently in the real share_cache/ folder (read-only)">Check Badge Cache Files</button>
+            <button class="secondary" onclick="clearBadgeCache()" title="Deletes every cached badge file (*_badge_*.jpg) so the next share of each regenerates fresh. Plain (non-badged) share cache is left alone.">Clear Badge Cache</button>
+        </div>
+        <div id="badgeCacheResults" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel">
         <h2>Tally &amp; Environment <span class="badge muted" id="tallyBadge"></span></h2>
         <div class="actions" style="margin-bottom:12px;">
             <button class="secondary" onclick="refreshEnvironment()" title="Re-check Tally reachability, config, disk usage, and uptime">Refresh</button>
@@ -605,6 +615,75 @@ async function checkDuplicateImages() {
             `;
             results.appendChild(el);
         });
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        results.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+    }
+}
+
+function formatFileSize(bytes) {
+    if (bytes >= 1024 * 1024) {
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+    if (bytes >= 1024) {
+        return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+    return `${bytes} B`;
+}
+
+async function checkBadgeCache() {
+    const badge = document.getElementById("badgeCacheBadge");
+    const results = document.getElementById("badgeCacheResults");
+    badge.textContent = "Scanning...";
+    badge.className = "badge muted";
+    results.innerHTML = "";
+
+    try {
+        const data = await fetchJson("/admin/system/share_cache_files");
+        if (!data.file_count) {
+            setBadge(badge, "Empty", "ok");
+            results.innerHTML = `<p class="muted">${escapeHtml(data.cache_dir)} is empty.</p>`;
+            return;
+        }
+
+        setBadge(badge, `${data.file_count} file(s), ${data.badge_file_count} badge`, data.badge_file_count ? "warn" : "ok");
+        const dirNote = document.createElement("p");
+        dirNote.className = "muted";
+        dirNote.textContent = data.cache_dir;
+        results.appendChild(dirNote);
+
+        data.files.forEach(file => {
+            const el = document.createElement("div");
+            el.className = "dup-group";
+            el.innerHTML = `
+                <div class="dup-head">${file.is_badge ? "🏷️ " : ""}${escapeHtml(file.filename)}</div>
+                <div class="dup-row">${escapeHtml(file.modified_at)} — ${formatFileSize(file.size_bytes)}</div>
+            `;
+            results.appendChild(el);
+        });
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        results.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+    }
+}
+
+async function clearBadgeCache() {
+    if (!confirm("Delete every cached badge file (*_badge_*.jpg)? Each one regenerates fresh, with the full category name, the next time its image is shared. Plain (non-badged) share cache is left alone.")) {
+        return;
+    }
+
+    const badge = document.getElementById("badgeCacheBadge");
+    const results = document.getElementById("badgeCacheResults");
+    badge.textContent = "Clearing...";
+    badge.className = "badge muted";
+
+    try {
+        const data = await fetchJson("/admin/system/clear_badge_cache", { method: "POST" });
+        setBadge(badge, `Cleared ${data.cleared_count}`, "ok");
+        results.innerHTML = data.cleared_count
+            ? `<p class="muted">Removed ${data.cleared_count} badge file(s):</p>` +
+              data.cleared_files.map(name => `<div class="dup-row">${escapeHtml(name)}</div>`).join("")
+            : `<p class="muted">No badge files were present to clear.</p>`;
     } catch (error) {
         setBadge(badge, "Error", "bad");
         results.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;

@@ -3567,6 +3567,27 @@ _BADGE_MAX_BANNER_WIDTH_FRACTION = 0.35
 _BADGE_PAD_X_RATIO = 0.6
 _BADGE_PAD_Y_RATIO = 0.4
 
+# Baked into the cache filename (see _badged_share_cache_path()) so the
+# badge-DRAWING code has its own version, independent of the source photo's
+# mtime -- _ensure_badged_share_cached()'s staleness check only ever knew
+# how to notice the photo changing, never the drawing logic itself, which
+# is exactly how a fully-correct code fix (the categories.abbreviation ->
+# .name fix, commit 6cb872e) still kept serving old-format cached badges
+# indefinitely: same cache key, so the "fixed" code never got a chance to
+# run for any image that already had a cached file. Bumping this constant
+# changes every cache key at once, which makes _ensure_badged_share_cached()
+# treat every existing file as missing (not "stale" -- an outright cache
+# miss) and rebuild fresh the next time each one is requested, with zero
+# manual sweep required. Starts at 2, not 1: every badge cached before this
+# constant existed has no version segment in its filename at all, so it can
+# never collide with a real version number -- that gap makes "1" already
+# implicitly spoken for, and 2 the first value that's actually new.
+#
+# BUMP THIS whenever _draw_category_badge()'s visual output changes in any
+# way an existing cached file wouldn't reflect: the text burned in, font,
+# sizing/shrink behavior, padding, banner color/opacity, or position.
+BADGE_FORMAT_VERSION = 2
+
 
 def _draw_category_badge(image, category_text):
     """Draws a small semi-transparent banner in the bottom-left corner of
@@ -3650,15 +3671,17 @@ def _category_slug(category):
 
 
 def _badged_share_cache_path(image_id, category):
-    return os.path.join(SHARE_IMAGE_CACHE_DIR, f"{image_id}_badge_{_category_slug(category)}.jpg")
+    return os.path.join(SHARE_IMAGE_CACHE_DIR, f"{image_id}_badge_v{BADGE_FORMAT_VERSION}_{_category_slug(category)}.jpg")
 
 
 def _cleanup_stale_badge_variants(image_id, current_category):
     """Removes any previously-cached badge variant(s) for image_id whose
-    filename doesn't match the current category -- the category is part of
-    the cache filename (see _badged_share_cache_path()), so a re-tag alone
-    would otherwise leave the old category's file behind as permanent,
-    never-served disk clutter."""
+    filename doesn't match the current category AND/OR the current
+    BADGE_FORMAT_VERSION -- both are part of the cache filename (see
+    _badged_share_cache_path()), so a re-tag alone, or a future bump of
+    BADGE_FORMAT_VERSION, would otherwise leave the old file behind as
+    permanent, never-served disk clutter. The glob below matches on
+    image_id alone (not category or version), so it catches both cases."""
     current_path = _badged_share_cache_path(image_id, current_category)
     pattern = os.path.join(SHARE_IMAGE_CACHE_DIR, f"{image_id}_badge_*.jpg")
     for stale_path in glob.glob(pattern):
@@ -3884,8 +3907,25 @@ def get_share_image_badged(image_id):
         cache_path = None
 
     if cache_path:
-        return send_file(cache_path, conditional=True, mimetype="image/jpeg")
-    return get_share_image(image_id)
+        response = send_file(cache_path, conditional=True, mimetype="image/jpeg")
+    else:
+        response = get_share_image(image_id)
+
+    # Cloudflare's edge is a second, independent place stale badge content
+    # can be served from, entirely apart from BADGE_FORMAT_VERSION's on-disk
+    # cache-key invalidation above -- this URL is fixed by image_id alone,
+    # with nothing in the path/query that changes when the category or
+    # BADGE_FORMAT_VERSION does, so absent an explicit Cache-Control the
+    # edge (and any client) is free to cache this response and keep
+    # replaying it long after the origin would now generate something
+    # different. no-cache (not no-store) still lets the bytes be cached,
+    # but forces a conditional revalidation against ETag/Last-Modified
+    # (already set by conditional=True above) before ever reusing them --
+    # since _ensure_badged_share_cached() always writes a fresh file (new
+    # mtime) whenever it regenerates, a genuinely stale cached response can
+    # never survive a real revalidation.
+    response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
 
 
 @app.route("/get_current_mapping_image")
@@ -4341,6 +4381,77 @@ def system_find_duplicate_images():
         "groups": groups,
         "group_count": len(groups),
         "total_extra_rows": total_extra_rows,
+    })
+
+
+def _list_share_cache_files():
+    """Every file currently in the real share_cache/ directory, newest
+    first -- both plain and badged variants (is_badge distinguishes them),
+    so an admin can see exactly what the production machine actually has
+    on disk (Step 1 of the stale-badge-cache investigation) without shell/
+    RDP access, since the System panel is the only real access path in."""
+    if not os.path.isdir(SHARE_IMAGE_CACHE_DIR):
+        return []
+    files = []
+    for filename in os.listdir(SHARE_IMAGE_CACHE_DIR):
+        full_path = os.path.join(SHARE_IMAGE_CACHE_DIR, filename)
+        if not os.path.isfile(full_path):
+            continue
+        stat_result = os.stat(full_path)
+        files.append({
+            "filename": filename,
+            "is_badge": "_badge_" in filename,
+            "size_bytes": stat_result.st_size,
+            "modified_at": datetime.fromtimestamp(stat_result.st_mtime).isoformat(timespec="seconds"),
+        })
+    files.sort(key=lambda entry: entry["modified_at"], reverse=True)
+    return files
+
+
+@app.route("/admin/system/share_cache_files")
+@admin_required
+@system_device_required
+def system_share_cache_files():
+    """Read-only diagnostic listing (Step 1 of the stale-badge-cache
+    investigation) -- filename, size, and real mtime for every file in the
+    production share_cache/ directory, so mtimes can be compared against a
+    known fix's deploy time to confirm whether a cached badge predates it."""
+    files = _list_share_cache_files()
+    badge_files = [entry for entry in files if entry["is_badge"]]
+    return jsonify({
+        "cache_dir": SHARE_IMAGE_CACHE_DIR,
+        "files": files,
+        "file_count": len(files),
+        "badge_file_count": len(badge_files),
+    })
+
+
+@app.route("/admin/system/clear_badge_cache", methods=["POST"])
+@admin_required
+@system_device_required
+def system_clear_badge_cache():
+    """Deletes every cached badge file (*_badge_*.jpg) from the real
+    share_cache/ directory -- the on-demand manual escape hatch (Step 3 of
+    the stale-badge-cache investigation) alongside BADGE_FORMAT_VERSION's
+    automatic invalidation, for whenever a full sweep needs doing without a
+    developer involved. Leaves the plain (non-badged) share cache alone --
+    those aren't affected by a badge-drawing change."""
+    pattern = os.path.join(SHARE_IMAGE_CACHE_DIR, "*_badge_*.jpg")
+    cleared_files = []
+    for path in glob.glob(pattern):
+        try:
+            os.remove(path)
+            cleared_files.append(os.path.basename(path))
+        except OSError:
+            logger.exception("Failed to remove badge cache file %s", path)
+
+    logger.info(
+        "Badge cache cleared by user_id=%s: %d file(s) removed",
+        _current_user_id(), len(cleared_files),
+    )
+    return jsonify({
+        "cleared_count": len(cleared_files),
+        "cleared_files": cleared_files,
     })
 
 
