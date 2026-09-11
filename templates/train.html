@@ -1000,7 +1000,7 @@
 
     <div class="topbar">
         <div class="topbar-left">
-            <a href="/" class="link-button" title="Return to the main stock viewer page">Home</a>
+            <a href="/" class="link-button" title="Return to the main stock viewer page" onclick="clearPendingReturnToHomeCar()">Home</a>
             {% if is_admin %}
             <div class="button-group">
                 <button id="rescanImagesBtn" class="rescan-btn" onclick="rescanImages()" title="Scan the S.S IMAGE folder for new images or car folders that haven't been added yet">
@@ -1010,7 +1010,7 @@
                 <button id="uploadImageBtn" class="rescan-btn" onclick="handleUploadImageClick()" title="Upload a new photo and match it to the selected stock item">
                     Upload Image
                 </button>
-                <a href="/bulk_match" class="link-button rescan-btn" title="Match one image against many stock items at once — for items like floor mats and curtains where the same photo applies to hundreds of car variants">
+                <a href="/bulk_match" class="link-button rescan-btn" title="Match one image against many stock items at once — for items like floor mats and curtains where the same photo applies to hundreds of car variants" onclick="clearPendingReturnToHomeCar()">
                     Bulk Match
                 </a>
             </div>
@@ -1018,7 +1018,7 @@
         </div>
         <div class="topbar-right">
             <span class="role-indicator">{{ current_role|default('viewer')|title }} mode</span>
-            <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
+            <a href="/logout" class="link-button" title="Sign out of your account" onclick="clearPendingReturnToHomeCar()">Logout</a>
         </div>
     </div>
 
@@ -1240,6 +1240,38 @@
 const initialImage = {{ initial_image | tojson }};
 const targetStockItem = {{ target_stock_item | tojson }};
 const targetCar = {{ target_car | tojson }};
+
+// Marks a visit that began from index.html's "Add Image" link (see its
+// addImageUrl) rather than a normal, direct visit to Training Mode --
+// explicit rather than inferred from car+stock_item alone, since other deep
+// links (e.g. the Needs Image Matching work queue) reuse those same two
+// params without wanting this behavior. sessionStorage (not localStorage)
+// so it only ever applies to this tab's current visit, never lingering into
+// an unrelated future session. One-shot: the query param is stripped as
+// soon as it's read, same pattern as MANAGE_CATEGORIES_QUERY_PARAM/
+// open_queue on index.html/this page.
+const RETURN_TO_HOME_CAR_KEY = "returnToHomeCar";
+
+function maybeStoreReturnToHomeCarFromUrl() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("from_add_image") !== "1") {
+        return;
+    }
+    url.searchParams.delete("from_add_image");
+    history.replaceState(null, "", url.toString());
+
+    if (targetCar) {
+        sessionStorage.setItem(RETURN_TO_HOME_CAR_KEY, targetCar);
+    }
+}
+
+// Clears a pending return-to-home flag when the admin leaves Training Mode
+// via one of its own nav links without having confirmed anything -- without
+// this, the flag would survive and could fire a surprise redirect much
+// later if they come back to Training Mode directly for an unrelated visit.
+function clearPendingReturnToHomeCar() {
+    sessionStorage.removeItem(RETURN_TO_HOME_CAR_KEY);
+}
 const ssImageFolders = {{ ss_image_folders | tojson }};
 const isAdmin = {{ is_admin|tojson }};
 const MAX_UPLOAD_SIZE = {{ max_image_size|tojson }};
@@ -2542,6 +2574,21 @@ async function submitMapping(stockItemName, confidence, confirmedBy) {
         showNotice("success", "Match saved.");
     }
 
+    // Visit started from index.html's "Add Image" link (see
+    // maybeStoreReturnToHomeCarFromUrl()) -- the first successful confirm
+    // during that visit sends the admin back to the original car's design
+    // list, regardless of which stock item was just confirmed. One-shot:
+    // removed from sessionStorage immediately so it can't fire again later
+    // in this same visit. Reuses index.html's own ?car= pre-selection (the
+    // same code path restoreCarFromUrl() already uses for a manual pick)
+    // rather than a separate mechanism.
+    const returnToHomeCar = sessionStorage.getItem(RETURN_TO_HOME_CAR_KEY);
+    if (returnToHomeCar) {
+        sessionStorage.removeItem(RETURN_TO_HOME_CAR_KEY);
+        window.location.href = `/?car=${encodeURIComponent(returnToHomeCar)}`;
+        return;
+    }
+
     // Refresh the preview/picker for the just-confirmed item now, in case
     // the queue navigation below lands on a different item (or none) --
     // otherwise a stale category default could linger on screen.
@@ -2778,6 +2825,7 @@ async function loadImageQueue(folderName = "") {
 }
 
 async function initializePage() {
+    maybeStoreReturnToHomeCarFromUrl();
     const initialFolder = initialImage && initialImage.car_folder ? initialImage.car_folder : "";
     const selectedFolder = populateQueueFolders(initialFolder);
     initializeCarFilter();
