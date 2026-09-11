@@ -127,7 +127,7 @@ TALLY_TIMEOUT = max(120, int(app.config["TALLY_TIMEOUT"]))
 TALLY_RETRY_ATTEMPTS = app.config["TALLY_RETRY_ATTEMPTS"]
 MAX_RETRY_ATTEMPTS = 3
 VALID_ROLES = {"admin", "customer"}
-PUBLIC_ENDPOINTS = {"login", "logout", "static", "full_refresh_status_route"}
+PUBLIC_ENDPOINTS = {"login", "logout", "static", "full_refresh_status_route", "robots_txt"}
 
 db.init_database()
 
@@ -309,11 +309,26 @@ def require_login():
         return jsonify({"error": "login required"}), 401
 
 
+@app.route("/robots.txt")
+def robots_txt():
+    # This is a private customer/admin catalog, not a public marketing site --
+    # keep it out of search engines regardless of what domain fronts it.
+    return "User-agent: *\nDisallow: /\n", 200, {"Content-Type": "text/plain"}
+
+
 @app.after_request
 def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    if Config.SESSION_COOKIE_SECURE:
+        # Only sent once the deployment has told us it's actually served over
+        # HTTPS (SESSION_COOKIE_SECURE=1) -- forcing it earlier would break a
+        # plain-http local/office setup.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
