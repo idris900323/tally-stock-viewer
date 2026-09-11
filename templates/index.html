@@ -4383,7 +4383,12 @@ function renderDesignItem(item, index) {
     const mapped = Boolean(item.mapped);
     const thumbnailUrl = item.thumbnail_url || `/get_stock_image?stock_item=${encodeURIComponent(stockItem)}`;
     const currentCar = document.getElementById("carSelect").value || "";
-    const addImageUrl = `/train?car=${encodeURIComponent(currentCar)}&stock_item=${encodeURIComponent(stockItem)}`;
+    // from_add_image=1 is an explicit marker consumed by train.html's
+    // maybeStoreReturnToHomeCarFromUrl() -- deliberately not inferred from
+    // car+stock_item alone, since other deep links (e.g. the Needs Image
+    // Matching work queue) reuse those same two params without wanting the
+    // "return to home on confirm" behavior.
+    const addImageUrl = `/train?car=${encodeURIComponent(currentCar)}&stock_item=${encodeURIComponent(stockItem)}&from_add_image=1`;
     const confidence = typeof item.confidence === "number" ? Math.round(item.confidence * 100) : 0;
     const escapedTitle = escapeHtml(stockItem);
     const safeThumbnail = escapeHtml(thumbnailUrl);
