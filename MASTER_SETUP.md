@@ -197,10 +197,12 @@ If the data stays stale for a full 15 minutes (not just a brief blip), a clear b
 
 This saves image-to-stock mappings into `mappings.db`. Each stock item can only be linked to one image at a time — confirming a new image against a stock item that already has one automatically replaces the old link.
 
-If you have a photo that isn't in the `S.S IMAGE` folder yet, use `Upload Image` on the `Train Matches` page instead of copying it in manually and rescanning: pick the matching stock item first, click `Upload Image`, choose the file, confirm the car folder, and it is saved and matched in one step.
+A `Category` dropdown sits right next to `Confirm Match` (and inside the `Upload Image` box). It defaults to whatever category the stock item already has, so leaving it alone never changes anything — but if you want to, you can set, change, or clear (`(No category)`) the item's material-tier category in the very same click that confirms its photo, instead of a separate trip to `Assign Category` afterward.
+
+If you have a photo that isn't in the `S.S IMAGE` folder yet, use `Upload Image` on the `Train Matches` page instead of copying it in manually and rescanning: pick the matching stock item first, click `Upload Image`, choose the file, confirm the car folder, optionally set its category, and it is saved and matched in one step.
 
 Two shortcuts that save time:
-- On the main stock page, every design card has an `Add Image` button. Clicking it opens Training Mode with that car and stock item already selected — no re-searching.
+- On the main stock page, every design card has an `Add Image` button. Clicking it opens Training Mode with that car and stock item already selected — no re-searching. The first successful `Confirm Match` after arriving this way sends you straight back to that car's design list on the main page, rather than leaving you in Training Mode waiting on the next image.
 - For products where ONE photo applies to many stock items (floor mats, curtains, and similar items that repeat across hundreds of car variants), use the `Bulk Match` button on the `Train Matches` page. Pick the shared photo, find the stock items by search or by product category (e.g. "7D MAT / BLACK"), tick all that apply, and confirm them in one go instead of one at a time.
 
 ### Assign material-tier categories to designs
@@ -216,13 +218,25 @@ Each design can be tagged with a material tier — Pearl, Pearl Designer, Pearl 
 
 Hovering a categorized thumbnail's label, or opening the full-size image, shows the full category name — the on-thumbnail label itself is abbreviated to keep it compact.
 
+### Edit the category list itself
+
+The seven categories above are the starting point, not a fixed list — click `More` → `Category Settings` to add a new category, rename or delete an existing one, or fix an awkward auto-generated abbreviation:
+- **Add** — type a name and it's appended to the end of the list; an abbreviation is generated automatically
+- **Rename** — updates every design already tagged with the old name to the new one. If the new name collides with a different category that already exists, you're offered a **Merge** instead (moves every item from one into the other, then removes the emptied-out category)
+- **Delete** — removes the category and un-tags every design that had it (they go back to uncategorized); you're shown how many designs would be affected before confirming
+- Reordering the list and overriding an auto-generated abbreviation are done from the System panel (`/admin/system`) rather than this everyday modal
+
+Changing a category's name or abbreviation can trigger re-generating a batch of shared-image badges in the background (see `Shared images look out of date` in Troubleshooting below) — if more than a handful of images are affected, a small "Updating N of M images..." note appears near the More menu until it finishes. Nothing else waits on it; Share Images keeps working normally the whole time.
+
 ### Find what still needs category or image work
 
-Click `More` on the main page for two extra shortcuts, below a divider under `Full Refresh`/`Manage Accounts`/`System`:
+Click `More` on the main page, then `Work Queue`, below a divider under `Full Refresh`/`Manage Accounts`/`System`/`Category Settings`. This opens `Train Matches` with a work-queue panel showing two tabs:
 - `Needs Category` — every car with at least one design still missing a category, cars closest to fully tagged listed first
 - `Needs Image Matching` — every car with at least one design still missing a photo, cars closest to fully matched listed first
 
-Either one opens `Train Matches` with that list already showing. Click a car in the list to jump straight into the right screen (Assign Category or Training Mode) with that car already selected — no need to search for it again. Click the small `x` on the list to close it once you're done; it stays out of the way otherwise, so `Train Matches` doesn't default to showing it.
+The panel opens on whichever tab has more outstanding work; switch tabs any time without leaving the page. Each car row also previews a few of the actual item names still outstanding (with a "+N more" if there are more than fit), so you can often tell what's left without clicking in. Click a car to jump straight into the right screen (Assign Category or Training Mode) with that car already selected — no need to search for it again. Click the small `x` on the panel to close it once you're done; it stays out of the way otherwise, so `Train Matches` doesn't default to showing it.
+
+The `Train Matches` page also shows a `Categorized / Total Items / Remaining / Complete` summary alongside the existing image-matching summary, so you can see overall categorization progress at a glance.
 
 ### Manage customer accounts
 
@@ -315,6 +329,13 @@ Check:
 
 Click `Rescan Images` — it also checks for images whose file no longer exists on disk and offers to remove those database rows (see section 8). If the prompt warns that an unusually large share of images look missing instead of offering the normal Remove option, check that the `S.S IMAGE` folder/drive is actually connected before doing anything else — that warning almost always means the folder was unreachable during the scan, not that the photos were really deleted.
 
+### Shared images look out of date
+
+If a shared image's category badge (the small banner burned into the corner) still shows an old category name, or looks wrong after a category was renamed:
+1. Try `Rescan Images` / reload the page first — most of the time a fresh share request already shows the current badge automatically
+2. If it still looks wrong, an admin can open the System panel (`/admin/system`) → `Badge Cache` → `Check Badge Cache Files` to see what's actually cached on the office PC, then `Clear Badge Cache` to force every badge to redraw the next time it's shared. This does not touch or delete the underlying photos — only the small cached share-preview files
+3. If the site is public behind Cloudflare, also give it a minute or two after clearing — the very first request after a clear may still be traveling through an edge cache before it settles on the fresh version
+
 ### Desktop shortcuts are missing
 
 Run `first_time_setup.bat` again as administrator.
@@ -337,7 +358,7 @@ System panel (admin login + paired device required; pairing is a one-time link w
 http://localhost:5000/admin/system
 ```
 
-It shows the running code version, recent logs, disk usage, uptime, Tally status, and the auto-start check, and has buttons to restart the app or pull the latest code — useful before resorting to remote desktop.
+It shows the running code version, recent logs, disk usage, uptime, Tally status, the auto-start check, and a badge-cache file listing, and has buttons to restart the app, pull the latest code, run a live Tally performance test, and clear the badge cache — useful before resorting to remote desktop.
 
 App log:
 

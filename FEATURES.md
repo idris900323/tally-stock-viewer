@@ -28,19 +28,22 @@ customer users - built and run by one person on an office PC.
 - One image per stock item enforced automatically - confirming a new match silently retires the old one (but one image can serve many stock items)
 - Bulk Match screen: confirm one photo against hundreds of stock items at once - find them by text search or by auto-derived product category (type + color, e.g. "7D MAT / BLACK-TAN"), tick, confirm. Built for floor mats and curtains where the same photo applies across car variants
 - Direct photo upload from the training screen (validated for type/size, auto-creates the car folder, auto-confirms the match) - no manual file copying + rescanning required
-- "Add Image" button on every design card jumps to Training Mode with the car and stock item pre-selected
+- A Category picker sits right next to Confirm Match and Upload Image in Training Mode, so an admin can set/change/clear a stock item's material-tier category (see below) at the exact moment they confirm its photo, instead of a separate trip to Assign Category
+- "Add Image" button on every design card jumps to Training Mode with the car and stock item pre-selected - confirming a match on that visit now sends the admin straight back to that car's design list on the main page instead of leaving them in Training Mode's own next-image flow
 - Share Images mode on the main page sends selected images through share-ready endpoints backed by cached derivatives in `data/share_cache/`
 - Auto rescans the image folder on every startup, plus a manual rescan button - rescanning is a true two-way sync: it also detects database rows whose file was deleted from disk and offers to remove them (with an expandable list of the exact files and any linked stock item, and a safety threshold that blocks removal if a suspiciously large share of the catalog looks missing at once - e.g. a disconnected image drive)
 - The image scanner accepts `.jfif` files alongside the other supported image formats
 
 **Material-tier categorization**
-- Every design can be tagged with a material-tier category (Pearl, Pearl Designer, Pearl Deluxe, Saka, Ruby, Napa Deluxe, Napa Designer) through a continuous "Manage Categories" session on the main page - pick a category, tick items, apply; the batch saves immediately and the session stays open for the next batch until you click Done
+- Every design can be tagged with a material-tier category (Pearl, Pearl Designer, Pearl Deluxe, Saka, Ruby, Napa Deluxe, Napa Designer out of the box - the list itself is admin-editable, see below) through a continuous "Manage Categories" session on the main page - pick a category, tick items, apply; the batch saves immediately and the session stays open for the next batch until you click Done, or straight from Training Mode's Category picker while confirming a photo match
 - Categorized designs show a compact, color-coded label along the bottom of their thumbnail (full name still available via tooltip and the full-screen view) and are grouped by category on both the admin and customer views, uncategorized items last
+- The category list is admin-editable: add, rename, merge (when a rename collides with an existing name), delete, reorder, and override a category's auto-generated abbreviation - a lightweight "Category Settings" modal handles the everyday cases, with reorder and abbreviation override in the System panel
+- Shared images can carry a burned-in category badge in the corner (full category name, sized to fit) alongside the plain share image - regenerated automatically whenever a category is renamed or its badge-drawing logic changes, with a manual "Clear Badge Cache" escape hatch in the System panel for a full sweep on demand
 
-**Prioritized work queues**
-- Two admin-only dashboards - "Needs Category" and "Needs Image Matching" - rank every car by how much of its catalog is actually missing, so cars close to fully done surface ahead of cars barely started, instead of an alphabetical or arbitrary list
-- Reachable from the main page's More menu; clicking a car jumps straight into the right workflow (the Manage Categories session, or Training Mode) with that car already selected - no manual re-searching
-- Kept out of the way by default on the Train Matches page, each with its own close control once opened
+**Prioritized work queue**
+- An admin-only work queue - "Needs Category" and "Needs Image Matching" tabs in one panel - ranks every car by how much of its catalog is actually missing, so cars close to fully done surface ahead of cars barely started, instead of an alphabetical or arbitrary list. Each car row also previews the actual item names still outstanding (capped, with a "+N more"), and a category-completion stat sits alongside the existing image-matching stat on the Train Matches dashboard
+- Reachable from the main page's More menu (a single "Work Queue" entry); clicking a car jumps straight into the right workflow (the Manage Categories session, or Training Mode) with that car already selected - no manual re-searching
+- Kept out of the way by default on the Train Matches page, with its own close control once opened
 
 **Accounts**
 - Session-based login, admin and customer roles, access-code auth
@@ -52,10 +55,11 @@ customer users - built and run by one person on an office PC.
 **Deployment / ops**
 - One-shot Windows setup script (venv, dependencies, `.env`, desktop shortcuts, auto-start)
 - Tray launcher that runs the server, monitors it, and can start a Cloudflare tunnel for public access
-- Remote System panel (token-paired devices only): git status, pull-and-restart, restart-app-only, duplicate-image report, log tail, DB backup download, disk/uptime/env read-outs, autostart check, Tally status, and a live Tally performance test - the office PC can be managed without remote desktop
+- Remote System panel (token-paired devices only): git status, pull-and-restart, restart-app-only, duplicate-image report, log tail, DB backup download, disk/uptime/env read-outs, autostart check, Tally status, a live Tally performance test, and badge-cache inspection/clearing - the office PC can be managed without remote desktop
 - Restarts are self-sufficient: a detached relaunch helper brings the server back even if the tray launcher's watchdog is broken or absent
 - Git-based one-command update path that also verifies and repairs the Windows autostart entry on every update
 - `/health` endpoint, file-based logging, self-migrating SQLite schema (no manual DB migration steps when columns are added - even a table-level constraint removal runs as an automatic, backed-up rebuild)
+- `robots.txt` disallows all crawling and every response carries hardening headers (`Referrer-Policy`, `Permissions-Policy`, `X-Robots-Tag`, plus HSTS once the deployment is confirmed to be HTTPS-only) - this is a private admin/customer catalog, not a public site, so it's kept out of search indexes regardless of what domain fronts it
 
 ## How good is it, honestly
 
@@ -77,14 +81,15 @@ Overall: a genuinely useful, correctly-engineered internal tool - not a toy, not
 
 ## How much effort this took
 
-From the repo history: 72 commits spanning **2026-05-20 to 2026-08-04** (about 11 weeks), ~15,800 lines of code across the app, plus three separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`) documenting setup, public rollout, and architecture.
+From the repo history: 80 commits spanning **2026-05-20 to 2026-09-11** (about 16 weeks), ~18,900 lines of code across the app, plus three separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`) documenting setup, public rollout, and architecture.
 
 That includes:
-- 60 Flask routes covering auth, stock, training, bulk matching, accounts, search, remote system management, material-tier categorization, and prioritized work queues
+- 73 Flask routes covering auth, stock, training, bulk matching, accounts, search, remote system management, material-tier categorization, and the prioritized work queue
 - A custom XML request/response layer for talking to Tally directly (no official SDK), including TDL collection requests tuned against real production timing measurements
 - A full account-management system with pause/resume/bulk actions and audit logging, now with its own secondary password gate independent of the admin login
 - An image-matching pipeline from filesystem scan through heuristic suggestion to confirmed mapping, now a true two-way sync (add and remove, with a mass-deletion safety threshold), plus a one-to-many bulk matching workflow with automatic product categorization
-- A material-tier tagging system (continuous multi-batch session, not a one-shot picker) and two prioritized dashboards that rank every car by how much work is actually left, tucked behind a consolidated More menu instead of cluttering the page
-- End-to-end Windows packaging: setup script, tray app, production server, auto-start (self-repairing on every update), optional public tunnel, and a remote ops panel
+- A material-tier tagging system (continuous multi-batch session, an admin-editable category list, and a category picker built directly into the confirm-match/upload-image flow) and a prioritized work queue with tabs, item-name previews, and its own completion stat, tucked behind a consolidated More menu instead of cluttering the page
+- A version-stamped badge cache (so a fix to how badges are drawn can never keep serving stale-looking badges indefinitely) with dedicated System panel tooling to inspect and clear it on demand
+- End-to-end Windows packaging: setup script, tray app, production server, auto-start (self-repairing on every update), optional public tunnel, hardened response headers plus a disallow-all `robots.txt`, and a remote ops panel
 
-The early history was committed in large batches, so the hands-on-keyboard time is more than the commit count alone implies; the later history shows the opposite pattern - small, heavily-verified fixes hardened against a real, live use case (an actual office running actual Tally data), several of them diagnosed with measurements taken on the production machine. This is not a weekend project; it's a small production system built and maintained iteratively.
+The early history was committed in large batches, so the hands-on-keyboard time is more than the commit count alone implies; the later history shows the opposite pattern - small, heavily-verified fixes hardened against a real, live use case (an actual office running actual Tally data), several of them diagnosed with measurements taken on the production machine, plus a couple of genuine regression-and-fix cycles (a badge briefly burning the wrong text, then its cache invalidation being hardened so the same class of bug can't recur silently). This is not a weekend project; it's a small production system built and maintained iteratively.
