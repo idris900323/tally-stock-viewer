@@ -27,6 +27,8 @@ Important:
 - Tally stays local to the office PC
 - your main website on MilesWeb stays separate
 
+The app also already protects itself once public traffic reaches it, with nothing to configure: every response carries `X-Frame-Options`, `X-Content-Type-Options`, a restrictive `Permissions-Policy`, `Referrer-Policy: same-origin`, and `X-Robots-Tag: noindex, nofollow`, plus `Strict-Transport-Security` automatically once `SESSION_COOKIE_SECURE=1` is set (section 3). `https://superseatings.carxone.com/robots.txt` also returns a blanket `Disallow: /` — this is a private customer/admin catalog, not a marketing site, so it's meant to stay out of Google and other search indexes regardless of the public domain pointing at it.
+
 ## 2. Before touching DNS
 
 Make sure all of these are already true on the office PC:
@@ -195,9 +197,10 @@ This document is the public deployment guide.
 - Tally refresh still works on the office PC
 - images still load after public access is enabled
 - `.env` has `FLASK_DEBUG=0`
-- `.env` has `SESSION_COOKIE_SECURE=1`
+- `.env` has `SESSION_COOKIE_SECURE=1` (this is also what turns on the `Strict-Transport-Security` header — see section 1)
 - default seeded credentials are no longer in active use
 - `ACCOUNTS_ACCESS_PASSWORD` is set if `Manage Accounts` should be usable in production (optional — leaving it unset just keeps that page locked)
+- `https://superseatings.carxone.com/robots.txt` returns `Disallow: /` externally (confirms the site is opted out of search indexing — no `.env` setting involved, this is always on)
 
 ## 10. Remote management with the System panel
 
@@ -219,6 +222,7 @@ From the panel you can:
 - restart the app without pulling code (`Restart App Only`)
 - tail recent logs, download a database backup, check disk usage and uptime
 - check Tally status (including the multiple-instances warning), run the Tally Performance Test, find duplicate images, and verify the Windows auto-start entry
+- list every file actually on disk in `data/share_cache/` (with real modified times) and clear the cached share-image badges on demand — useful if a shared image's category badge looks stale after a category rename and a Cloudflare edge cache is suspected of still replaying an old response
 
 If `SYSTEM_ACCESS_TOKEN` is not set in `.env`, all of these routes return `403` and the panel is effectively off.
 
