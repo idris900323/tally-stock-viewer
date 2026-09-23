@@ -231,6 +231,7 @@
 
         .notice.success { background: #ecfdf3; color: #166534; }
         .notice.error { background: #fef2f2; color: var(--danger); }
+        .notice.warn { background: #fffbeb; color: var(--warning); }
 
         .muted { color: var(--muted); font-size: 13px; }
 
@@ -382,6 +383,7 @@
         </div>
         <p class="muted" id="cloudBackupProgressSummary" style="display:none; margin-top:8px;" role="status" aria-live="polite"></p>
         <div class="output-box" id="cloudBackupLog" style="display:none;"></div>
+        <div class="notice warn" id="cloudBackupSkipped" style="display:none;"></div>
         <div class="notice error" id="cloudBackupAuthError" style="display:none;"></div>
         <div class="notice error" id="cloudBackupDiscrepancy" style="display:none;"></div>
         <div class="notice error" id="cloudBackupError" style="display:none;"></div>
@@ -722,6 +724,20 @@ function formatCloudBackupTimestamp(isoString) {
     }
 }
 
+function renderCloudBackupSkipped(skippedRuns) {
+    const el = document.getElementById("cloudBackupSkipped");
+    if (!skippedRuns || !skippedRuns.length) {
+        el.style.display = "none";
+        return;
+    }
+    const recent = skippedRuns.slice(-5).reverse();
+    const lines = recent.map(s => `${formatCloudBackupTimestamp(s.timestamp)} — ${escapeHtml(s.message)}`);
+    const more = skippedRuns.length > recent.length ? ` (+${skippedRuns.length - recent.length} more)` : "";
+    el.innerHTML = `<strong>${skippedRuns.length} scheduled sync${skippedRuns.length === 1 ? "" : "s"} recently skipped${more}:</strong><br>` +
+        lines.join("<br>");
+    el.style.display = "block";
+}
+
 async function loadCloudBackupStatus() {
     const badge = document.getElementById("cloudBackupBadge");
     const discrepancyEl = document.getElementById("cloudBackupDiscrepancy");
@@ -746,8 +762,18 @@ async function loadCloudBackupStatus() {
             stopBtn.style.display = "none";
             summaryEl.style.display = "none";
             logEl.style.display = "none";
+            renderCloudBackupSkipped([]);
             return data;
         }
+
+        // Missed/skipped scheduled attempts (not authorized yet, or a sync
+        // was already running at that moment) never touch last_run -- no
+        // run actually happened -- so without this an admin would only
+        // ever see the previous real run's result with no hint that
+        // today's scheduled attempt never ran. Rendered unconditionally
+        // here, before the last_run branching below, so it shows even
+        // when there's no last_run at all yet.
+        renderCloudBackupSkipped(data.skipped_runs || []);
 
         // Disabled state always follows the server's "running" flag (not
         // just the click handler) so a page refresh mid-sync still shows

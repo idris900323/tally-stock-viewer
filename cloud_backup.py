@@ -76,6 +76,34 @@ _status = {
 }
 _status_lock = threading.Lock()
 
+# Scheduled-run skip tracking, surfaced on the System panel instead of only
+# ever landing in the log file -- a skip (not yet authorized, or a sync
+# already running at that exact moment) never touches _status["last_run"]
+# (no run actually happened), so without this an admin checking the panel
+# would just see whatever the previous real run's result was, with no hint
+# that today's scheduled attempt never ran at all. In-memory only, same as
+# _status above -- doesn't survive an app restart, which is an accepted
+# limitation shared with the rest of this module's status tracking.
+_SKIPPED_RUNS_CAPACITY = 20
+_skipped_runs_lock = threading.Lock()
+_skipped_runs = []  # most recent last; each: {"timestamp", "reason", "message"}
+
+
+def _record_skipped_run(reason, message):
+    with _skipped_runs_lock:
+        _skipped_runs.append({
+            "timestamp": datetime.now().isoformat(),
+            "reason": reason,  # "not_authorized" | "already_running"
+            "message": message,
+        })
+        if len(_skipped_runs) > _SKIPPED_RUNS_CAPACITY:
+            del _skipped_runs[0]
+
+
+def get_skipped_runs():
+    with _skipped_runs_lock:
+        return list(_skipped_runs)
+
 # Cooperative cancellation for the "Stop Sync" button (Part 3): checked
 # before starting each new file/folder operation, never mid-write, so a
 # stopped run always leaves the manifest reflecting only genuinely
@@ -213,6 +241,7 @@ def get_status():
         snapshot["last_run"] = dict(_status["last_run"]) if _status["last_run"] else None
     snapshot["configured"] = is_configured()
     snapshot["progress"] = get_progress()
+    snapshot["skipped_runs"] = get_skipped_runs()
     return snapshot
 
 
@@ -998,12 +1027,13 @@ def schedule(initial_delay=0):
     def _job():
         global _timer
         if not is_authorized():
-            logger.info(
-                "Skipping scheduled cloud backup -- not yet authorized "
-                "(run 'Authorize Google Drive' once from the System panel)"
-            )
+            message = "Not yet authorized -- run 'Authorize Google Drive' once from the System panel"
+            logger.info("Skipping scheduled cloud backup -- %s", message)
+            _record_skipped_run("not_authorized", message)
         elif not SYNC_LOCK.acquire(blocking=False):
-            logger.info("Skipping scheduled cloud backup because a sync is already running")
+            message = "A sync was already running at the scheduled time"
+            logger.info("Skipping scheduled cloud backup -- %s", message)
+            _record_skipped_run("already_running", message)
         else:
             try:
                 run_sync(triggered_by="schedule")
