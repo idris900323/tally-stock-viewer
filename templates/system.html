@@ -365,6 +365,29 @@
     </div>
 
     <div class="panel">
+        <h2>Cloud Backup <span class="badge muted" id="cloudBackupBadge">Checking...</span></h2>
+        <p class="muted">Incrementally mirrors mappings.db, the S.S IMAGE folder, and the small JSON caches to Google Drive -- only new/changed files are uploaded, local deletions are mirrored, and every run verifies its own work against what Drive actually has rather than assuming success.</p>
+        <table class="kv-table">
+            <tr><td>Authorization</td><td id="cloudBackupAuthStatus">Checking...</td></tr>
+            <tr><td>Last sync</td><td id="cloudBackupLastSync">-</td></tr>
+            <tr><td>Last run result</td><td id="cloudBackupLastResult">-</td></tr>
+            <tr><td>Added / Updated / Deleted / Skipped</td><td id="cloudBackupCounts">-</td></tr>
+            <tr><td>Currently backed up</td><td id="cloudBackupTotals">-</td></tr>
+        </table>
+        <div class="actions" style="margin-top:12px;">
+            <button class="secondary" id="cloudBackupAuthBtn" onclick="authorizeCloudBackup()" title="One-time browser consent step authorizing this app against the dedicated Google account's own Drive. Opens a browser -- only needs to be done once (or again if access is later revoked).">Authorize Google Drive</button>
+            <button class="primary" id="cloudBackupSyncBtn" onclick="cloudBackupSyncNow()" title="Runs an out-of-schedule incremental sync right now.">Sync Now</button>
+            <button class="danger-outline" id="cloudBackupStopBtn" onclick="stopCloudBackupSync()" style="display:none;" title="Stops the running sync cleanly at its next safe checkpoint. Already-completed items stay backed up; the rest resumes on the next sync.">Stop Sync</button>
+            <button class="secondary" onclick="loadCloudBackupStatus(); loadCloudBackupAuthStatus();" title="Reload the current status without triggering a sync">Refresh Status</button>
+        </div>
+        <p class="muted" id="cloudBackupProgressSummary" style="display:none; margin-top:8px;" role="status" aria-live="polite"></p>
+        <div class="output-box" id="cloudBackupLog" style="display:none;"></div>
+        <div class="notice error" id="cloudBackupAuthError" style="display:none;"></div>
+        <div class="notice error" id="cloudBackupDiscrepancy" style="display:none;"></div>
+        <div class="notice error" id="cloudBackupError" style="display:none;"></div>
+    </div>
+
+    <div class="panel">
         <h2>Duplicate Images <span class="badge muted" id="dupBadge"></span></h2>
         <p class="muted">Finds image rows that look like duplicates (same folder, same base filename) and confirms with a content hash so two different photos that merely share a generic filename aren't flagged. This is list-only — nothing is deleted.</p>
         <div class="actions">
@@ -690,6 +713,265 @@ async function clearBadgeCache() {
     }
 }
 
+function formatCloudBackupTimestamp(isoString) {
+    if (!isoString) return "-";
+    try {
+        return new Date(isoString).toLocaleString();
+    } catch (error) {
+        return isoString;
+    }
+}
+
+async function loadCloudBackupStatus() {
+    const badge = document.getElementById("cloudBackupBadge");
+    const discrepancyEl = document.getElementById("cloudBackupDiscrepancy");
+    const errorEl = document.getElementById("cloudBackupError");
+    const syncBtn = document.getElementById("cloudBackupSyncBtn");
+    const stopBtn = document.getElementById("cloudBackupStopBtn");
+    const summaryEl = document.getElementById("cloudBackupProgressSummary");
+    const logEl = document.getElementById("cloudBackupLog");
+    discrepancyEl.style.display = "none";
+    errorEl.style.display = "none";
+
+    try {
+        const data = await fetchJson("/admin/system/cloud_backup/status");
+
+        if (!data.configured) {
+            setBadge(badge, "Not configured", "muted");
+            document.getElementById("cloudBackupLastSync").textContent = "-";
+            document.getElementById("cloudBackupLastResult").textContent = "Set GDRIVE_OAUTH_CLIENT_SECRETS_PATH, GDRIVE_OAUTH_TOKEN_PATH, and GDRIVE_BACKUP_FOLDER_ID in .env to enable.";
+            document.getElementById("cloudBackupCounts").textContent = "-";
+            document.getElementById("cloudBackupTotals").textContent = "-";
+            syncBtn.disabled = true;
+            stopBtn.style.display = "none";
+            summaryEl.style.display = "none";
+            logEl.style.display = "none";
+            return data;
+        }
+
+        // Disabled state always follows the server's "running" flag (not
+        // just the click handler) so a page refresh mid-sync still shows
+        // the button correctly disabled instead of inviting a second click.
+        syncBtn.disabled = !!data.running;
+
+        const progress = data.progress || {};
+        if (data.running) {
+            setBadge(badge, "Syncing...", "warn");
+            stopBtn.style.display = "inline-block";
+            stopBtn.disabled = !!progress.stop_requested;
+            stopBtn.textContent = progress.stop_requested ? "Stopping..." : "Stop Sync";
+
+            summaryEl.style.display = "block";
+            summaryEl.textContent =
+                `${progress.processed || 0} / ${progress.total || 0} processed -- ` +
+                `${progress.uploaded || 0} uploaded, ${progress.updated || 0} updated, ` +
+                `${progress.deleted || 0} deleted, ${progress.skipped || 0} skipped, ${progress.failed || 0} failed`;
+
+            // Live action log -- the only place this is visible in
+            // production, since the app runs via pythonw with no console.
+            logEl.style.display = "block";
+            logEl.textContent = (progress.log && progress.log.length) ? progress.log.join("\n") : "Starting...";
+            logEl.scrollTop = logEl.scrollHeight;
+        } else {
+            stopBtn.style.display = "none";
+            summaryEl.style.display = "none";
+            logEl.style.display = "none";
+        }
+
+        const run = data.last_run;
+        if (!run) {
+            if (!data.running) setBadge(badge, "Not yet run", "muted");
+            document.getElementById("cloudBackupLastSync").textContent = "Never";
+            document.getElementById("cloudBackupLastResult").textContent = "-";
+            document.getElementById("cloudBackupCounts").textContent = "-";
+            document.getElementById("cloudBackupTotals").textContent = "-";
+            return data;
+        }
+
+        document.getElementById("cloudBackupLastSync").textContent = formatCloudBackupTimestamp(run.finished_at);
+        document.getElementById("cloudBackupLastResult").textContent = run.status + (run.error ? ` -- ${run.error}` : "");
+        document.getElementById("cloudBackupCounts").textContent =
+            `${run.added} added / ${run.updated} updated / ${run.deleted} deleted / ${run.skipped} skipped (unchanged)`;
+
+        if (!data.running) {
+            if (run.status === "success") {
+                setBadge(badge, "OK", "ok");
+            } else if (run.status === "partial") {
+                setBadge(badge, "Partial", "warn");
+            } else if (run.status === "stopped") {
+                setBadge(badge, "Stopped", "warn");
+            } else if (run.status === "not_authorized") {
+                setBadge(badge, "Not authorized", "bad");
+            } else {
+                setBadge(badge, "Failed", "bad");
+            }
+        }
+
+        const verification = run.verification;
+        if (verification) {
+            document.getElementById("cloudBackupTotals").textContent =
+                `${verification.manifest_file_count} file(s), ${formatFileSize(verification.manifest_total_size_bytes)}`;
+            if (!verification.ok) {
+                discrepancyEl.textContent = `Verification mismatch: ${verification.discrepancy}`;
+                discrepancyEl.style.display = "block";
+            }
+        }
+        return data;
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        errorEl.textContent = error.message;
+        errorEl.style.display = "block";
+        return null;
+    }
+}
+
+// Authorization is a separate one-time action from Sync Now (see
+// cloud_backup.authorize() / AUTH_LOCK) -- a closed/abandoned browser tab
+// here can never freeze a sync, since this never touches SYNC_LOCK. Polled
+// while in_progress so the panel reflects "waiting for you in the
+// browser..." rather than looking stuck.
+let cloudBackupAuthPoller = null;
+
+async function loadCloudBackupAuthStatus() {
+    const statusEl = document.getElementById("cloudBackupAuthStatus");
+    const authBtn = document.getElementById("cloudBackupAuthBtn");
+    const authErrorEl = document.getElementById("cloudBackupAuthError");
+    const syncBtn = document.getElementById("cloudBackupSyncBtn");
+
+    try {
+        const data = await fetchJson("/admin/system/cloud_backup/auth_status");
+
+        if (!data.configured) {
+            statusEl.textContent = "Not configured";
+            authBtn.disabled = true;
+            authBtn.textContent = "Authorize Google Drive";
+            return data;
+        }
+        authBtn.disabled = false;
+
+        if (data.in_progress) {
+            statusEl.textContent = "Waiting for you to complete the browser consent step...";
+            authBtn.disabled = true;
+            authBtn.textContent = "Waiting for browser...";
+            if (!cloudBackupAuthPoller) {
+                cloudBackupAuthPoller = setInterval(async () => {
+                    const s = await loadCloudBackupAuthStatus();
+                    if (!s || !s.in_progress) {
+                        clearInterval(cloudBackupAuthPoller);
+                        cloudBackupAuthPoller = null;
+                    }
+                }, 2000);
+            }
+            return data;
+        }
+
+        if (data.authorized) {
+            statusEl.textContent = "Authorized";
+            authBtn.textContent = "Re-authorize";
+            authErrorEl.style.display = "none";
+        } else {
+            statusEl.textContent = "Not authorized";
+            authBtn.textContent = "Authorize Google Drive";
+        }
+
+        // A just-finished authorize() attempt's own outcome -- distinct
+        // from the general "authorized: true/false" snapshot, since a
+        // failed re-authorize attempt still leaves the previous token
+        // (if any) usable, but the admin should still see what happened.
+        if (data.last_result && data.last_result.ok === false) {
+            authErrorEl.textContent = data.last_result.error || "Authorization failed.";
+            authErrorEl.style.display = "block";
+        }
+
+        // Sync Now's own is_authorized() check on the server is the real
+        // gate -- this just saves a round trip for the obvious case.
+        if (!data.authorized) {
+            syncBtn.disabled = true;
+            syncBtn.title = "Click Authorize Google Drive first.";
+        } else {
+            syncBtn.title = "Runs an out-of-schedule incremental sync right now.";
+        }
+        return data;
+    } catch (error) {
+        statusEl.textContent = "Error";
+        authErrorEl.textContent = error.message;
+        authErrorEl.style.display = "block";
+        return null;
+    }
+}
+
+async function authorizeCloudBackup() {
+    const authBtn = document.getElementById("cloudBackupAuthBtn");
+    const authErrorEl = document.getElementById("cloudBackupAuthError");
+    authErrorEl.style.display = "none";
+    authBtn.disabled = true;
+
+    try {
+        const data = await fetchJson("/admin/system/cloud_backup/authorize", { method: "POST" });
+        if (!data.started && !data.already_running) {
+            throw new Error("Authorization did not start.");
+        }
+        await loadCloudBackupAuthStatus();
+    } catch (error) {
+        authBtn.disabled = false;
+        authErrorEl.textContent = error.message;
+        authErrorEl.style.display = "block";
+    }
+}
+
+// Shared by Sync Now and Stop Sync -- either action can leave a sync
+// running (Stop only requests cancellation, it doesn't finish it
+// instantly), so both start the same live-progress poller. 1.5s keeps the
+// log and counts feeling real-time without hammering the endpoint.
+let cloudBackupPoller = null;
+
+function startCloudBackupPolling() {
+    if (cloudBackupPoller) return;
+    cloudBackupPoller = setInterval(async () => {
+        const status = await loadCloudBackupStatus();
+        if (!status || !status.running) {
+            clearInterval(cloudBackupPoller);
+            cloudBackupPoller = null;
+        }
+    }, 1500);
+}
+
+async function cloudBackupSyncNow() {
+    const btn = document.getElementById("cloudBackupSyncBtn");
+    const errorEl = document.getElementById("cloudBackupError");
+    errorEl.style.display = "none";
+    btn.disabled = true;
+
+    try {
+        const data = await fetchJson("/admin/system/cloud_backup/sync_now", { method: "POST" });
+        if (!data.started && !data.already_running) {
+            throw new Error("Sync did not start.");
+        }
+        setBadge(document.getElementById("cloudBackupBadge"), "Syncing...", "warn");
+        startCloudBackupPolling();
+    } catch (error) {
+        btn.disabled = false;
+        errorEl.textContent = error.message;
+        errorEl.style.display = "block";
+    }
+}
+
+async function stopCloudBackupSync() {
+    const stopBtn = document.getElementById("cloudBackupStopBtn");
+    const errorEl = document.getElementById("cloudBackupError");
+    errorEl.style.display = "none";
+    stopBtn.disabled = true;
+    stopBtn.textContent = "Stopping...";
+
+    try {
+        await fetchJson("/admin/system/cloud_backup/stop", { method: "POST" });
+        startCloudBackupPolling();
+    } catch (error) {
+        errorEl.textContent = error.message;
+        errorEl.style.display = "block";
+    }
+}
+
 async function refreshEnvironment() {
     const tallyBadge = document.getElementById("tallyBadge");
     try {
@@ -932,6 +1214,13 @@ window.addEventListener("DOMContentLoaded", () => {
     loadLogs();
     loadCategoriesPanel();
     startBadgeRegenPolling();
+    loadCloudBackupStatus().then(data => {
+        // Resumes live polling after a page refresh that lands mid-sync,
+        // instead of leaving the panel stuck showing a stale snapshot
+        // until the admin happens to click Refresh Status.
+        if (data && data.running) startCloudBackupPolling();
+    });
+    loadCloudBackupAuthStatus();
 });
 </script>
 </body>

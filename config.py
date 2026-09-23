@@ -51,6 +51,26 @@ class Config:
     # as SYSTEM_ACCESS_TOKEN above) rather than silently allowing access.
     ACCOUNTS_ACCESS_PASSWORD = os.environ.get("ACCOUNTS_ACCESS_PASSWORD", "").strip()
 
+    # Cloud backup (Google Drive) — OAuth installed-app flow, authenticating
+    # as an actual Google account rather than a Service Account (a Service
+    # Account has zero personal Drive storage quota of its own: it can
+    # create folders but every real file upload fails with a "Service
+    # Accounts do not have storage quota" 403 — see build_drive_service()
+    # in cloud_backup.py). One-time setup: create an OAuth Client ID
+    # (Desktop app) in the Google Cloud project, download its JSON to
+    # GDRIVE_OAUTH_CLIENT_SECRETS_PATH, then run a sync once — a browser
+    # opens for a one-time consent step and the resulting token (with
+    # refresh token) is saved to GDRIVE_OAUTH_TOKEN_PATH. Every run after
+    # that refreshes silently, no browser needed, so scheduled/unattended
+    # runs work too. Deliberately has no default for any of these. If any
+    # is missing, cloud_backup.py cleanly no-ops (logs once, never
+    # schedules the job, never crashes) — same fallback discipline as
+    # SYSTEM_ACCESS_TOKEN/ACCOUNTS_ACCESS_PASSWORD above.
+    GDRIVE_OAUTH_CLIENT_SECRETS_PATH = os.environ.get("GDRIVE_OAUTH_CLIENT_SECRETS_PATH", "").strip()
+    GDRIVE_OAUTH_TOKEN_PATH = os.environ.get("GDRIVE_OAUTH_TOKEN_PATH", "").strip()
+    GDRIVE_BACKUP_FOLDER_ID = os.environ.get("GDRIVE_BACKUP_FOLDER_ID", "").strip()
+    CLOUD_BACKUP_INTERVAL = int(os.environ.get("CLOUD_BACKUP_INTERVAL", str(3 * 24 * 3600)))
+
     # Logging
     LOG_DIR = os.environ.get("LOG_DIR", "logs")
     LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")
