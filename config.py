@@ -71,6 +71,26 @@ class Config:
     GDRIVE_BACKUP_FOLDER_ID = os.environ.get("GDRIVE_BACKUP_FOLDER_ID", "").strip()
     CLOUD_BACKUP_INTERVAL = int(os.environ.get("CLOUD_BACKUP_INTERVAL", str(3 * 24 * 3600)))
 
+    # Cloud deployment — a cloud-hosted instance can never reach Tally
+    # directly, so it receives data PUSHED to it from the office PC instead
+    # of fetching it itself. Defaults to off (False), so this changes
+    # nothing for the existing office PC setup unless deliberately enabled.
+    #   - On the cloud instance: set DISABLE_TALLY_SCHEDULING=1 so it never
+    #     starts the item-stock/full-refresh scheduling that would otherwise
+    #     retry against an unreachable Tally every cycle, and set
+    #     INTAKE_SYNC_TOKEN to a long random secret the office PC will send
+    #     to prove a push is legitimate (deliberately separate from
+    #     SYSTEM_ACCESS_TOKEN -- this endpoint is called by a background
+    #     job, not a paired browser, and has no session of its own).
+    #   - On the office PC: set CLOUD_SYNC_URL to the cloud instance's
+    #     intake endpoint and CLOUD_SYNC_TOKEN to that same secret. If
+    #     either is missing, the push is a clean no-op and the existing
+    #     local scheduled jobs behave exactly as they do today.
+    DISABLE_TALLY_SCHEDULING = os.environ.get("DISABLE_TALLY_SCHEDULING", "0").strip().lower() in ("1", "true", "yes")
+    INTAKE_SYNC_TOKEN = os.environ.get("INTAKE_SYNC_TOKEN", "").strip()
+    CLOUD_SYNC_URL = os.environ.get("CLOUD_SYNC_URL", "").strip()
+    CLOUD_SYNC_TOKEN = os.environ.get("CLOUD_SYNC_TOKEN", "").strip()
+
     # Logging
     LOG_DIR = os.environ.get("LOG_DIR", "logs")
     LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")

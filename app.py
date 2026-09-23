@@ -1,5 +1,6 @@
 '''idris' special project'''
 from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for
+import hmac
 import json
 import os
 import requests
@@ -128,7 +129,14 @@ TALLY_TIMEOUT = max(120, int(app.config["TALLY_TIMEOUT"]))
 TALLY_RETRY_ATTEMPTS = app.config["TALLY_RETRY_ATTEMPTS"]
 MAX_RETRY_ATTEMPTS = 3
 VALID_ROLES = {"admin", "customer"}
-PUBLIC_ENDPOINTS = {"login", "logout", "static", "full_refresh_status_route", "robots_txt"}
+PUBLIC_ENDPOINTS = {
+    "login", "logout", "static", "full_refresh_status_route", "robots_txt",
+    # Called by a background job on another machine (the office PC's push),
+    # not a paired browser -- has its own independent INTAKE_SYNC_TOKEN
+    # check inside the view itself (see intake_sync_data()), same "missing
+    # = 403" discipline as every other optional secret in this codebase.
+    "intake_sync_data",
+}
 
 db.init_database()
 
@@ -1132,12 +1140,14 @@ def start_background_startup_tasks():
         except Exception:
             logger.exception("Background image scan failed")
 
-        if item_export_enabled:
+        if item_export_enabled and not Config.DISABLE_TALLY_SCHEDULING:
             schedule_item_export(initial_delay=10)
 
         # 120s: after the item export (10s) and startup full refresh (45s)
         # so cloud backup doesn't compete with them for Tally/disk I/O.
         # No-ops cleanly if GDRIVE_* env vars aren't set (see cloud_backup.is_configured()).
+        # Unaffected by DISABLE_TALLY_SCHEDULING -- this backs up local
+        # files to Drive, it never touches Tally.
         cloud_backup.schedule(initial_delay=120)
 
     thread = threading.Thread(target=_startup_routine, daemon=True)
@@ -1154,11 +1164,34 @@ def start_background_startup_tasks():
         else:
             logger.info("Skipping startup full refresh — already running")
 
-    threading.Thread(target=_startup_full_refresh, daemon=True).start()
+    if Config.DISABLE_TALLY_SCHEDULING:
+        logger.info(
+            "DISABLE_TALLY_SCHEDULING is set -- skipping startup full refresh and all "
+            "Tally scheduling (this instance receives data pushed from the office PC instead)"
+        )
+    else:
+        threading.Thread(target=_startup_full_refresh, daemon=True).start()
+
+
+CLOUD_MODE_REFRESH_MESSAGE = (
+    "This instance receives data from the office system automatically — "
+    "manual Tally refresh isn't available here."
+)
 
 
 def _refresh_stock_data():
     global last_refresh_status
+    if Config.DISABLE_TALLY_SCHEDULING:
+        now = datetime.now()
+        return {
+            "ok": False,
+            "cloud_mode": True,
+            "tally_online": None,
+            "status": "cloud_mode_disabled",
+            "message": CLOUD_MODE_REFRESH_MESSAGE,
+            "timestamp": now.isoformat(),
+            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+        }
     if FULL_REFRESH_LOCK.locked():
         now = datetime.now()
         return {
@@ -1228,6 +1261,20 @@ def _refresh_stock_data():
                 }
 
 # ---------- Tally export logic ----------
+
+def _save_item_stock_data(deduped):
+    """Writes item stock rows to the same JSON cache + background xlsx
+    export fetch_item_stock_flat() already produces from a live Tally
+    fetch. Extracted so the cloud intake endpoint (Part 2) can write
+    pushed data through the identical path instead of duplicating it."""
+    try:
+        with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as handle:
+            json.dump(deduped, handle, ensure_ascii=False)
+    except Exception:
+        pass
+
+    threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
+
 
 def fetch_item_stock_flat():
     """Export item stock from Tally and save as clean Excel.
@@ -1326,13 +1373,7 @@ def fetch_item_stock_flat():
             seen[r["item_name"]] = r
         deduped = list(seen.values())
 
-        try:
-            with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as handle:
-                json.dump(deduped, handle, ensure_ascii=False)
-        except Exception:
-            pass
-
-        threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
+        _save_item_stock_data(deduped)
         logger.info(
             "Item stock export completed in %.1fs across 1 Tally request (%d items)",
             time.perf_counter() - export_started, len(deduped),
@@ -1484,6 +1525,33 @@ def save_car_master_to_file(car_names):
     print(f"wrote {len(car_names)} car names to {CAR_FILE}")
 
 
+def _read_main_hierarchy_flat_rows():
+    """Reads main.xlsx back into the same flat {item_name, qty} row shape
+    save_main_hierarchy_to_file() writes it in. Used both by
+    fetch_main_hierarchy_from_tally()'s existing "keep what we have" Tally-
+    unreachable fallback, and by _push_data_to_cloud() (Part 3) to get the
+    current hierarchy in push-ready form without re-deriving it."""
+    main_file = get_main_file_path()
+    if not os.path.exists(main_file):
+        return None
+
+    try:
+        rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
+    except Exception:
+        logger.exception("Failed to read existing main hierarchy")
+        return None
+
+    flat_rows = []
+    for row in rows_data:
+        item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
+        qty = row[1] if len(row) > 1 else ""
+        qty_text = str(qty or "").strip().upper()
+        if item_name.upper() == "PARTICULARS" and qty_text == "QUANTITY":
+            continue
+        flat_rows.append({"item_name": item_name, "qty": "" if qty is None else qty})
+    return flat_rows or None
+
+
 def fetch_main_hierarchy_from_tally():
     def _norm(text: str) -> str:
         return re.sub(r"\s+", " ", str(text or "").strip()).upper()
@@ -1492,29 +1560,8 @@ def fetch_main_hierarchy_from_tally():
         child = node.find(f".//{tag_name}")
         return child.text.strip() if (child is not None and child.text) else ""
 
-    def _load_existing_flat_rows():
-        main_file = get_main_file_path()
-        if not os.path.exists(main_file):
-            return None
-
-        try:
-            rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
-        except Exception:
-            logger.exception("Failed to read existing main hierarchy for fallback")
-            return None
-
-        flat_rows = []
-        for row in rows_data:
-            item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
-            qty = row[1] if len(row) > 1 else ""
-            qty_text = str(qty or "").strip().upper()
-            if item_name.upper() == "PARTICULARS" and qty_text == "QUANTITY":
-                continue
-            flat_rows.append({"item_name": item_name, "qty": "" if qty is None else qty})
-        return flat_rows or None
-
     def _fallback_existing(reason: str):
-        existing_rows = _load_existing_flat_rows()
+        existing_rows = _read_main_hierarchy_flat_rows()
         if existing_rows:
             logger.warning("%s Keeping existing main hierarchy unchanged.", reason)
             return existing_rows
@@ -1711,6 +1758,63 @@ def save_main_hierarchy_to_file(flat_rows):
     print(f"wrote {len(flat_rows)} hierarchy rows to {main_file}")
 
 
+def _push_data_to_cloud():
+    """Part 3 of cloud-deployment support: if CLOUD_SYNC_URL/CLOUD_SYNC_TOKEN
+    are both configured, POSTs the current car master, main hierarchy, and
+    item stock data to a cloud-hosted instance's intake endpoint (see
+    /admin/intake/sync_data) -- the same shape Full Refresh already
+    produces, read back from the local files that were just written
+    rather than re-derived, so this is always exactly what this office PC
+    itself believes is current.
+
+    Clean no-op if either value is unset -- the existing local scheduled
+    jobs that call this are completely unaffected either way. Meant to be
+    run on a background thread (see call sites): never raises, and a
+    failed push (network issue, cloud instance down) only logs a warning
+    -- it must never break or delay the local job that triggered it."""
+    cloud_url = Config.CLOUD_SYNC_URL
+    cloud_token = Config.CLOUD_SYNC_TOKEN
+    if not cloud_url or not cloud_token:
+        return
+
+    try:
+        car_names = []
+        if os.path.isfile(CAR_MASTER_CACHE_JSON):
+            with open(CAR_MASTER_CACHE_JSON, "r", encoding="utf-8") as handle:
+                car_names = json.load(handle)
+
+        main_hierarchy_rows = _read_main_hierarchy_flat_rows() or []
+
+        item_stock_rows = []
+        if os.path.isfile(ITEM_STOCK_CACHE_JSON):
+            with open(ITEM_STOCK_CACHE_JSON, "r", encoding="utf-8") as handle:
+                item_stock_rows = json.load(handle)
+
+        payload = {
+            "car_master": car_names,
+            "main_hierarchy": main_hierarchy_rows,
+            "item_stock": item_stock_rows,
+        }
+        response = requests.post(
+            cloud_url,
+            json=payload,
+            headers={"X-Intake-Token": cloud_token},
+            timeout=30,
+        )
+        if response.status_code == 200:
+            logger.info(
+                "Cloud sync push succeeded (%d cars, %d hierarchy rows, %d stock rows)",
+                len(car_names), len(main_hierarchy_rows), len(item_stock_rows),
+            )
+        else:
+            logger.warning(
+                "Cloud sync push failed: HTTP %s -- %s",
+                response.status_code, response.text[:300],
+            )
+    except Exception:
+        logger.exception("Cloud sync push failed")
+
+
 def _write_stock_excel(deduped):
     EXPORT_LOCK.acquire()
     try:
@@ -1810,6 +1914,12 @@ def schedule_item_export(initial_delay: int = 0):
                 "message": msg,
                 "timestamp": datetime.now().isoformat()
             }
+
+            # Part 3: push the freshly-refreshed data to a cloud instance,
+            # if configured (clean no-op otherwise). Backgrounded so a
+            # slow/unreachable cloud endpoint can never delay this
+            # scheduled job or its own reschedule below.
+            threading.Thread(target=_push_data_to_cloud, daemon=True).start()
         except Exception as exc:
             logger.exception("scheduled item stock export failed")
             last_refresh_status = {
@@ -4079,6 +4189,11 @@ def run_full_refresh_job():
         }
         logger.info("Full refresh completed successfully")
 
+        # Part 3: push the same freshly-written data to a cloud instance,
+        # if configured (clean no-op otherwise). Backgrounded so a slow/
+        # unreachable cloud endpoint can never delay this job finishing.
+        threading.Thread(target=_push_data_to_cloud, daemon=True).start()
+
     except Exception as exc:
         error_code = _classify_tally_exception(exc)
         full_refresh_status = {
@@ -4094,6 +4209,12 @@ def run_full_refresh_job():
 @app.route("/full_refresh", methods=["POST"])
 @admin_required
 def full_refresh():
+    if Config.DISABLE_TALLY_SCHEDULING:
+        return jsonify({
+            "ok": False,
+            "cloud_mode": True,
+            "message": CLOUD_MODE_REFRESH_MESSAGE,
+        }), 403
     if not FULL_REFRESH_LOCK.acquire(blocking=False):
         return jsonify({
             "ok": False,
@@ -4120,6 +4241,69 @@ def full_refresh():
 @app.route("/full_refresh_status")
 def full_refresh_status_route():
     return jsonify(full_refresh_status)
+
+
+# ============================================================
+# CLOUD INTAKE — receives data PUSHED from the office PC (Part 2 of
+# cloud-deployment support). This is the mirror image of _push_data_to_cloud()
+# above: same payload shape (car_master / main_hierarchy / item_stock),
+# authenticated by INTAKE_SYNC_TOKEN rather than a session -- the caller is
+# a background job on another machine, not a paired browser, so this is
+# deliberately outside admin_required/system_device_required and listed in
+# PUBLIC_ENDPOINTS. Same "missing secret = 403, feature cleanly disabled"
+# discipline as every other optional secret in this codebase.
+# ============================================================
+
+@app.route("/admin/intake/sync_data", methods=["POST"])
+def intake_sync_data():
+    expected_token = Config.INTAKE_SYNC_TOKEN
+    if not expected_token:
+        return jsonify({"error": "Intake sync is not configured. Set INTAKE_SYNC_TOKEN in .env to enable it."}), 403
+
+    provided_token = request.headers.get("X-Intake-Token", "")
+    if not provided_token or not hmac.compare_digest(provided_token, expected_token):
+        return jsonify({"error": "Invalid or missing intake token."}), 403
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    car_master = payload.get("car_master")
+    main_hierarchy = payload.get("main_hierarchy")
+    item_stock = payload.get("item_stock")
+
+    if not isinstance(car_master, list) or not all(isinstance(name, str) for name in car_master):
+        return jsonify({"error": "car_master must be a list of strings."}), 400
+    if not isinstance(main_hierarchy, list) or not all(
+        isinstance(row, dict) and "item_name" in row for row in main_hierarchy
+    ):
+        return jsonify({"error": "main_hierarchy must be a list of objects each containing at least 'item_name'."}), 400
+    if not isinstance(item_stock, list) or not all(
+        isinstance(row, dict) and "item_name" in row and "qty" in row for row in item_stock
+    ):
+        return jsonify({"error": "item_stock must be a list of objects each containing 'item_name' and 'qty'."}), 400
+
+    try:
+        # Reuses the exact same write paths a local Tally-sourced refresh
+        # uses -- this data just came from a POST body instead of a fetch.
+        save_car_master_to_file(car_master)
+        save_main_hierarchy_to_file(main_hierarchy)
+        _save_item_stock_data(item_stock)
+        load_data(refresh_first=False)
+    except Exception as exc:
+        logger.exception("Cloud intake sync_data failed to apply pushed data")
+        return jsonify({"error": f"Failed to apply pushed data: {exc}"}), 500
+
+    logger.info(
+        "Cloud intake: received and applied pushed data (%d cars, %d hierarchy rows, %d stock rows)",
+        len(car_master), len(main_hierarchy), len(item_stock),
+    )
+    return jsonify({
+        "ok": True,
+        "car_count": len(car_master),
+        "hierarchy_rows": len(main_hierarchy),
+        "stock_rows": len(item_stock),
+    })
 
 
 @app.route("/reload", methods=["POST"])

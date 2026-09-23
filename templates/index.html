@@ -4535,6 +4535,15 @@ async function refreshStock() {
             return;
         }
 
+        if (data.cloud_mode) {
+            showError(data.message || "Manual Tally refresh isn't available on this instance.");
+            if (statusEl) {
+                statusEl.textContent = data.message || "Manual Tally refresh isn't available on this instance.";
+                statusEl.style.color = "#b42318";
+            }
+            return;
+        }
+
         if (data.ok === false && data.busy) {
             showError(data.message || "Full refresh is in progress. Please wait.");
             if (statusEl) {
