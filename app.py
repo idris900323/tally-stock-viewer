@@ -26,6 +26,7 @@ from urllib.parse import quote
 from itsdangerous import TimestampSigner, BadSignature, SignatureExpired
 from PIL import Image, ImageOps
 
+import cloud_backup
 import database as db
 import image_scanner
 from api.search import search_bp, set_search_dependencies
@@ -1133,6 +1134,11 @@ def start_background_startup_tasks():
 
         if item_export_enabled:
             schedule_item_export(initial_delay=10)
+
+        # 120s: after the item export (10s) and startup full refresh (45s)
+        # so cloud backup doesn't compete with them for Tally/disk I/O.
+        # No-ops cleanly if GDRIVE_* env vars aren't set (see cloud_backup.is_configured()).
+        cloud_backup.schedule(initial_delay=120)
 
     thread = threading.Thread(target=_startup_routine, daemon=True)
     thread.start()
@@ -4384,6 +4390,85 @@ def system_download_backup():
         as_attachment=True,
         download_name=f"backup_{timestamp}.zip",
     )
+
+
+@app.route("/admin/system/cloud_backup/status")
+@admin_required
+@system_device_required
+def system_cloud_backup_status():
+    return jsonify(cloud_backup.get_status())
+
+
+@app.route("/admin/system/cloud_backup/sync_now", methods=["POST"])
+@admin_required
+@system_device_required
+def system_cloud_backup_sync_now():
+    if not cloud_backup.is_configured():
+        return jsonify({"error": "Cloud backup is not configured. Set GDRIVE_OAUTH_CLIENT_SECRETS_PATH, GDRIVE_OAUTH_TOKEN_PATH, and GDRIVE_BACKUP_FOLDER_ID in .env."}), 400
+
+    # Fails fast and synchronously here -- run_sync()/build_drive_service()
+    # never open a browser themselves any more (see authorize() in
+    # cloud_backup.py), specifically so a background sync thread can never
+    # freeze waiting on an abandoned OAuth tab. Checking here too (on top
+    # of run_sync()'s own NotAuthorizedError handling) means the admin
+    # sees this immediately instead of via a poll a moment later.
+    if not cloud_backup.is_authorized():
+        return jsonify({"error": "Not yet authorized — click Authorize Google Drive first."}), 400
+
+    # Atomic acquire-in-caller / release-in-finally, same pattern as
+    # full_refresh()/FULL_REFRESH_LOCK -- a plain "is one running?" check
+    # here would race a second tab or a page-refresh retrigger (both could
+    # pass the check before either sets running=True). Acquiring the real
+    # lock synchronously means only one request can ever win it.
+    if not cloud_backup.SYNC_LOCK.acquire(blocking=False):
+        return jsonify({"started": False, "already_running": True}), 409
+
+    def _run():
+        try:
+            cloud_backup.run_sync(triggered_by="manual")
+        finally:
+            cloud_backup.SYNC_LOCK.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"started": True})
+
+
+@app.route("/admin/system/cloud_backup/stop", methods=["POST"])
+@admin_required
+@system_device_required
+def system_cloud_backup_stop():
+    return jsonify(cloud_backup.request_stop())
+
+
+@app.route("/admin/system/cloud_backup/auth_status")
+@admin_required
+@system_device_required
+def system_cloud_backup_auth_status():
+    return jsonify(cloud_backup.get_auth_status())
+
+
+@app.route("/admin/system/cloud_backup/authorize", methods=["POST"])
+@admin_required
+@system_device_required
+def system_cloud_backup_authorize():
+    if not Config.GDRIVE_OAUTH_CLIENT_SECRETS_PATH:
+        return jsonify({"error": "GDRIVE_OAUTH_CLIENT_SECRETS_PATH is not set in .env."}), 400
+
+    # Same acquire-in-caller / release-in-finally pattern as SYNC_LOCK,
+    # but a completely separate lock -- this action never touches
+    # SYNC_LOCK/run_sync() at all, so an abandoned browser tab here can
+    # never block (or be blocked by) a sync.
+    if not cloud_backup.AUTH_LOCK.acquire(blocking=False):
+        return jsonify({"started": False, "already_running": True}), 409
+
+    def _run():
+        try:
+            cloud_backup.authorize()
+        finally:
+            cloud_backup.AUTH_LOCK.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"started": True})
 
 
 @app.route("/admin/system/find_duplicate_images")
