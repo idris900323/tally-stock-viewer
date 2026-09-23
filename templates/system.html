@@ -542,14 +542,18 @@ async function pollUntilBackUp() {
         await new Promise(resolve => setTimeout(resolve, 3000));
         try {
             await fetchJson("/admin/system/status");
-            document.getElementById("deploySuccess").textContent = "Server is back up. Refreshing status...";
-            await loadDeploymentStatus();
+            // The server is genuinely back (new process, possibly new code)
+            // -- reload the whole page instead of just re-fetching the
+            // deployment card, so every panel picks up fresh data/markup/
+            // scripts instead of the admin having to refresh by hand.
+            document.getElementById("deploySuccess").textContent = "Server is back up. Reloading...";
+            setTimeout(() => window.location.reload(), 500);
             return;
         } catch (err) {
             // still restarting; keep polling
         }
     }
-    document.getElementById("deploySuccess").textContent = "Server did not respond yet — refresh this page manually in a moment.";
+    document.getElementById("deploySuccess").textContent = "Server did not respond within 30 seconds — refresh this page manually in a moment.";
 }
 
 async function pullAndRestart() {
