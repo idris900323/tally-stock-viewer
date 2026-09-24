@@ -25,6 +25,7 @@ size, mtime_ns, hash (optional, lazily filled)}. It is saved after every
 single file operation succeeds, so an interrupted run never has to redo
 work it already finished.
 """
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -769,36 +770,105 @@ def _delete_file(service, manifest, relative_path):
 # Verification (Part 5)
 # ---------------------------------------------------------------------------
 
-def _list_drive_files_recursive(service, root_folder_id):
-    """Real files.list against the target folder, walked recursively.
-    Returns (file_count, total_size_bytes). This is the ground truth Part 5
-    compares the manifest's claims against."""
+# Bounded concurrency for the verification listing below -- enough to keep
+# several folder-listing calls' network round-trips overlapping instead of
+# sitting idle between them, while _pace()'s own MIN_CALL_INTERVAL_SECONDS
+# floor (unchanged, still respected by every single call) keeps the actual
+# dispatch rate well under Drive's per-user limits regardless of thread count.
+LIST_CONCURRENCY = 15
+
+_thread_local = threading.local()
+
+
+def _get_thread_local_drive_service():
+    """A fresh googleapiclient service -- and therefore a fresh, unshared
+    httplib2 transport -- per thread, used only by the concurrent
+    verification listing below. Necessary because googleapiclient's http
+    transport is NOT thread-safe: sharing one `service` object across
+    threads was confirmed for real to corrupt the SSL connection
+    (ssl.SSLError: DECRYPTION_FAILED_OR_BAD_RECORD_MAC), not just serialize
+    or slow down. Cheap to build -- no network call, since cache_discovery
+    is off but well-known APIs like Drive v3 ship a bundled static
+    discovery doc -- and reuses the same already-valid/refreshed
+    credentials already loaded from disk this run, so no extra OAuth
+    traffic per thread."""
+    service = getattr(_thread_local, "drive_service", None)
+    if service is None:
+        from googleapiclient.discovery import build
+
+        credentials = _load_saved_credentials()
+        service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        _thread_local.drive_service = service
+    return service
+
+
+def _list_one_folder(folder_id):
+    """Lists every direct child of one folder (all pages). Returns
+    (file_count, total_size, subfolder_ids) for just this folder's
+    immediate children -- recursion is orchestrated by the caller so
+    sibling folders can be dispatched concurrently instead of one at a
+    time. Uses a thread-local service (see above), still through
+    call_with_backoff for the same per-call retry/backoff behavior as
+    every other Drive API call in this module."""
+    service = _get_thread_local_drive_service()
     file_count = 0
     total_size = 0
-    folder_queue = [root_folder_id]
-
-    while folder_queue:
-        folder_id = folder_queue.pop()
-        page_token = None
-        while True:
-            response = call_with_backoff(
-                lambda: service.files().list(
-                    q=f"'{folder_id}' in parents and trashed = false",
-                    fields="nextPageToken, files(id, mimeType, size)",
-                    pageSize=1000,
-                    pageToken=page_token,
-                    spaces="drive",
-                )
+    subfolder_ids = []
+    page_token = None
+    while True:
+        response = call_with_backoff(
+            lambda: service.files().list(
+                q=f"'{folder_id}' in parents and trashed = false",
+                fields="nextPageToken, files(id, mimeType, size)",
+                pageSize=1000,
+                pageToken=page_token,
+                spaces="drive",
             )
-            for item in response.get("files", []):
-                if item.get("mimeType") == DRIVE_FOLDER_MIME_TYPE:
-                    folder_queue.append(item["id"])
-                else:
-                    file_count += 1
-                    total_size += int(item.get("size") or 0)
-            page_token = response.get("nextPageToken")
-            if not page_token:
-                break
+        )
+        for item in response.get("files", []):
+            if item.get("mimeType") == DRIVE_FOLDER_MIME_TYPE:
+                subfolder_ids.append(item["id"])
+            else:
+                file_count += 1
+                total_size += int(item.get("size") or 0)
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return file_count, total_size, subfolder_ids
+
+
+def _list_drive_files_recursive(service, root_folder_id):
+    """Real files.list against the target folder, walked recursively and
+    CONCURRENTLY (bounded to LIST_CONCURRENCY folders in flight at once).
+    Every folder is still listed exactly once and every file still counted
+    exactly once -- same guarantee as a sequential walk, only the dispatch
+    is concurrent, not what gets checked. Returns (file_count,
+    total_size_bytes). This is the ground truth Part 5 compares the
+    manifest's claims against.
+
+    `service` is accepted for call-site compatibility with the rest of this
+    module (the apply phase's single-threaded calls all share it safely)
+    but isn't used directly here -- each worker thread builds its own via
+    _get_thread_local_drive_service() instead (see why above)."""
+    file_count = 0
+    total_size = 0
+    pending_folder_ids = {root_folder_id}
+    in_flight = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=LIST_CONCURRENCY) as pool:
+        while pending_folder_ids or in_flight:
+            while pending_folder_ids and len(in_flight) < LIST_CONCURRENCY:
+                folder_id = pending_folder_ids.pop()
+                future = pool.submit(_list_one_folder, folder_id)
+                in_flight[future] = folder_id
+
+            done, _pending = concurrent.futures.wait(in_flight.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                in_flight.pop(future)
+                folder_file_count, folder_size, subfolder_ids = future.result()
+                file_count += folder_file_count
+                total_size += folder_size
+                pending_folder_ids.update(subfolder_ids)
 
     return file_count, total_size
 
@@ -835,7 +905,7 @@ def _verify(service, manifest):
 # Sync run (Parts 3-5)
 # ---------------------------------------------------------------------------
 
-def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skipped=0, error=None, verification=None):
+def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skipped=0, error=None, verification=None, phase_timing=None):
     return {
         "started_at": started_at,
         "finished_at": datetime.now().isoformat(),
@@ -846,6 +916,7 @@ def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skippe
         "skipped": skipped,
         "error": error,
         "verification": verification,
+        "phase_timing": phase_timing,
     }
 
 
@@ -892,6 +963,14 @@ def run_sync(triggered_by="schedule"):
         service = build_drive_service()
         manifest = load_manifest()
 
+        # Phase timing (Part 7): logged separately so a slow run's actual
+        # bottleneck is visible without guessing -- change detection is
+        # local disk I/O (stat every included file), the apply phase is
+        # real Drive API calls for only what actually changed, verification
+        # is a fresh recursive Drive listing regardless of how few files
+        # changed. These can have very different costs at real scale.
+        phase_started = time.monotonic()
+
         current_files = dict(_iter_included_files())
         new_paths, changed_paths, deleted_paths, unchanged_count, computed_hashes = classify_changes(
             manifest, current_files
@@ -901,11 +980,14 @@ def run_sync(triggered_by="schedule"):
         # ends up needing to run (e.g. every other file was also unchanged).
         save_manifest(manifest)
 
+        change_detection_seconds = time.monotonic() - phase_started
         logger.info(
-            "Cloud backup: %s new, %s changed, %s deleted, %s unchanged",
-            len(new_paths), len(changed_paths), len(deleted_paths), unchanged_count,
+            "Cloud backup: %s new, %s changed, %s deleted, %s unchanged (change detection took %.2fs)",
+            len(new_paths), len(changed_paths), len(deleted_paths), unchanged_count, change_detection_seconds,
         )
         _progress_reset(len(deleted_paths) + len(new_paths) + len(changed_paths), unchanged_count)
+
+        phase_started = time.monotonic()
 
         for relative_path in deleted_paths:
             if _cancel_event.is_set():
@@ -962,24 +1044,43 @@ def run_sync(triggered_by="schedule"):
                 _progress_note_failure(relative_path, short_error)
                 _progress_finish_item("failed")
 
+        apply_seconds = time.monotonic() - phase_started
+        logger.info("Cloud backup: apply phase (upload/update/delete) took %.2fs", apply_seconds)
+
+        verification_seconds = 0.0
         if cancelled:
             status = "stopped"
             logger.info("Cloud backup sync stopped by request (triggered_by=%s)", triggered_by)
         else:
+            phase_started = time.monotonic()
             verification = _verify(service, manifest)
+            verification_seconds = time.monotonic() - phase_started
             if errors:
                 status = "partial"
             elif not verification["ok"]:
                 status = "partial"
             else:
                 status = "success"
-            logger.info("Cloud backup sync finished: %s", status)
+            logger.info(
+                "Cloud backup sync finished: %s (verification took %.2fs)",
+                status, verification_seconds,
+            )
+        logger.info(
+            "Cloud backup: phase timing -- change_detection=%.2fs apply=%.2fs verification=%.2fs total=%.2fs",
+            change_detection_seconds, apply_seconds, verification_seconds,
+            change_detection_seconds + apply_seconds + verification_seconds,
+        )
 
         summary = _build_run_summary(
             started_at, status,
             added=added, updated=updated, deleted=deleted_count, skipped=unchanged_count,
             error="; ".join(errors) if errors else None,
             verification=verification,
+            phase_timing={
+                "change_detection_seconds": round(change_detection_seconds, 2),
+                "apply_seconds": round(apply_seconds, 2),
+                "verification_seconds": round(verification_seconds, 2),
+            },
         )
     except NotAuthorizedError as exc:
         # build_drive_service() never opens a browser itself (see
