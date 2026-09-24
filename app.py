@@ -147,6 +147,14 @@ PUBLIC_ENDPOINTS = {
     # check inside the view itself (see intake_sync_data()), same "missing
     # = 403" discipline as every other optional secret in this codebase.
     "intake_sync_data",
+    # Called by an automated, unauthenticated prober (a PaaS host's HTTP
+    # health check), not a browser -- was previously gated behind the login
+    # wall like every other route, so an anonymous health-check request got
+    # a 401 instead of the intended 200/503 JSON, which made Render's edge
+    # treat the whole instance as unhealthy and refuse to route any real
+    # traffic to it (502, with zero request logs since the edge never
+    # proxied the request through). health() itself returns no secrets.
+    "health",
 }
 
 db.init_database()
