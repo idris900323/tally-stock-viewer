@@ -4,6 +4,18 @@
     <title>Super Seatings</title>
     <link rel="icon" type="image/jpeg" href="{{ url_for('static', filename='logo.jpg') }}">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if not is_admin %}
+    <!-- Installable PWA -- customer sessions only. Admin never sees a
+         manifest link, an install prompt, or a service worker registration
+         (see the matching customer-only conditional around the SW
+         registration script near the end of this file). -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <meta name="theme-color" content="#1f6feb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Super Seatings">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+    {% endif %}
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='shared.css') }}">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -580,6 +592,66 @@
             gap: 16px;
             flex-wrap: wrap;
             margin-bottom: 14px;
+        }
+
+        /* Recently Viewed (customer-only, Part 2) -- a compact horizontal
+           scroll row, deliberately separate from #designsList's grid so it
+           never shares markup/logic with the main design cards it links
+           back into. */
+        .recently-viewed-section h2 {
+            margin: 0 0 12px;
+            font-size: 17px;
+        }
+
+        .recently-viewed-list {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .recently-viewed-card {
+            flex: 0 0 auto;
+            width: 108px;
+            background: none;
+            border: 0;
+            padding: 0;
+            cursor: pointer;
+            text-align: left;
+            font: inherit;
+            color: inherit;
+        }
+
+        .recently-viewed-thumb {
+            width: 108px;
+            height: 108px;
+            object-fit: cover;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            display: block;
+            background: var(--bg);
+        }
+
+        .recently-viewed-label {
+            margin-top: 6px;
+            font-size: 12px;
+            line-height: 1.3;
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .recently-viewed-car {
+            margin-top: 2px;
+            font-size: 11px;
+            color: var(--muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         #designsList {
@@ -1825,6 +1897,18 @@
     <div id="errorMsg" class="notice error"></div>
     <div id="infoMsg" class="notice success"></div>
 
+    {% if not is_admin %}
+    <!-- Recently Viewed (customer-only). Populated entirely client-side
+         from localStorage (see recordRecentlyViewed()/renderRecentlyViewed())
+         -- deliberately per-device, not per-account, since customer access
+         codes are shared by multiple real people. Hidden whenever the list
+         is empty. -->
+    <div id="recentlyViewedSection" class="panel recently-viewed-section" style="display:none;">
+        <h2>Recently Viewed</h2>
+        <div id="recentlyViewedList" class="recently-viewed-list"></div>
+    </div>
+    {% endif %}
+
     <div id="designsContainer" class="panel designs-container">
         <div class="designs-header">
             <h2 style="margin:0;"><span id="designsHeaderPrefix">Available Designs for</span> <span id="selectedCarName"></span></h2>
@@ -1833,7 +1917,7 @@
         <ul id="designsList"></ul>
     </div>
 
-    <footer class="contact-footer">
+    <footer class="contact-footer" id="contactUsSection">
         <h2>Contact Us</h2>
         <p>No. 1, Ramasamy Street, Woods Road, Anna Salai, Chennai - 600002</p>
         <p><a href="tel:+919500048983">+91 95000 48983</a></p>
@@ -2388,10 +2472,120 @@ function openImageModal(button) {
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
     openModalWithBackSupport(hideImageModalUI);
+
+    if (isCustomer) {
+        recordRecentlyViewedFromButton(button);
+    }
 }
 
 function closeImageModal() {
     closeModalWithBackSupport(hideImageModalUI);
+}
+
+// ---------------------------------------------------------------------------
+// Recently Viewed (customer-only). Purely additive: reads button.dataset
+// the same way displayModalImage() above already does, never touches modal/
+// swipe/grid state. Per-device localStorage, not per-account -- customer
+// access codes are shared by multiple real people, so server-side per-
+// account tracking would mix different people's history together.
+// ---------------------------------------------------------------------------
+const RECENTLY_VIEWED_STORAGE_KEY = "superSeatingsRecentlyViewed";
+const RECENTLY_VIEWED_MAX = 10;
+
+function getRecentlyViewed() {
+    try {
+        const raw = window.localStorage.getItem(RECENTLY_VIEWED_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        // Private browsing / storage disabled / corrupted value -- fail
+        // quiet, this feature is a convenience, never a requirement.
+        return [];
+    }
+}
+
+function saveRecentlyViewed(list) {
+    try {
+        window.localStorage.setItem(RECENTLY_VIEWED_STORAGE_KEY, JSON.stringify(list));
+    } catch (error) {
+        // Same reasoning as getRecentlyViewed() -- never let this break browsing.
+    }
+}
+
+function recentlyViewedEntryKey(entry) {
+    // image_id is the stable identity when present; falls back to the
+    // car+label combo for the rare placeholder/unmapped case (openImageModal
+    // can be reached from those too), matching the same "car+item" identity
+    // the spec calls out as the fallback.
+    return entry.imageId ? `id:${entry.imageId}` : `car:${entry.car}|item:${entry.label}`;
+}
+
+function recordRecentlyViewed(entry) {
+    if (!entry.label) {
+        return;
+    }
+    const key = recentlyViewedEntryKey(entry);
+    const list = getRecentlyViewed().filter(existing => recentlyViewedEntryKey(existing) !== key);
+    list.unshift(entry);
+    saveRecentlyViewed(list.slice(0, RECENTLY_VIEWED_MAX));
+    renderRecentlyViewed();
+}
+
+function recordRecentlyViewedFromButton(button) {
+    const carSelect = document.getElementById("carSelect");
+    recordRecentlyViewed({
+        imageId: button.dataset.imageId || "",
+        car: carSelect ? carSelect.value : "",
+        label: button.dataset.label || "",
+        category: button.dataset.category || "",
+        thumbnailSrc: button.dataset.src || "",
+        viewedAt: new Date().toISOString(),
+    });
+}
+
+function renderRecentlyViewed() {
+    const section = document.getElementById("recentlyViewedSection");
+    const list = document.getElementById("recentlyViewedList");
+    if (!section || !list) {
+        // Admin sessions never render this section's markup at all
+        // (Jinja-gated to customer sessions only) -- nothing to do.
+        return;
+    }
+    const items = getRecentlyViewed();
+    if (items.length === 0) {
+        section.style.display = "none";
+        list.innerHTML = "";
+        return;
+    }
+    section.style.display = "";
+    list.innerHTML = items.map((item, index) => `
+        <button type="button" class="recently-viewed-card" data-recently-viewed-index="${index}" onclick="jumpToRecentlyViewed(${index})">
+            <img class="recently-viewed-thumb" src="${getImageSource(escapeHtml(item.thumbnailSrc))}" alt="${escapeHtml(item.label)}" loading="lazy">
+            <div class="recently-viewed-label">${escapeHtml(item.label)}</div>
+            <div class="recently-viewed-car">${escapeHtml(stripShelfCodeForDisplay(item.car))}</div>
+        </button>
+    `).join("");
+}
+
+async function jumpToRecentlyViewed(index) {
+    const items = getRecentlyViewed();
+    const item = items[index];
+    if (!item || !item.car) {
+        return;
+    }
+    setSelect2Value("#carSelect", item.car, stripShelfCodeForDisplay(item.car));
+    setUrlCarParam(item.car);
+    updateClearButtonVisibility();
+    await loadDesigns();
+
+    const buttons = getMappedThumbnailButtons();
+    const match = buttons.find(button =>
+        item.imageId ? button.dataset.imageId === item.imageId : button.dataset.label === item.label
+    );
+    if (match) {
+        match.scrollIntoView({ behavior: "smooth", block: "center" });
+        openImageModal(match);
+    }
 }
 
 async function copyImageToClipboard(src) {
@@ -4081,6 +4275,36 @@ function maybeOpenCategorySessionFromUrl() {
     enterCategoryAssignMode();
 }
 
+// Home screen shortcuts (manifest.json's "shortcuts" array) deep-link here
+// with ?section=recently-viewed or ?section=contact-us -- one-shot, same
+// pattern as MANAGE_CATEGORIES_QUERY_PARAM above: read once, strip
+// immediately, so a later refresh/bookmark of the resulting URL doesn't
+// re-trigger the scroll on every visit.
+const SECTION_QUERY_PARAM = "section";
+const SECTION_ELEMENT_IDS = {
+    "recently-viewed": "recentlyViewedSection",
+    "contact-us": "contactUsSection",
+};
+
+function maybeScrollToSectionFromUrl() {
+    const url = new URL(window.location.href);
+    const section = url.searchParams.get(SECTION_QUERY_PARAM);
+    if (!section) {
+        return;
+    }
+    url.searchParams.delete(SECTION_QUERY_PARAM);
+    history.replaceState(null, "", url.toString());
+
+    if (!isCustomer) {
+        return;
+    }
+    const elementId = SECTION_ELEMENT_IDS[section];
+    const el = elementId && document.getElementById(elementId);
+    if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+}
+
 // Last refresh_status payload seen by updateTimestamp(), reused by
 // checkTimestampFreshness() so the stale-data banner reflects the most
 // recent known reason without polling /refresh_status on its own timer.
@@ -4587,6 +4811,10 @@ window.addEventListener("DOMContentLoaded", () => {
         // is a no-op (hides the indicator) if nothing is running.
         startBadgeRegenPolling();
     }
+    if (isCustomer) {
+        renderRecentlyViewed();
+        maybeScrollToSectionFromUrl();
+    }
     setInterval(checkTimestampFreshness, 10000);
 
     const designsList = document.getElementById("designsList");
@@ -4645,6 +4873,20 @@ document.getElementById("imageModal").addEventListener("click", event => {
     }
 });
 </script>
+{% if not is_admin %}
+<script>
+// Service worker registration -- customer sessions only (see the matching
+// customer-only conditional around the manifest link in <head>).
+// Installability is a nice-to-have: a failed/unsupported registration must
+// never break normal browsing, so this only ever logs, never surfaces an
+// error to the UI.
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}").catch(() => {});
+    });
+}
+</script>
+{% endif %}
 </body>
 </html>
 

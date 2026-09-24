@@ -18,12 +18,13 @@ import pandas as pd
 from collections import defaultdict
 from io import BytesIO
 import openpyxl
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from logging.handlers import RotatingFileHandler
 import zipfile
 from urllib.parse import quote
 
+from flask.sessions import SecureCookieSessionInterface
 from itsdangerous import TimestampSigner, BadSignature, SignatureExpired
 from PIL import Image, ImageOps
 
@@ -41,6 +42,33 @@ app = Flask(__name__)
 app.config.from_object(Config)
 app.secret_key = app.config["SECRET_KEY"]
 app.register_blueprint(search_bp)
+
+CUSTOMER_SESSION_LIFETIME = timedelta(days=90)
+
+
+class _RoleAwareSessionInterface(SecureCookieSessionInterface):
+    """Customer sessions (PWA installs, shared access codes used on a
+    personal phone) get a long-lived cookie so logging in isn't a recurring
+    chore; admin sessions are untouched -- same PERMANENT_SESSION_LIFETIME
+    (SESSION_TIMEOUT_HOURS) as before this existed.
+
+    A per-role app.config["PERMANENT_SESSION_LIFETIME"] mutation was
+    considered and rejected: waitress serves requests from a thread pool,
+    so temporarily overwriting that shared app-config value for the
+    duration of one request would race against any other request being
+    handled concurrently on a different thread. Overriding
+    get_expiration_time() instead reads the role already present in this
+    one session being saved -- no shared mutable state, no race."""
+
+    def get_expiration_time(self, app, session):
+        if session.get("role") == "customer":
+            if not session.permanent:
+                return None
+            return datetime.now(timezone.utc) + CUSTOMER_SESSION_LIFETIME
+        return super().get_expiration_time(app, session)
+
+
+app.session_interface = _RoleAwareSessionInterface()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
