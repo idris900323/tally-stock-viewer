@@ -62,6 +62,17 @@ def _configure_logging():
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
 
+    # Also mirror everything to stdout. Previously ALL logging-module output
+    # (including waitress's own "Serving on http://..." startup line and any
+    # logger.exception() from a background thread) went only to the file --
+    # invisible on a host like Render whose deploy log only shows stdout/
+    # stderr, which made cloud startup failures undiagnosable from the log
+    # viewer alone.
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler) for h in root.handlers):
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        root.addHandler(console_handler)
+
 
 _configure_logging()
 logger = logging.getLogger(__name__)
