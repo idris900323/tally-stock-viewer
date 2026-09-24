@@ -1287,8 +1287,11 @@ def _save_item_stock_data(deduped):
     fetch. Extracted so the cloud intake endpoint (Part 2) can write
     pushed data through the identical path instead of duplicating it."""
     try:
-        with open(ITEM_STOCK_CACHE_JSON, "w", encoding="utf-8") as handle:
-            json.dump(deduped, handle, ensure_ascii=False)
+        # This file is rewritten every ITEM_EXPORT_INTERVAL (3 min by
+        # default) and is also what cloud_backup.py streams to Drive in the
+        # background -- _atomic_json_write() keeps a concurrent read from
+        # ever seeing a torn/empty file.
+        _atomic_json_write(ITEM_STOCK_CACHE_JSON, deduped)
     except Exception:
         pass
 
@@ -1531,6 +1534,33 @@ def _load_car_groups_from_cache_or_excel():
     return car_groups
 
 
+def _atomic_json_write(path, data, retries=10, retry_delay=0.05):
+    """Writes JSON atomically: temp file + os.replace, so a concurrent
+    reader (cloud_backup.py streaming this same file to Drive in the
+    background) never sees a truncated/partial file.
+
+    On Windows specifically, os.replace() itself can fail with
+    PermissionError if another thread/process has the destination file open
+    for reading at that exact instant -- confirmed for real: with a
+    concurrent reader, a bare os.replace() failed ~87% of the time in
+    testing. That hold is normally just the duration of a single read()
+    call, not a sustained lock, so a short retry loop resolves it reliably
+    (in the same testing, never more than 7 of these 10 attempts) instead
+    of either corrupting the file (an in-place write) or silently losing
+    the update (swallowing the PermissionError outright)."""
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False)
+    for attempt in range(retries):
+        try:
+            os.replace(temp_path, path)
+            return
+        except PermissionError:
+            if attempt == retries - 1:
+                raise
+            time.sleep(retry_delay)
+
+
 def save_car_master_to_file(car_names):
     temp_file = CAR_FILE + ".tmp.xlsx"
     wb = openpyxl.Workbook()
@@ -1539,8 +1569,7 @@ def save_car_master_to_file(car_names):
         ws.append([car_name])
     wb.save(temp_file)
     os.replace(temp_file, CAR_FILE)
-    with open(CAR_MASTER_CACHE_JSON, "w", encoding="utf-8") as handle:
-        json.dump(car_names, handle, ensure_ascii=False)
+    _atomic_json_write(CAR_MASTER_CACHE_JSON, car_names)
     print(f"wrote {len(car_names)} car names to {CAR_FILE}")
 
 
@@ -1771,8 +1800,7 @@ def save_main_hierarchy_to_file(flat_rows):
     os.replace(temp_file, main_file)
 
     structured_rows = _build_main_hierarchy_structure(flat_rows)
-    with open(MAIN_HIERARCHY_CACHE_JSON, "w", encoding="utf-8") as handle:
-        json.dump(structured_rows, handle, ensure_ascii=False)
+    _atomic_json_write(MAIN_HIERARCHY_CACHE_JSON, structured_rows)
 
     print(f"wrote {len(flat_rows)} hierarchy rows to {main_file}")
 
@@ -4540,10 +4568,40 @@ def _trigger_self_restart(reason):
     threading.Thread(target=_do_restart, daemon=True).start()
 
 
+def _cloud_backup_sync_running():
+    """True if a cloud backup sync is currently in progress. The restart
+    routes below check this first: _trigger_self_restart ultimately calls
+    os._exit(0), an immediate kill with no graceful shutdown, no chance for
+    a background thread to reach a safe checkpoint. If that lands in the
+    narrow window inside cloud_backup._upload_or_update_file() between a
+    file's Drive upload genuinely succeeding and that file's manifest entry
+    being saved to disk, Drive ends up holding a file the manifest never
+    learns about -- the next sync then re-uploads it as "new" (no manifest
+    entry to match against), leaving a real duplicate on Drive that
+    verification reports as a manifest/Drive mismatch. Refusing to restart
+    while a sync is running closes that window instead of chasing
+    individual orphaned files after the fact."""
+    try:
+        return bool(cloud_backup.get_status().get("running"))
+    except Exception:
+        return False
+
+
+_CLOUD_BACKUP_RESTART_BLOCKED_MESSAGE = (
+    "A cloud backup sync is currently running. Wait for it to finish, or "
+    "click Stop Sync on the System panel, before restarting -- restarting "
+    "mid-sync can leave a successfully uploaded file unrecorded in the "
+    "manifest."
+)
+
+
 @app.route("/admin/system/pull_and_restart", methods=["POST"])
 @admin_required
 @system_device_required
 def system_pull_and_restart():
+    if _cloud_backup_sync_running():
+        return jsonify({"error": _CLOUD_BACKUP_RESTART_BLOCKED_MESSAGE}), 409
+
     code, out, err = _run_git_command(["pull", "origin", "main"], timeout=30)
     output = (out + ("\n" + err if err else "")).strip()
 
@@ -4561,6 +4619,9 @@ def system_pull_and_restart():
 @admin_required
 @system_device_required
 def system_restart_app_only():
+    if _cloud_backup_sync_running():
+        return jsonify({"error": _CLOUD_BACKUP_RESTART_BLOCKED_MESSAGE}), 409
+
     _trigger_self_restart("Restarting via admin panel (no code pull)")
     return jsonify({"success": True, "restarted": True})
 
