@@ -1,8 +1,12 @@
+print("[DIAGNOSTIC] serve.py started, before any imports", flush=True)
+
 import os
 
 from waitress import serve
 from app import app, start_background_startup_tasks
 import logging
+
+print("[DIAGNOSTIC] 'from app import app' completed (app.py module-level code finished)", flush=True)
 
 # DIAGNOSTIC: confirm exactly what Render's environment actually provides
 # for PORT, before any fallback logic is applied.
@@ -25,9 +29,22 @@ except Exception:
 # never starting the background export timer at all. Start it explicitly.
 start_background_startup_tasks()
 
+print(f"[DIAGNOSTIC] start_background_startup_tasks() returned (it only starts threads, "
+      f"doesn't block, so this should print almost immediately)", flush=True)
+
 # DIAGNOSTIC: unmissable, unconditional print (not routed through the
 # logging module) so this is guaranteed to show up in Render's raw deploy
 # logs right before the bind actually happens.
 print(f"[DIAGNOSTIC] About to bind waitress to host={host!r} port={port!r}", flush=True)
 
+# NOTE: waitress.serve() itself logs "Serving on http://{host}:{port}" via
+# logging.getLogger("waitress").info(...), NOT via print() -- so with only
+# a file handler attached to the root logger, that message never reaches
+# this console either. serve() also never returns in the success case (it
+# blocks forever running the server), so the line below normally never
+# executes -- its absence, combined with every line above it having
+# printed, is itself the confirmation that we got all the way into
+# serve.run() and it's just blocking as expected, not stuck earlier.
 serve(app, host=host, port=port, threads=8)
+
+print("[DIAGNOSTIC] serve() returned -- this should only happen if the server stopped", flush=True)
