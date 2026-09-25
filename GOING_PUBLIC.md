@@ -223,10 +223,80 @@ From the panel you can:
 - tail recent logs, download a database backup, check disk usage and uptime
 - check Tally status (including the multiple-instances warning), run the Tally Performance Test, find duplicate images, and verify the Windows auto-start entry
 - list every file actually on disk in `data/share_cache/` (with real modified times) and clear the cached share-image badges on demand — useful if a shared image's category badge looks stale after a category rename and a Cloudflare edge cache is suspected of still replaying an old response
+- manage the Google Drive cloud backup (see section 11): authorize once, trigger a sync manually, watch live progress, stop a running sync, and see the last run's result and any recently skipped scheduled runs — all of it now survives a restart
 
 If `SYSTEM_ACCESS_TOKEN` is not set in `.env`, all of these routes return `403` and the panel is effectively off.
 
-## 11. If the public site goes down
+## 11. Cloud backup (Google Drive)
+
+Separate from public access, but usually set up around the same time: `cloud_backup.py` can incrementally back up `mappings.db`, the whole `S.S IMAGE` folder, and the three small JSON caches to a Google Drive folder, scheduled automatically. Off by default — nothing changes until it's configured.
+
+### One-time setup
+
+1. In the Google Cloud Console, create an OAuth Client ID of type "Desktop app" (a dedicated Google account for this is recommended, not your personal one) and download its JSON.
+2. Add to `.env`:
+
+```env
+GDRIVE_OAUTH_CLIENT_SECRETS_PATH=C:\tally_stock\data\oauth_client_secret.json
+GDRIVE_OAUTH_TOKEN_PATH=C:\tally_stock\data\gdrive_oauth_token.json
+GDRIVE_BACKUP_FOLDER_ID=<the target Drive folder's id, from its URL>
+CLOUD_BACKUP_INTERVAL=86400
+```
+
+(`CLOUD_BACKUP_INTERVAL` is in seconds — `86400` is once a day; the default if unset is `259200`, three days.)
+
+3. Restart the app, open the System panel's Cloud Backup section, and click **Authorize Google Drive** — a browser opens once for a normal Google consent screen. After that, every run refreshes the token silently; no browser step is needed again unless access is later revoked.
+4. Click **Sync Now** to confirm a first run works, or just wait for the schedule (first run 2 minutes after that restart, then every `CLOUD_BACKUP_INTERVAL`).
+
+### Day to day
+
+The Cloud Backup panel (part of `/admin/system`) shows: whether a sync is running (with a live progress log while it is), the last run's result (added/updated/deleted counts, a verification check against Drive's real contents, and how long each phase took), and any recently skipped scheduled runs (already running, or not yet authorized) with a plain-language reason. All of this now survives an app restart — it used to reset to blank on every restart even though the real backup on Drive was untouched.
+
+A **Stop Sync** button appears while a sync is running — safe to use; the next run picks up exactly where it left off. The System panel's restart buttons (`Pull Latest Code & Restart`, `Restart App Only`) refuse with a clear message while a sync is actively running, rather than killing it mid-file.
+
+## 12. Alternative: cloud deployment on Render (no Cloudflare Tunnel)
+
+The Cloudflare Tunnel approach (sections 1-10) keeps the office PC itself as the public server. A separate option — useful when the public site should stay reachable even if the office PC or its internet connection is down — is hosting a second instance on Render (or a similar PaaS) that never talks to Tally at all. Instead, the office PC pushes fresh data to it after every local refresh.
+
+This is additive, not a replacement: the office PC keeps running exactly as sections 1-10 describe; the Render instance is a second, independent deployment of the same codebase.
+
+### On Render
+
+1. Deploy this repository as a Render Web Service. Start command: `python serve.py` — it already reads Render's `PORT` env var and binds `0.0.0.0` automatically; no changes needed for that.
+2. Set Render's **Health Check Path** to `/health` (this route is public/unauthenticated specifically so Render's own automated health check can read it — every other route requires login).
+3. Set these environment variables on the Render service:
+
+```env
+DISABLE_TALLY_SCHEDULING=1
+INTAKE_SYNC_TOKEN=<a long random secret you generate>
+SYSTEM_ACCESS_TOKEN=<optional, only if you also want the System panel usable on this instance>
+FLASK_SECRET_KEY=<a unique value, same as any other deployment>
+```
+
+`DISABLE_TALLY_SCHEDULING=1` stops this instance from ever attempting a doomed direct Tally connection (no startup full refresh, no item-export timer) — it shows a clear "receives data from the office system automatically" message instead of a Tally error if someone clicks a refresh button here.
+
+### On the office PC
+
+Add to `.env`:
+
+```env
+CLOUD_SYNC_URL=https://<your-render-app>.onrender.com/admin/intake/sync_data
+CLOUD_SYNC_TOKEN=<the same INTAKE_SYNC_TOKEN value set on Render>
+```
+
+After this, every full refresh and every scheduled item-stock export also pushes the current car master / hierarchy / stock data to the Render instance in the background (a slow or failed push never delays the local job). If either value is missing, this is a clean no-op — nothing changes for a normal office-only setup.
+
+### Verifying it end to end
+
+- `https://<your-render-app>.onrender.com/health` should return `200` with `{"status": "ok", ...}`.
+- After the office PC's next refresh (or by restarting it to trigger the startup push), `https://<your-render-app>.onrender.com/` should show the same cars/designs as the office PC.
+- A real end-to-end test looks like: a POST to `/admin/intake/sync_data` with the right token returns `200` and `{"ok": true, "car_count": ..., "hierarchy_rows": ..., "stock_rows": ...}` matching the office PC's real counts.
+
+### Known Render-specific gotcha
+
+A free-tier (or otherwise suspended) Render service returns Render's own `503 "This service has been suspended by its owner"` page for every request, including the health check and the intake endpoint — this is Render's platform blocking the request before it ever reaches this app, not a bug here. If pushes are failing, check the service's own status in the Render dashboard first.
+
+## 13. If the public site goes down
 
 Check these in order:
 

@@ -250,6 +250,14 @@ A paused customer account cannot log in until it is resumed — the login page s
 
 The Accounts Password is a separate value (`ACCOUNTS_ACCESS_PASSWORD` in `.env`) set by whoever manages the system — ask them if you don't have it. It exists specifically so that a compromised or shared admin login by itself still can't reach customer account data.
 
+### Check cloud backup status
+
+If Google Drive backup is set up (see `GOING_PUBLIC.md` section 11 for first-time setup), the System panel's Cloud Backup section shows whether it's currently running (with a live log while it is), the result of the last run, and any recently skipped scheduled runs. This information now survives an app restart — it used to reset to blank on every restart even though the real backup itself was untouched. A `Sync Now` button triggers one immediately; `Stop Sync` cancels a running one safely (the next run resumes where it left off, nothing is lost).
+
+### Installing the site as an app (customers)
+
+On a customer's phone or computer, the main stock page can be installed like a normal app (an icon on the home screen, opens without browser address bars) — most browsers show an "Install" or "Add to Home Screen" option automatically after a customer visits the site a couple of times, or it can be found in the browser's menu. This is customer-only; nothing changes for the admin login. Once installed, staying logged in lasts 90 days instead of the normal 8-hour session, so a customer who installs the app doesn't need to log back in every visit.
+
 ## 8. Image scanning
 
 Run a scan when:
@@ -344,6 +352,13 @@ Run `first_time_setup.bat` again as administrator.
 
 Run `update_app.bat` — it verifies and repairs the Windows startup entry automatically on every run. If that is not possible, run `first_time_setup.bat` again as administrator to recreate it. The System panel's "Autostart" row also shows whether the entry is configured correctly.
 
+### Cloud backup shows an error, or a scheduled run was skipped
+
+Open the System panel's Cloud Backup section:
+- **"Not yet authorized"** — click `Authorize Google Drive` once (see `GOING_PUBLIC.md` section 11)
+- **"A sync was already running at the scheduled time"** — harmless; a manual sync or the previous scheduled run was still going when the next one was due. It just runs at the next scheduled time instead
+- **Verification mismatch** (Drive's real file count/size doesn't match what the app expects) — usually means a sync was interrupted by a restart at exactly the wrong moment in the past; the next successful full sync self-corrects it. Avoid restarting the app (`Pull Latest Code & Restart`, `Restart App Only`) while a sync is actively running — the panel now refuses to restart in that situation specifically to prevent this
+
 ## 11. Useful checks
 
 Health check:
@@ -383,6 +398,8 @@ Use `GOING_PUBLIC.md` for:
 - `superseatings.carxone.com`
 - Cloudflare tunnel
 - DNS and public checks
+- Google Drive cloud backup setup
+- the alternative Render cloud-deployment path
 
 Use `SOFTWARE_DEEP_DIVE.md` for:
 - code structure

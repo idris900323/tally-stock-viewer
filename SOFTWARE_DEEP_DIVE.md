@@ -59,6 +59,8 @@ Important runtime characteristics:
 - the watchdog restarts the app if the process dies or port `5000` stops responding
 - the watchdog runs as an independent thread started BEFORE `icon.run()`, deliberately not gated on tray-icon state — it used to loop on `while icon.visible:`, and because a custom pystray setup callback must set `icon.visible = True` itself (ours didn't), the watchdog silently exited on every launch and a killed server was never relaunched. Tray icon failures can no longer disable the safety net
 - System panel restarts do not depend on the watchdog at all: the restart routes spawn the detached `relaunch_helper.py`, which waits for port `5000` to be released, launches a fresh `serve.py`, writes `app.pid`, and confirms the port came back — so `Pull Latest Code & Restart` works even if `launcher.pyw` is broken or absent
+- `serve.py` also works unmodified as a cloud (Render) entry point: it reads `PORT` from the real OS environment if set and binds waitress to that port and `0.0.0.0` instead of the hardcoded `127.0.0.1:5000` (see section 4's "Server binding"); the office PC path (`PORT` unset) is byte-for-byte unchanged. It also prints a few unconditional `[DIAGNOSTIC]` lines (host/port about to bind, the raw `PORT` env var) straight to stdout, not through `logging` — added after a real Render deploy went silent for two minutes with no visible output, traced to `_configure_logging()` attaching only a file handler (see section 20) so even waitress's own "Serving on http://..." line never reached the platform's log viewer. `_configure_logging()` now also attaches a console `StreamHandler`, so this class of silent-cloud-startup problem shouldn't recur, but the raw prints stay as a belt-and-suspenders trace for the handful of lines between process start and the first log call succeeding
+- restart routes (`pull_and_restart`, `restart_app_only`) refuse with `409` while a cloud backup sync is running (see section 25) — `_trigger_self_restart()` ultimately calls `os._exit(0)`, an immediate kill with no graceful shutdown, which could otherwise land inside the narrow window in `cloud_backup._upload_or_update_file()` between a file's Drive upload succeeding and its manifest entry being saved, orphaning a real duplicate on Drive
 
 ## 4. Configuration model
 
@@ -96,6 +98,18 @@ Important configuration groups:
 ### Accounts panel password gate
 - `ACCOUNTS_ACCESS_PASSWORD` — required to unlock `/admin/accounts` and its API routes for the current session (see section 16). If unset, those routes return `403` regardless of admin session or `accounts_unlocked` state.
 
+### Cloud backup (Google Drive) — see section 25
+- `GDRIVE_OAUTH_CLIENT_SECRETS_PATH`, `GDRIVE_OAUTH_TOKEN_PATH`, `GDRIVE_BACKUP_FOLDER_ID` — all required together; missing any one keeps the feature a clean no-op
+- `CLOUD_BACKUP_INTERVAL` — seconds between scheduled syncs (default `259200` / 3 days)
+
+### Cloud deployment (push-based sync to a cloud instance) — see section 26
+- `DISABLE_TALLY_SCHEDULING` — set on a cloud instance that can never reach Tally; `"1"`/`"true"`/`"yes"`, default off
+- `INTAKE_SYNC_TOKEN` — the secret a cloud instance's `/admin/intake/sync_data` checks against; unset keeps that route `403` for everyone
+- `CLOUD_SYNC_URL`, `CLOUD_SYNC_TOKEN` — set on the OFFICE PC to push to a cloud instance's intake endpoint after each local export; either missing keeps the push a clean no-op
+
+### Server binding (`serve.py`)
+- `PORT` — read directly via `os.environ`, not through `Config`. If set (Render and most PaaS hosts always set this for web services), `serve.py` binds waitress to that port instead of the hardcoded `5000`. Always binds host `0.0.0.0` regardless — safe in both environments since actual public exposure is controlled by Cloudflare Tunnel (office PC) or the platform's own network layer (Render), never by this bind address directly.
+
 ## 5. Data files on disk
 
 The app uses a mixed model: some files are source-of-truth inputs and some are generated caches.
@@ -116,6 +130,7 @@ The app uses a mixed model: some files are source-of-truth inputs and some are g
 - `data/car_master.json` — cached car master (Stock Groups) fetched from Tally
 - `data/main_hierarchy.json` — cached parent/children hierarchy fetched from Tally; this is the file the dropdown filter (section 11), the Bulk Match catalog/category endpoints (section 13), and the `PRODUCT_CATEGORY_CACHE` fingerprint all read
 - fallback alternates such as `data/item stock list.xlsx`
+- `data/.cloud_backup_manifest.json`, `data/.cloud_backup_status.json`, `data/gdrive_oauth_token.json` — cloud backup's manifest, persisted run/skip history, and saved OAuth token (section 25); none of these three are themselves included in what gets backed up
 
 The JSON caches are used for fast lookup (quantities, hierarchy, categories).
 The Excel cache is used as a saved local stock export and fallback artifact.
@@ -566,7 +581,8 @@ Read-only diagnostic that times the Tally stock-export requests (the old three-r
 ## 20. Logging and health
 
 ### Logs
-- Flask and waitress write to `logs/app.log`
+- Flask and waitress write to `logs/app.log` via a `RotatingFileHandler` attached to the root logger in `_configure_logging()`
+- the same function also attaches a console `StreamHandler` (added after a real Render debugging session — see section 3's "diagnostic" note) so every logging-module message, including waitress's own startup line and any `logger.exception()` from a background thread, reaches stdout too, not just the file. Both handlers stay attached permanently, not just for that one diagnosis
 - `launcher.pyw` also appends operational events to the same log path
 
 ### Health endpoint
@@ -580,6 +596,8 @@ Current health output includes:
 - mapping statistics
 
 The health endpoint checks SQLite access, not live Tally reachability.
+
+`"health"` is in `PUBLIC_ENDPOINTS` (unlike every other route) — a PaaS host's automated HTTP health check is an unauthenticated prober, and before this it got a `401` login page like every other gated route instead of the `200`/`503` JSON it's built to return. Render's edge treats a failing health check as "instance unhealthy" and refuses to route any real traffic to it at all, producing a `502` at the edge with zero request logs (the edge never proxies through) — this is exactly the failure that was reproduced and fixed. On a PaaS deployment, point the platform's own Health Check Path setting at `/health`.
 
 ## 21. Remote System panel
 
@@ -596,8 +614,8 @@ Every panel route requires BOTH the admin session (`@admin_required`) AND a pair
 - `GET /admin/system` — renders the panel
 - `GET /admin/system/status` — local commit, last 10 commits, remote `origin/main` commit (via `git fetch`), and an `up_to_date` flag; degrades to `offline: true` when the fetch fails
 - `GET /admin/system/logs` — tails `logs/app.log` (up to 1000 lines)
-- `POST /admin/system/pull_and_restart` — `git pull origin main` then restart via `relaunch_helper.py`
-- `POST /admin/system/restart_app_only` — restart without pulling
+- `POST /admin/system/pull_and_restart` — `git pull origin main` then restart via `relaunch_helper.py`; refuses with `409` if a cloud backup sync is currently running (section 25)
+- `POST /admin/system/restart_app_only` — restart without pulling; same `409` guard while a cloud backup sync is running
 - `GET /admin/system/download_backup` — downloads a timestamped copy of `mappings.db`
 - `GET /admin/system/find_duplicate_images`
 - `GET /admin/system/tally_status` — Tally reachability plus the multiple-instance count, with a plain-words warning when more than one Tally is open
@@ -606,6 +624,10 @@ Every panel route requires BOTH the admin session (`@admin_required`) AND a pair
 - `GET /admin/system/share_cache_files` — read-only listing of every file actually present in `data/share_cache/` (filename, `is_badge`, size, real mtime), newest first; lets an admin confirm whether a cached badge predates a given fix by comparing mtimes, without shell/RDP access
 - `POST /admin/system/clear_badge_cache` — deletes every `*_badge_*.jpg` file from `data/share_cache/` (plain, non-badged share cache is untouched); the manual, on-demand counterpart to `BADGE_FORMAT_VERSION`'s automatic invalidation (section 22) for whenever a full sweep is wanted without a developer involved
 - `GET /admin/system/env_summary`, `GET /admin/system/disk_usage`, `GET /admin/system/uptime` — environment/diagnostic read-outs
+- `GET /admin/system/cloud_backup/status` — running state, last run (with `verification`/`phase_timing`), live progress, skipped-run history (section 25)
+- `POST /admin/system/cloud_backup/authorize` — the one-time OAuth consent flow; `GET .../auth_status` polls it
+- `POST /admin/system/cloud_backup/sync_now` — manual trigger; `400` if not yet authorized
+- `POST /admin/system/cloud_backup/stop` — cooperative cancel of an in-progress sync
 
 All git subprocess calls go through `_run_git_command()`, which passes `creationflags=subprocess.CREATE_NO_WINDOW` — the server runs under `pythonw.exe` (no console), so without this every git spawn flashed a visible terminal window on the office PC screen.
 
@@ -738,8 +760,112 @@ Each queue entry is a real link, not a JS click handler:
 - `?open_queue=` (`templates/train.html`) and `?manage_categories=1` (`templates/index.html`) are both one-shot: read once on page load, then stripped from the URL via `history.replaceState` so a later refresh or bookmark of that URL doesn't keep forcing the same panel/session open. Any new deep-link query param added to either page should follow the same read-then-strip pattern rather than leaving itself in the URL indefinitely — this includes `train.html`'s `from_add_image=1` (section 13), which is read once, stripped, and converted into a `sessionStorage` flag rather than staying in the URL
 - `from_add_image=1` (the "Add Image" deep link, section 13) is deliberately a separate, explicit URL param from `car`/`stock_item`, not inferred from their presence — other deep links (the Needs Image Matching work queue) reuse those same two params without wanting the "return to home car on confirm" behavior. Don't collapse this into "car+stock_item present" as a shortcut
 - every response from `/get_share_image_badged/<id>` carries `Cache-Control: no-cache, must-revalidate` — do not remove this. It's what stops a Cloudflare edge (or a browser) from independently replaying a stale badge after `BADGE_FORMAT_VERSION` was bumped or a category renamed; without it, `conditional=True`'s `ETag`/`Last-Modified` alone isn't enough because an edge cache can serve a full hit without ever asking the origin to revalidate
+- `googleapiclient`'s `service` object (and its underlying `httplib2` transport) is NOT thread-safe — sharing one across worker threads corrupted the SSL connection for real (`ssl.SSLError: DECRYPTION_FAILED_OR_BAD_RECORD_MAC`), not just serialized calls. Any concurrent Drive API code must build its own service per thread (see `cloud_backup._get_thread_local_drive_service()`, section 25) from the same already-loaded credentials, never pass one `service` object into worker threads
+- `car_master.json`, `main_hierarchy.json`, and `item stock list.auto.json` are written through `_atomic_json_write()` (`app.py`), not a plain `open(path, "w")` — they're read by `cloud_backup.py`'s Drive upload in the background and `item stock list.auto.json` specifically is rewritten every `TALLY_EXPORT_INTERVAL` (3 min default), so an in-place write could be read mid-truncate. On Windows specifically, a bare `os.replace()` onto a destination another thread has open for reading fails with `PermissionError` a large majority of the time (measured ~87% under a real concurrent reader) — `_atomic_json_write()` retries briefly (up to 10 attempts, short sleep between) rather than either corrupting the file or silently dropping the update; never revert this to a bare `open(path, "w")` or a non-retrying `os.replace()`
+- Jinja parses `{% ... %}` and `{{ ... }}` wherever they appear in a template file, including inside an HTML `<!-- -->` comment or a JS `//`/`/* */` comment — it has no idea it's "inside a comment". Writing English prose like "(see the matching `{% if not is_admin %}` above)" inside a template comment creates a REAL, unbalanced Jinja tag and breaks the whole template with a confusing "unexpected end of template" error, often pointing at an unrelated later line. This happened for real in this codebase (fixed by rewording two comments) and was only caught by actually rendering the template, not by reading the diff — always describe a Jinja conditional in prose without the literal `{%`/`%}`/`{{`/`}}` delimiters
 
-## 25. File map for maintenance
+## 25. Cloud backup (Google Drive)
+
+`cloud_backup.py` is a self-contained module: incremental, verified backup of `mappings.db`, the whole `S.S IMAGE` tree, and three small JSON caches (`car_master.json`, `main_hierarchy.json`, `item stock list.auto.json`) to a Google Drive folder. Entirely off (never schedules, never raises) unless all of `GDRIVE_OAUTH_CLIENT_SECRETS_PATH`/`GDRIVE_OAUTH_TOKEN_PATH`/`GDRIVE_BACKUP_FOLDER_ID` are set — same "missing = disabled" discipline as `SYSTEM_ACCESS_TOKEN`.
+
+### Authentication
+
+OAuth installed-app flow (`google_auth_oauthlib`), authenticating as a real, dedicated Google account — deliberately NOT a Service Account, which has zero personal Drive storage quota of its own (confirmed for real: it can create folders but every file upload fails with a 403). One-time setup: create a Desktop-app OAuth Client ID, download its JSON to `GDRIVE_OAUTH_CLIENT_SECRETS_PATH`, then click "Authorize Google Drive" on the System panel once — a browser opens for consent and the resulting token (with a refresh token) is saved to `GDRIVE_OAUTH_TOKEN_PATH`. Every run after that refreshes silently.
+
+`authorize()` is a dedicated, standalone action (its own `AUTH_LOCK`, its own status dict, never called from `run_sync()`/`build_drive_service()`) — the one place in this module that opens a browser, hard-timed-out at 180s. This split exists because the OAuth consent flow used to live inline inside the sync path: closing the browser tab mid-consent left the background sync thread frozen forever inside an unbounded wait for the callback, with `SYNC_LOCK` held and Stop Sync unreachable (the thread never reached its cancellation checkpoints). `build_drive_service()` now only ever loads/refreshes a saved token; if there is none, it raises `NotAuthorizedError` immediately (a fast, clean failure, not a hang).
+
+### Manifest and change detection
+
+`data/.cloud_backup_manifest.json` is the local source of truth for what Drive is believed to hold: `relative_path -> {drive_file_id, size, mtime_ns, hash (optional, lazily filled)}`, saved atomically (temp file + `os.replace`) after every single file operation succeeds — an interrupted run never has to redo finished work.
+
+`classify_changes()` uses a cheap `(size, mtime_ns)` stat comparison per file, falling back to a real SHA-256 content hash only for the ambiguous case (same size, different mtime — e.g. a touch/copy that preserved size); the hash result is cached back into the manifest so the same touched-but-identical file is never re-hashed on a later run.
+
+### Self-healing against manifest/Drive drift
+
+`_create_folder_self_healing()` / `_create_file_self_healing()` catch a `404 HttpError` from Drive on a `create` call whose `parents=[id]` references a manifest-cached folder id that was since deleted directly on Drive (by hand, or by some other process) — they drop the stale cache entry, resolve the parent fresh (recursing further up if the drift goes deeper than one folder), and retry once. `_upload_or_update_file()` does the equivalent for a stale cached FILE id (a Drive `update` 404 falls through to a fresh `create` instead of failing the item outright).
+
+### Concurrency, cancellation, progress
+
+- `SYNC_LOCK` — acquire-in-caller / release-in-`finally`, same convention as `FULL_REFRESH_LOCK`/`EXPORT_LOCK` in `app.py`. Both the scheduled job and the System panel's "Sync Now" share this, so "is a sync already running" is one atomic acquire, not a check-then-act race.
+- `_cancel_event` — cooperative "Stop Sync": checked before starting each new file/folder operation, never mid-write, so a stopped run's manifest reflects only genuinely completed items and the next run resumes the rest normally.
+- `_progress` — an in-memory dict (current item, counts, a capped 25-line action log) polled by the System panel every 1.5s while a sync runs, same lightweight shape as `full_refresh_status`. Set to `running: True` at the very start of `run_sync()`, before the (potentially multi-second, thousands-of-files) change-detection scan — not just when the file loops actually start — so a Stop Sync click during that scan is never silently dropped.
+- Every per-file failure is caught individually (`logger.exception` for the real traceback, plus a one-line UI-safe rendering via `_short_error_text()` folded into both the live progress log and the run summary's `error` string) and the loop continues — one bad file never aborts the whole run.
+
+### Phase timing
+
+`run_sync()` times its three real phases separately — change detection (local stat/hash work), apply (the actual Drive API calls for whatever changed), verification (see below) — logging each and storing them on the run summary as `phase_timing: {change_detection_seconds, apply_seconds, verification_seconds}`. Added after a real production report of a 3-minute sync for only 3 changed files; measured against a real, disposable 299-folder Drive structure (matching this machine's real local `S.S IMAGE` folder count), the sequential verification listing alone took 115.88s of that — confirming verification, not the handful of actual uploads, is what dominates a mostly-unchanged run.
+
+### Verification
+
+`_verify()` does a fresh recursive `files.list` against the real Drive folder after every non-cancelled run and compares file count + total bytes against the manifest — a genuine "did the backup actually work" check, not just "did the API calls return 200". A mismatch sets the run's status to `"partial"` and is logged as a warning with the real numbers.
+
+The listing itself (`_list_drive_files_recursive()`) is concurrent, bounded to `LIST_CONCURRENCY` (15) folders in flight at once — every folder is still listed exactly once and every file still counted exactly once, only the dispatch is concurrent. Each worker thread builds its OWN `googleapiclient` service via `_get_thread_local_drive_service()` (a `threading.local()` cache) rather than sharing one `service` object across threads: a naive shared-service version was found for real to corrupt the SSL connection (`ssl.SSLError: DECRYPTION_FAILED_OR_BAD_RECORD_MAC`) under concurrent use — `googleapiclient`'s httplib2 transport is not thread-safe. `MIN_CALL_INTERVAL_SECONDS` (the existing 0.15s pacing floor, unchanged) still applies globally across all worker threads, so concurrency only overlaps each call's network wait time, it never loosens the dispatch-rate safety margin. Measured real speedup against the same 299-folder structure: 115.88s sequential -> 47.12s concurrent (2.46x), file count/byte total identical both times — close to the theoretical floor for 300 calls at that pacing rate (~45s), so this is near the practical ceiling without loosening the rate limit itself.
+
+### Status persistence
+
+`_status["last_run"]` (the last run's full summary, including verification and phase timing) and `_skipped_runs` (missed/errored scheduled runs — see below) are both persisted to `data/.cloud_backup_status.json` (same temp-file + `os.replace` pattern as the manifest), loaded once at module import. Before this, both were in-memory only: restarting the app (a System panel restart, a crash, a reboot) wiped the last-run summary and the skip history from the System panel entirely, even though the real backup was completely untouched — which looked like "the cloud backup data disappeared." `_progress` (the live, in-flight sync state) is deliberately still not persisted; "not running" is exactly the right default after a restart.
+
+### Scheduling
+
+`schedule()` is a self-rescheduling `threading.Timer`, same pattern as `app.py`'s `schedule_item_export()`. First run 120s after startup (`app.py`'s `cloud_backup.schedule(initial_delay=120)`), then every `CLOUD_BACKUP_INTERVAL` seconds (default 3 days; the real deployment currently runs this at `86400` / daily) measured from when each run FINISHES, not a fixed clock time — so the actual time-of-day drifts a little each cycle and resets on every restart. A scheduled run that finds `SYNC_LOCK` already held, or finds the account not yet authorized, skips itself and calls `_record_skipped_run(reason, message)` rather than blocking or queuing — surfaced on the System panel (`_status_lock`-independent from `_status["last_run"]`, so a skip never overwrites the previous real run's result with silence).
+
+### System panel routes
+
+`/admin/system/cloud_backup/status` (poll), `/authorize` + `/auth_status` (the dedicated one-time OAuth action above), `/sync_now` (400 if not yet authorized), `/stop`. All under the same admin + device-pairing gate as the rest of `/admin/system/*`.
+
+## 26. Cloud deployment (push-based sync to a Render instance)
+
+A cloud-hosted instance can never reach Tally directly. Rather than have it attempt and fail doomed direct calls, it receives car master / hierarchy / item stock data PUSHED to it from the office PC after each local export succeeds. Every piece of this defaults to fully off — an install that never sets these env vars behaves exactly as it did before this feature existed.
+
+### On the cloud instance
+
+`Config.DISABLE_TALLY_SCHEDULING` (env `DISABLE_TALLY_SCHEDULING=1`) makes `start_background_startup_tasks()` skip the startup full refresh and the item-export scheduling entirely (logs a clear skip message instead) — `cloud_backup.schedule()` itself is NOT gated by this flag, since Google Drive backup is orthogonal to whether this instance talks to Tally. `_refresh_stock_data()` and `POST /full_refresh` both short-circuit with a clear `{"ok": false, "cloud_mode": true, "message": "..."}` (`full_refresh` returns `403`) instead of attempting a Tally call that can only ever fail on this instance; `templates/index.html`'s `refreshStock()` checks `data.cloud_mode` and shows that message directly rather than a generic error.
+
+`POST /admin/intake/sync_data` is the receiving end — deliberately in `PUBLIC_ENDPOINTS` (not behind the session-based login gate) since it's called by a background job on another machine, not a paired browser, with its own independent check: `X-Intake-Token` header compared via `hmac.compare_digest()` against `Config.INTAKE_SYNC_TOKEN` (empty token = route stays `403` for everyone, same "missing secret = disabled" pattern as everywhere else). On a valid token, it writes the pushed `car_master`/`main_hierarchy`/`item_stock` payload through the exact same save functions a local Tally export already uses (`save_car_master_to_file`, `save_main_hierarchy_to_file`, `_save_item_stock_data`) and calls `load_data(refresh_first=False)` to reload in-memory state — so a cloud instance's data is indistinguishable, once pushed, from data it fetched itself.
+
+### On the office PC
+
+`_push_data_to_cloud()` no-ops unless both `Config.CLOUD_SYNC_URL` and `Config.CLOUD_SYNC_TOKEN` are set. When configured, it reads the same local files a full refresh / item export just wrote (never re-derives anything) and `POST`s them to `CLOUD_SYNC_URL` with the token in `X-Intake-Token`, on a background thread so a slow/failed push never delays the local job that triggered it. Called from both `run_full_refresh_job()` and `schedule_item_export()`'s export job, after each succeeds. Wrapped in a broad try/except that only logs — a push failure is completely invisible to the local operator-facing flow.
+
+## 27. Installable PWA (customer sessions only)
+
+`static/manifest.json`, `static/sw.js`, and three icon PNGs (`static/icons/`, generated from `static/logo.jpg`) make the customer-facing view installable. Every piece of this is scoped to customer sessions — an admin session renders none of it.
+
+### Scoping
+
+`templates/index.html`'s `<head>` wraps the manifest `<link>`, the Apple meta tags (`apple-mobile-web-app-capable`, `apple-touch-icon`, etc.), and theme-color in `{% if not is_admin %}` — the same context-processor-injected flag (`inject_session_context()`, section 7) used throughout this file for role-based content. The service worker registration script (a separate, small `<script>` block right before `</body>`) is wrapped the same way. Verified with a real rendered-output check (Flask test client, both roles): zero PWA tags in the admin render, all present in the customer render.
+
+Caveat: a service worker's scope is per-origin, not per Flask session — `fetch` events don't expose the session cookie, so the SW itself has no reliable way to tell which role is browsing on a later request. Registration only ever happens for a customer, but a browser that later logs in as admin on the same device would still have an already-registered SW active. Mitigated by design, not by role-detection: `sw.js` is network-first for everything except six genuinely static files, so it's safe regardless of who it ends up serving.
+
+### Icons
+
+Generated from `static/logo.jpg` (447x447, already square) at 192px and 512px (manifest) plus 180px (`apple-touch-icon.png`). The logo's real content bounding box was measured before choosing padding (not eyeballed): it already sits at ~67% of canvas width, right at the safe-zone ratio Android's adaptive icon mask wants, so no extra padding was added. Kept the logo's own light cream background (solid, not transparent) rather than switching to brand blue — the logo isn't designed for a blue background and nothing else in the app pairs red-on-blue.
+
+### Service worker (`static/sw.js`)
+
+Network-first for everything except `STATIC_ASSETS` (`shared.css`, `shared.js`, `manifest.json`, the three icons) — those alone are cache-first, since none of them carry live business data. Every other GET (HTML navigations, `/designs`, `/cars`, `/get_stock_image`, `/update_stock`, etc.) always tries the network first; only a genuine network failure falls back, and only to a clearly-labeled "You're offline" page for a navigation (a small JSON `{"ok": false, "offline": true}` for anything else) — never to a silently-stale cached response standing in for current stock data. Deliberately no whole-app precaching or offline catalog browsing.
+
+### Home screen shortcuts
+
+`manifest.json`'s `shortcuts` array has two entries, both deep-linking to `/?section=<name>`. `templates/index.html`'s `maybeScrollToSectionFromUrl()` reads `?section=recently-viewed`/`?section=contact-us` once on load, strips it (`history.replaceState`, same one-shot pattern as `?manage_categories=1` and `?open_queue=`, section 18/23), and scrolls to `#recentlyViewedSection`/`#contactUsSection` if the session is a customer.
+
+## 28. Persistent customer login
+
+Customer sessions get a 90-day cookie instead of the standard `SESSION_TIMEOUT_HOURS` (8h); admin sessions are completely unaffected.
+
+Implemented as a custom `flask.sessions.SecureCookieSessionInterface` subclass (`_RoleAwareSessionInterface`, `app.py`, installed via `app.session_interface = _RoleAwareSessionInterface()`) whose `get_expiration_time()` checks `session.get("role")`: `"customer"` gets `now + CUSTOMER_SESSION_LIFETIME` (90 days, if `session.permanent` — which `require_login()`'s `before_request` hook already sets unconditionally on every request), anything else falls through to `super().get_expiration_time()` — Flask's own stock behavior, reading `app.permanent_session_lifetime` exactly as before this existed.
+
+A simpler-looking alternative — temporarily overwriting `app.config["PERMANENT_SESSION_LIFETIME"]` for the duration of a customer's login request — was considered and rejected: waitress serves requests from a thread pool, so that shared, mutable app-config value would race against any OTHER request being handled concurrently on a different thread while the override was in effect. Overriding `get_expiration_time()` instead reads the role off the one session object actually being saved; no shared state, no race, and admin's path is byte-for-byte the same code Flask always ran.
+
+## 29. Recently Viewed (client-side, per-device)
+
+Customer-only, `templates/index.html`. Deliberately client-side (`localStorage`, key `superSeatingsRecentlyViewed`), not server-side: customer accounts use shared access codes, so server-side per-account tracking would mix different real people's viewing history together. Per-device is the architecturally correct choice here, not just the simpler one.
+
+`recordRecentlyViewedFromButton()` hooks into the existing `openImageModal(button)` (one added call, gated on the `isCustomer` JS flag) — reads the same `button.dataset.*` attributes `displayModalImage()` already reads, so it doesn't duplicate or touch modal/swipe/grid state at all. Entries are keyed by `image_id` when present, falling back to `car+label` for the rare unmapped-placeholder case; `recordRecentlyViewed()` de-duplicates on that key (moving a re-viewed entry to the front rather than adding a second copy) and caps the list at 10, oldest evicted first.
+
+`renderRecentlyViewed()` populates a horizontal-scroll card row above the design grid (`#recentlyViewedSection`, hidden while the list is empty); each card's `jumpToRecentlyViewed()` sets the car via the existing `setSelect2Value()`/`loadDesigns()` path (the same one `restoreCarFromUrl()` uses for `?car=` deep links), then finds and reopens the matching thumbnail's modal once the design list has loaded.
+
+## 30. File map for maintenance
 
 If you need to change a behavior, start here:
 
@@ -761,3 +887,9 @@ If you need to change a behavior, start here:
 - Needs Category / Needs Image Matching work queue: `app.py` (`_compute_car_completion_stats`, `_compute_category_completion_stats`, `/api/needs_category_queue`, `/api/needs_image_matching_queue`, `_invalidate_queue_stats_cache`), `templates/train.html` (merged queue panel/tabs, `initWorkQueuesFromUrl`, `switchQueueTab`), `templates/index.html` (single "Work Queue" More menu entry, `maybeOpenCategorySessionFromUrl`)
 - security headers / robots.txt: `app.py` (`add_security_headers`, `robots_txt`, `PUBLIC_ENDPOINTS`)
 - return-to-home-car after Add Image confirm: `templates/index.html` (`addImageUrl`'s `from_add_image=1`), `templates/train.html` (`maybeStoreReturnToHomeCarFromUrl`, `clearPendingReturnToHomeCar`, `submitMapping`)
+- cloud backup (Google Drive): `cloud_backup.py` (whole module), `config.py` (`GDRIVE_*`, `CLOUD_BACKUP_INTERVAL`), `app.py` (`/admin/system/cloud_backup/*` routes, `_cloud_backup_sync_running`), `templates/system.html` (Cloud Backup panel)
+- cloud deployment (push-based sync): `config.py` (`DISABLE_TALLY_SCHEDULING`, `INTAKE_SYNC_TOKEN`, `CLOUD_SYNC_URL`, `CLOUD_SYNC_TOKEN`), `app.py` (`_push_data_to_cloud`, `/admin/intake/sync_data`, cloud-mode checks in `_refresh_stock_data`/`full_refresh`), `templates/index.html` (`refreshStock()`'s `cloud_mode` handling)
+- Render/PaaS hosting: `serve.py` (`PORT`, host binding, diagnostic prints), `app.py` (`_configure_logging`'s console handler, `"health"` in `PUBLIC_ENDPOINTS`)
+- installable PWA: `static/manifest.json`, `static/sw.js`, `static/icons/`, `templates/index.html` (customer-only `<head>` tags and SW registration, `maybeScrollToSectionFromUrl`)
+- persistent customer login: `app.py` (`_RoleAwareSessionInterface`, `CUSTOMER_SESSION_LIFETIME`)
+- Recently Viewed: `templates/index.html` (`recordRecentlyViewedFromButton`, `renderRecentlyViewed`, `jumpToRecentlyViewed`)
