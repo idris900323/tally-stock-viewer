@@ -335,6 +335,23 @@ def init_database():
             )
             """
         )
+        # Single-row table (id is always 1): the one customer-facing notice.
+        # `version` only ever increases -- even across a clear -- so a
+        # client that dismissed version N never mistakes a later, different
+        # notice for the one it already closed.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS customer_notice (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                version INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 0,
+                type TEXT NOT NULL DEFAULT 'text',
+                content TEXT NOT NULL DEFAULT '',
+                important INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT
+            )
+            """
+        )
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_name_ci ON categories(LOWER(name))")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_categories_sort_order ON categories(sort_order)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_images_car_folder ON images(car_folder)")
@@ -913,6 +930,55 @@ def get_all_categories():
             "SELECT id, name, sort_order, abbreviation FROM categories ORDER BY sort_order ASC, id ASC"
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def get_active_notice():
+    """The current customer notice as a dict, or None when there is none."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT version, type, content, important FROM customer_notice WHERE id = 1 AND active = 1"
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "version": row["version"],
+        "type": row["type"],
+        "content": row["content"],
+        "important": bool(row["important"]),
+    }
+
+
+def publish_notice(notice_type, content, important):
+    """Replaces the active notice; always bumps the version, even when
+    replacing a notice of the same type. Returns the new version."""
+    if notice_type not in ("text", "image"):
+        raise ValueError("notice type must be 'text' or 'image'")
+    with _connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO customer_notice (id, version) VALUES (1, 0)")
+        conn.execute(
+            """
+            UPDATE customer_notice
+            SET version = version + 1, active = 1, type = ?, content = ?,
+                important = ?, updated_at = datetime('now')
+            WHERE id = 1
+            """,
+            (notice_type, content, 1 if important else 0),
+        )
+        row = conn.execute("SELECT version FROM customer_notice WHERE id = 1").fetchone()
+    return row["version"]
+
+
+def set_notice_content(content):
+    """Updates the active notice's content in place (no version bump) --
+    used to swap an image notice's temp filename for its versioned one."""
+    with _connect() as conn:
+        conn.execute("UPDATE customer_notice SET content = ? WHERE id = 1", (content,))
+
+
+def clear_notice():
+    """Removes the active notice (the version counter is kept)."""
+    with _connect() as conn:
+        conn.execute("UPDATE customer_notice SET active = 0, content = '' WHERE id = 1")
 
 
 def category_exists(name):

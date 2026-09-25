@@ -92,6 +92,26 @@
             font-size: 16px;
         }
 
+        label.remember {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: none;
+            letter-spacing: 0;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        label.remember input {
+            width: 20px;
+            height: 20px;
+            padding: 0;
+            margin: 0;
+        }
+
         .notice {
             margin-bottom: 14px;
             padding: 12px 14px;
@@ -247,6 +267,11 @@
             <label for="access_code">Access Code</label>
             <input id="access_code" name="access_code" type="password" autocomplete="current-password" required>
         </div>
+
+        <label class="remember" for="remember_me">
+            <input id="remember_me" name="remember_me" type="checkbox" value="1" checked>
+            Remember me
+        </label>
 
         <div class="hint">
             Ask admin if you need account access or code reset.
