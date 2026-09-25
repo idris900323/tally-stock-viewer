@@ -2596,7 +2596,7 @@ def api_report_item():
             names.append(name)
     shown = ", ".join(names[:5]) + (f", +{len(names) - 5} more" if len(names) > 5 else "")
     details = f"{len(no_image)} without image, {len(no_category)} without category: {shown}"
-    created = db.add_customer_report(car, _normalize_lookup_key(car), details)
+    created = db.add_customer_report(car, _normalize_lookup_key(car), details, session.get("username", ""))
     return jsonify({"success": True, "created": created})
 
 
