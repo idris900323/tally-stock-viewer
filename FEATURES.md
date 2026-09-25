@@ -78,9 +78,9 @@ customer users - built and run by one person on an office PC.
 - A conservative service worker: always fetches live data first, only ever falls back to a clear "you're offline" message - it never silently shows stale stock/catalog data as if it were current
 - Customers who leave "Remember me" ticked (the default) stay logged in for 90 days instead of the normal 8-hour session; unticking it, or logging in as admin, gives the normal short session
 - Customers can long-press a design to select several and tap Share in a minimal top bar (always plain, no category badge; same 10-image batching as admin) - there is no separate select button, and the admin flow is unchanged
-- Admins manage a text notice and an image notice separately from More > Manage Notice; customers see whatever is active as one popup (text above image) that stays closed until either changes. An important text notice also shows a scrolling top banner that slides away while scrolling and returns at the top
+- Admins publish two separate things from More > Popup & Banner: a popup (text and/or image, closed only with its X, shown again only when a new one is published) and an important banner (scrolling text that customers cannot close and that slides away while scrolling and returns at the top); clearing or changing one never affects the other
 - One home-screen shortcut (Contact Us)
-- One button below a car's design list lets customers report, in a single tap, that some designs are missing an image or category; admins see these in the Work Queue's Customer Reports tab (one open report per car) and mark them resolved
+- One button below a car's design list lets customers report, in a single tap, that some designs are missing an image or category; admins see them as a numbered bell icon beside Logout (one open report per car) and mark them resolved from its dropdown
 
 ## How good is it, honestly
 

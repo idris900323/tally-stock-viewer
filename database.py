@@ -335,43 +335,60 @@ def init_database():
             )
             """
         )
-        # Two independent customer-notice slots, "text" and "image". Each
-        # slot's `version` only ever increases -- even across a clear -- so a
-        # client that dismissed a combination never mistakes later, different
-        # content for the one it already closed. `important` only ever applies
-        # to the text slot (it drives the top banner).
+        # Two unrelated customer-facing features, one single-row table each:
+        #   popup_notice  - optional text and/or image shown once per version
+        #   banner_notice - required text shown as a non-dismissible marquee
+        # Each `version` only ever increases (even across a clear) so a
+        # customer who closed version N never mistakes newer content for it.
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS notice_slots (
-                slot TEXT PRIMARY KEY CHECK (slot IN ('text', 'image')),
+            CREATE TABLE IF NOT EXISTS popup_notice (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
                 version INTEGER NOT NULL DEFAULT 0,
                 active INTEGER NOT NULL DEFAULT 0,
-                content TEXT NOT NULL DEFAULT '',
-                important INTEGER NOT NULL DEFAULT 0,
+                text TEXT NOT NULL DEFAULT '',
+                image TEXT NOT NULL DEFAULT '',
                 updated_at TEXT
             )
             """
         )
-        conn.execute("INSERT OR IGNORE INTO notice_slots (slot) VALUES ('text')")
-        conn.execute("INSERT OR IGNORE INTO notice_slots (slot) VALUES ('image')")
-        # One-time carry-over from the earlier single-notice table, if present.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS banner_notice (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                version INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 0,
+                text TEXT NOT NULL DEFAULT '',
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute("INSERT OR IGNORE INTO popup_notice (id) VALUES (1)")
+        conn.execute("INSERT OR IGNORE INTO banner_notice (id) VALUES (1)")
+        # One-time carry-over from the earlier merged two-slot table: its text
+        # slot becomes the popup text (and the banner too if it was important),
+        # its image slot the popup image. Then the old table is dropped.
         has_old = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'customer_notice'"
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notice_slots'"
         ).fetchone()
         if has_old:
-            old = conn.execute(
-                "SELECT version, active, type, content, important FROM customer_notice WHERE id = 1"
-            ).fetchone()
-            if old and old["type"] in ("text", "image"):
+            old = {r["slot"]: r for r in conn.execute(
+                "SELECT slot, version, active, content, important FROM notice_slots"
+            ).fetchall()}
+            old_text, old_image = old.get("text"), old.get("image")
+            text_on = bool(old_text and old_text["active"])
+            image_on = bool(old_image and old_image["active"])
+            if text_on or image_on:
                 conn.execute(
-                    """
-                    UPDATE notice_slots SET version = ?, active = ?, content = ?, important = ?
-                    WHERE slot = ? AND version = 0
-                    """,
-                    (old["version"], old["active"], old["content"],
-                     old["important"] if old["type"] == "text" else 0, old["type"]),
+                    "UPDATE popup_notice SET version = 1, active = 1, text = ?, image = ? WHERE id = 1 AND version = 0",
+                    (old_text["content"] if text_on else "", old_image["content"] if image_on else ""),
                 )
-            conn.execute("DROP TABLE customer_notice")
+            if text_on and old_text["important"]:
+                conn.execute(
+                    "UPDATE banner_notice SET version = 1, active = 1, text = ? WHERE id = 1 AND version = 0",
+                    (old_text["content"],),
+                )
+            conn.execute("DROP TABLE notice_slots")
         # One-tap customer reports that a car has designs missing an image or
         # category. One unresolved report per car at a time (partial unique
         # index), so repeat taps never pile up duplicate rows.
@@ -971,60 +988,73 @@ def get_all_categories():
     return [_row_to_dict(row) for row in rows]
 
 
-def get_notice_slots():
-    """Both notice slots as {"text": dict|None, "image": dict|None}; a slot
-    is None when nothing is published in it."""
+def get_popup():
+    """The active popup as {version, text, image} (image is a stored filename,
+    '' when none), or None."""
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT slot, version, content, important FROM notice_slots WHERE active = 1"
-        ).fetchall()
-    slots = {"text": None, "image": None}
-    for row in rows:
-        slots[row["slot"]] = {
-            "version": row["version"],
-            "content": row["content"],
-            "important": bool(row["important"]),
-        }
-    return slots
+        row = conn.execute(
+            "SELECT version, text, image FROM popup_notice WHERE id = 1 AND active = 1"
+        ).fetchone()
+    return _row_to_dict(row) if row else None
 
 
-def publish_notice(slot, content, important=False):
-    """Replaces one slot's notice (the other is untouched); always bumps that
-    slot's version. Only text notices can be important. Returns the version."""
-    if slot not in ("text", "image"):
-        raise ValueError("notice type must be 'text' or 'image'")
-    important = bool(important) and slot == "text"
+def publish_popup(text, image=""):
+    """Replaces the popup (text and/or image) and bumps its version."""
+    if not (text or image):
+        raise ValueError("a popup needs text or an image")
     with _connect() as conn:
         conn.execute(
             """
-            UPDATE notice_slots
-            SET version = version + 1, active = 1, content = ?, important = ?,
-                updated_at = datetime('now')
-            WHERE slot = ?
+            UPDATE popup_notice
+            SET version = version + 1, active = 1, text = ?, image = ?, updated_at = datetime('now')
+            WHERE id = 1
             """,
-            (content, 1 if important else 0, slot),
+            (text, image),
         )
-        row = conn.execute("SELECT version FROM notice_slots WHERE slot = ?", (slot,)).fetchone()
+        row = conn.execute("SELECT version FROM popup_notice WHERE id = 1").fetchone()
     return row["version"]
 
 
-def set_notice_content(slot, content):
-    """Updates a slot's content in place (no version bump) -- used to swap an
-    image notice's temp filename for its versioned one."""
+def set_popup_image(image):
+    """Swaps the stored image filename in place (no version bump) -- used to
+    replace a temp upload name with its versioned one."""
     with _connect() as conn:
-        conn.execute("UPDATE notice_slots SET content = ? WHERE slot = ?", (content, slot))
+        conn.execute("UPDATE popup_notice SET image = ? WHERE id = 1", (image,))
 
 
-def clear_notice(slot=None):
-    """Removes one slot's notice, or both when slot is None (versions kept)."""
+def clear_popup():
     with _connect() as conn:
-        if slot is None:
-            conn.execute("UPDATE notice_slots SET active = 0, content = '', important = 0")
-        else:
-            conn.execute(
-                "UPDATE notice_slots SET active = 0, content = '', important = 0 WHERE slot = ?",
-                (slot,),
-            )
+        conn.execute("UPDATE popup_notice SET active = 0, text = '', image = '' WHERE id = 1")
+
+
+def get_banner():
+    """The active banner as {version, text}, or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT version, text FROM banner_notice WHERE id = 1 AND active = 1"
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def publish_banner(text):
+    if not text:
+        raise ValueError("a banner needs text")
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE banner_notice
+            SET version = version + 1, active = 1, text = ?, updated_at = datetime('now')
+            WHERE id = 1
+            """,
+            (text,),
+        )
+        row = conn.execute("SELECT version FROM banner_notice WHERE id = 1").fetchone()
+    return row["version"]
+
+
+def clear_banner():
+    with _connect() as conn:
+        conn.execute("UPDATE banner_notice SET active = 0, text = '' WHERE id = 1")
 
 
 def add_customer_report(car, car_key, details):
