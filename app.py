@@ -2603,7 +2603,8 @@ def api_report_item():
 @app.route("/api/customer_reports")
 @admin_required
 def api_customer_reports():
-    return jsonify({"reports": db.list_open_customer_reports()})
+    reports = db.list_open_customer_reports()
+    return jsonify({"reports": reports, "count": len(reports)})
 
 
 @app.route("/admin/customer_reports/<int:report_id>/resolve", methods=["POST"])
@@ -3577,26 +3578,24 @@ def _unique_filename_in_dir(target_dir, base_name):
 
 
 # ----------------------------
-# Customer notice (single active popup/banner, managed from the More menu)
+# Customer popup and important banner (two independent features, managed from the More menu)
 # ----------------------------
 NOTICE_IMAGE_DIR = os.path.join(BASE_DIR, "data", "notice_images")
 NOTICE_TEXT_MAX_LENGTH = 1000
 
 
-def _notice_public_payload(slots):
-    """Shape sent to the browser: the two slots plus one composite version
-    that changes whenever either slot's content changes. The image slot is
-    exposed as a URL, never a filesystem path."""
-    text = slots["text"]
-    image = slots["image"]
+def _popup_public_payload(popup):
+    """The image is exposed as a URL, never a filesystem path."""
+    if not popup:
+        return None
     return {
-        "text": {"content": text["content"], "important": text["important"], "version": text["version"]} if text else None,
-        "image": {"url": url_for("notice_image", version=image["version"]), "version": image["version"]} if image else None,
-        "version": f"t{text['version'] if text else 0}-i{image['version'] if image else 0}",
+        "version": popup["version"],
+        "text": popup["text"],
+        "image_url": url_for("popup_image", version=popup["version"]) if popup["image"] else None,
     }
 
 
-def _remove_notice_image_files(keep=None):
+def _remove_popup_image_files(keep=None):
     if not os.path.isdir(NOTICE_IMAGE_DIR):
         return
     for name in os.listdir(NOTICE_IMAGE_DIR):
@@ -3605,110 +3604,133 @@ def _remove_notice_image_files(keep=None):
         try:
             os.remove(os.path.join(NOTICE_IMAGE_DIR, name))
         except OSError:
-            logger.warning("Could not remove old notice image %s", name)
+            logger.warning("Could not remove old popup image %s", name)
 
 
-@app.route("/api/notice")
-def api_notice():
-    # Customers only: an admin session never receives notice content, so
-    # nothing notice-related can render for them regardless of what's active.
-    if _current_role() == "customer":
-        payload = _notice_public_payload(db.get_notice_slots())
-    else:
-        payload = {"text": None, "image": None, "version": "t0-i0"}
-    response = jsonify(payload)
+# ---- Popup (customer-visible text and/or image, dismissed per version) ----
+@app.route("/api/popup")
+def api_popup():
+    # Customers only: an admin session never receives popup content.
+    popup = db.get_popup() if _current_role() == "customer" else None
+    response = jsonify({"popup": _popup_public_payload(popup)})
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
-@app.route("/notice_image/<int:version>")
-def notice_image(version):
-    image = db.get_notice_slots()["image"]
-    if not image or image["version"] != version:
+@app.route("/popup_image/<int:version>")
+def popup_image(version):
+    popup = db.get_popup()
+    if not popup or not popup["image"] or popup["version"] != version:
         return "", 404
-    path = os.path.join(NOTICE_IMAGE_DIR, os.path.basename(image["content"]))
+    path = os.path.join(NOTICE_IMAGE_DIR, os.path.basename(popup["image"]))
     if not os.path.isfile(path):
         return "", 404
     return send_file(path, conditional=True)
 
 
-@app.route("/admin/notice", methods=["GET"])
+@app.route("/admin/popup", methods=["GET"])
 @admin_required
-def admin_get_notice():
-    return jsonify(_notice_public_payload(db.get_notice_slots()))
+def admin_get_popup():
+    return jsonify({"popup": _popup_public_payload(db.get_popup())})
 
 
-@app.route("/admin/notice", methods=["POST"])
+@app.route("/admin/popup", methods=["POST"])
 @admin_required
-def admin_publish_notice():
-    notice_type = (request.form.get("type") or "").strip().lower()
+def admin_publish_popup():
+    """A publish replaces the whole popup: whatever text/image is submitted
+    now is what customers see (at least one is required)."""
+    text = (request.form.get("text") or "").strip()
+    uploaded_file = request.files.get("file")
+    has_file = bool(uploaded_file and uploaded_file.filename)
+    if not text and not has_file:
+        return jsonify({"success": False, "error": "Add text, an image, or both"}), 400
+    if len(text) > NOTICE_TEXT_MAX_LENGTH:
+        return jsonify({"success": False, "error": f"Text exceeds {NOTICE_TEXT_MAX_LENGTH} characters"}), 400
 
-    if notice_type == "text":
-        important = (request.form.get("important") or "").strip().lower() in ("1", "true", "on", "yes")
-        text = (request.form.get("text") or "").strip()
-        if not text:
-            return jsonify({"success": False, "error": "Notice text is required"}), 400
-        if len(text) > NOTICE_TEXT_MAX_LENGTH:
-            return jsonify({"success": False, "error": f"Notice text exceeds {NOTICE_TEXT_MAX_LENGTH} characters"}), 400
-        db.publish_notice("text", text, important)
-    elif notice_type == "image":
-        # Image notices are popup-only; any "important" value is ignored.
-        uploaded_file = request.files.get("file")
-        if not uploaded_file or not uploaded_file.filename:
-            return jsonify({"success": False, "error": "No image was uploaded"}), 400
-        extension = os.path.splitext(uploaded_file.filename)[1].lower()
-        if extension not in Config.ALLOWED_IMAGE_EXTENSIONS:
-            allowed = ", ".join(sorted(Config.ALLOWED_IMAGE_EXTENSIONS))
-            return jsonify({"success": False, "error": f"Unsupported file type '{extension or 'unknown'}'. Allowed types: {allowed}"}), 400
-        data = uploaded_file.read(Config.MAX_IMAGE_SIZE + 1)
-        if not data:
-            return jsonify({"success": False, "error": "Uploaded file is empty"}), 400
-        if len(data) > Config.MAX_IMAGE_SIZE:
-            max_mb = Config.MAX_IMAGE_SIZE / (1024 * 1024)
-            return jsonify({"success": False, "error": f"File is too large. Maximum size is {max_mb:.0f} MB"}), 400
+    if not has_file:
+        db.publish_popup(text)
+        _remove_popup_image_files()
+        return jsonify({"success": True, "popup": _popup_public_payload(db.get_popup())})
+
+    extension = os.path.splitext(uploaded_file.filename)[1].lower()
+    if extension not in Config.ALLOWED_IMAGE_EXTENSIONS:
+        allowed = ", ".join(sorted(Config.ALLOWED_IMAGE_EXTENSIONS))
+        return jsonify({"success": False, "error": f"Unsupported file type '{extension or 'unknown'}'. Allowed types: {allowed}"}), 400
+    data = uploaded_file.read(Config.MAX_IMAGE_SIZE + 1)
+    if not data:
+        return jsonify({"success": False, "error": "Uploaded file is empty"}), 400
+    if len(data) > Config.MAX_IMAGE_SIZE:
+        max_mb = Config.MAX_IMAGE_SIZE / (1024 * 1024)
+        return jsonify({"success": False, "error": f"File is too large. Maximum size is {max_mb:.0f} MB"}), 400
+    try:
+        with Image.open(BytesIO(data)) as probe:
+            probe.verify()
+    except Exception:
+        return jsonify({"success": False, "error": "That file is not a valid image"}), 400
+
+    os.makedirs(NOTICE_IMAGE_DIR, exist_ok=True)
+    # Version is unknown until the DB row is bumped, so write under a temp
+    # name, publish, then rename to the versioned name.
+    temp_name = f"pending_{os.getpid()}_{int(time.time() * 1000)}{extension}"
+    temp_path = os.path.join(NOTICE_IMAGE_DIR, temp_name)
+    try:
+        with open(temp_path, "wb") as handle:
+            handle.write(data)
+        version = db.publish_popup(text, temp_name)
+        final_name = f"popup_v{version}{extension}"
+        os.replace(temp_path, os.path.join(NOTICE_IMAGE_DIR, final_name))
+        db.set_popup_image(final_name)
+    except Exception:
+        logger.exception("Failed to publish popup")
         try:
-            with Image.open(BytesIO(data)) as probe:
-                probe.verify()
-        except Exception:
-            return jsonify({"success": False, "error": "That file is not a valid image"}), 400
-
-        os.makedirs(NOTICE_IMAGE_DIR, exist_ok=True)
-        # Version is unknown until the DB row is bumped, so write under a
-        # temp name, publish, then rename to the versioned name.
-        temp_name = f"pending_{os.getpid()}_{int(time.time() * 1000)}{extension}"
-        temp_path = os.path.join(NOTICE_IMAGE_DIR, temp_name)
-        try:
-            with open(temp_path, "wb") as handle:
-                handle.write(data)
-            version = db.publish_notice("image", temp_name)
-            final_name = f"notice_v{version}{extension}"
-            os.replace(temp_path, os.path.join(NOTICE_IMAGE_DIR, final_name))
-            db.set_notice_content("image", final_name)
-        except Exception:
-            logger.exception("Failed to publish image notice")
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-            return jsonify({"success": False, "error": "Failed to save the notice image"}), 500
-        _remove_notice_image_files(keep=final_name)
-    else:
-        return jsonify({"success": False, "error": "Notice type must be 'text' or 'image'"}), 400
-
-    return jsonify({"success": True, **_notice_public_payload(db.get_notice_slots())})
+            os.remove(temp_path)
+        except OSError:
+            pass
+        return jsonify({"success": False, "error": "Failed to save the popup image"}), 500
+    _remove_popup_image_files(keep=final_name)
+    return jsonify({"success": True, "popup": _popup_public_payload(db.get_popup())})
 
 
-@app.route("/admin/notice/clear", methods=["POST"])
+@app.route("/admin/popup/clear", methods=["POST"])
 @admin_required
-def admin_clear_notice():
-    """Clears one slot (type=text|image) or, with no type, both."""
-    notice_type = (request.form.get("type") or "").strip().lower() or None
-    if notice_type not in (None, "text", "image"):
-        return jsonify({"success": False, "error": "Notice type must be 'text' or 'image'"}), 400
-    db.clear_notice(notice_type)
-    if notice_type in (None, "image"):
-        _remove_notice_image_files()
-    return jsonify({"success": True, **_notice_public_payload(db.get_notice_slots())})
+def admin_clear_popup():
+    db.clear_popup()
+    _remove_popup_image_files()
+    return jsonify({"success": True, "popup": None})
+
+
+# ---- Important banner (required text, non-dismissible scrolling marquee) ----
+@app.route("/api/banner")
+def api_banner():
+    banner = db.get_banner() if _current_role() == "customer" else None
+    response = jsonify({"banner": banner})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/admin/banner", methods=["GET"])
+@admin_required
+def admin_get_banner():
+    return jsonify({"banner": db.get_banner()})
+
+
+@app.route("/admin/banner", methods=["POST"])
+@admin_required
+def admin_publish_banner():
+    text = (request.form.get("text") or "").strip()
+    if not text:
+        return jsonify({"success": False, "error": "Banner text is required"}), 400
+    if len(text) > NOTICE_TEXT_MAX_LENGTH:
+        return jsonify({"success": False, "error": f"Text exceeds {NOTICE_TEXT_MAX_LENGTH} characters"}), 400
+    db.publish_banner(text)
+    return jsonify({"success": True, "banner": db.get_banner()})
+
+
+@app.route("/admin/banner/clear", methods=["POST"])
+@admin_required
+def admin_clear_banner():
+    db.clear_banner()
+    return jsonify({"success": True, "banner": None})
 
 
 @app.route("/admin/upload_image", methods=["POST"])

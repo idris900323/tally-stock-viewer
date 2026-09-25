@@ -729,6 +729,118 @@
             opacity: 0.75;
         }
 
+        /* Customer-reports bell (admin only), in the header beside Logout. */
+        .topbar-right {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .report-bell-wrap {
+            position: relative;
+        }
+
+        .report-bell-btn {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            border-radius: 50%;
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .report-bell-btn:hover {
+            background: #eef2f7;
+            transform: none;
+        }
+
+        .report-bell-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .report-bell-badge {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 9px;
+            background: #dc2626;
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 18px;
+            text-align: center;
+        }
+
+        .report-panel {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            z-index: 800;
+            width: min(92vw, 380px);
+            max-height: 70vh;
+            overflow: auto;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 14px 34px rgba(19, 34, 56, 0.2);
+            padding: 10px;
+        }
+
+        .report-panel h3 {
+            margin: 2px 4px 8px;
+            font-size: 14px;
+        }
+
+        .report-panel-item {
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+
+        .report-panel-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .report-panel-car {
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .report-panel-detail {
+            margin-top: 2px;
+            font-size: 12.5px;
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+
+        .report-panel-when {
+            margin: 4px 0 8px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .report-panel-item button {
+            width: auto;
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .report-panel-empty {
+            margin: 6px 4px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
         .app-toast {
             position: fixed;
             left: 50%;
@@ -933,11 +1045,6 @@
             border-radius: 10px;
             margin: 0 0 14px;
             background: #f1f5f9;
-        }
-
-        .notice-popup-box .notice-popup-ok {
-            width: 100%;
-            min-height: 44px;
         }
 
         .notice-admin-preview {
@@ -2009,7 +2116,21 @@
     <div class="hero">
         <div class="topbar">
             <div class="role-badge">{{ current_role|default('customer')|title }} mode</div>
-            <a href="/logout" class="fix-link">Logout</a>
+            <div class="topbar-right">
+                {% if is_admin %}
+                <div class="report-bell-wrap" id="reportBellWrap">
+                    <button type="button" id="reportBellBtn" class="report-bell-btn" onclick="toggleReportPanel()" aria-haspopup="true" aria-expanded="false" aria-label="Customer reports (none open)" title="Customer reports">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+                        <span id="reportBellBadge" class="report-bell-badge" style="display:none;">0</span>
+                    </button>
+                    <div id="reportPanel" class="report-panel" style="display:none;" role="dialog" aria-label="Customer reports">
+                        <h3>Customer reports</h3>
+                        <div id="reportPanelList"></div>
+                    </div>
+                </div>
+                {% endif %}
+                <a href="/logout" class="fix-link">Logout</a>
+            </div>
         </div>
         <div class="brand-row">
             <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Super Seatings logo" class="brand-logo">
@@ -2067,7 +2188,7 @@
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
                         <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openCategorySettingsModal)" title="Add, rename, or delete material-tier categories (Pearl, Ruby, Saka, etc.) -- not to be confused with Assign Category, which tags individual items">Category Settings</button>
-                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openNoticeModal)" title="Publish or clear the popup/banner notice customers see">Manage Notice</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openNoticeModal)" title="Publish or clear the popup and the important banner customers see">Popup &amp; Banner</button>
                         <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=work')" title="Open Train Matches with the prioritized work queue already visible -- toggle between Needs Category and Needs Image Matching from there">Work Queue</button>
                     </div>
@@ -2236,36 +2357,37 @@
      System panel instead (Part 6), gated to admin + paired device there. -->
 <div class="modal" id="noticeModal" aria-hidden="true">
     <div class="modal-backdrop" onclick="closeNoticeModal()"></div>
-    <div class="category-settings-panel" role="dialog" aria-modal="true" aria-label="Manage Notice">
+    <div class="category-settings-panel" role="dialog" aria-modal="true" aria-label="Popup and Important Banner">
         <div class="category-settings-head">
-            <strong>Manage Notice</strong>
+            <strong>Popup &amp; Important Banner</strong>
             <button class="secondary" onclick="closeNoticeModal()">Close</button>
         </div>
         <div class="notice-admin-body">
-            <p class="category-settings-hint" style="margin:0;">A text notice and an image notice are managed separately. Customers see whatever is active as one popup (text above image). Changing either one makes the popup show again for everyone.</p>
-            <div id="noticeStatus" class="category-settings-notice" style="display:none; margin:0;"></div>
-
             <section class="notice-slot">
-                <h3>Text notice</h3>
-                <div id="noticeTextCurrent" class="notice-admin-preview">Loading...</div>
-                <form class="notice-admin-form" onsubmit="return handlePublishNotice(event, 'text')">
-                    <textarea id="noticeText" maxlength="1000" placeholder="Message shown to customers"></textarea>
-                    <label><input type="checkbox" id="noticeImportant"> Important (also show a scrolling banner at the top)</label>
+                <h3>Popup</h3>
+                <p class="category-settings-hint" style="margin:0 0 8px;">Shown to customers once, until you publish a new one. Text, an image, or both. Publishing replaces the whole popup.</p>
+                <div id="popupStatus" class="category-settings-notice" style="display:none; margin:0 0 8px;"></div>
+                <div id="popupCurrent" class="notice-admin-preview">Loading...</div>
+                <form class="notice-admin-form" onsubmit="return handlePublishPopup(event)">
+                    <textarea id="popupText" maxlength="1000" placeholder="Popup text (optional if you add an image)"></textarea>
+                    <input type="file" id="popupFile" accept="image/*">
                     <div class="notice-admin-actions">
-                        <button type="submit" id="noticeTextPublishBtn">Publish Text</button>
-                        <button type="button" id="noticeTextClearBtn" class="secondary" onclick="handleClearNotice('text')">Clear Text</button>
+                        <button type="submit" id="popupPublishBtn">Publish Popup</button>
+                        <button type="button" id="popupClearBtn" class="secondary" onclick="handleClearPopup()">Clear Popup</button>
                     </div>
                 </form>
             </section>
 
             <section class="notice-slot">
-                <h3>Image notice</h3>
-                <div id="noticeImageCurrent" class="notice-admin-preview">Loading...</div>
-                <form class="notice-admin-form" onsubmit="return handlePublishNotice(event, 'image')">
-                    <input type="file" id="noticeFile" accept="image/*">
+                <h3>Important Banner</h3>
+                <p class="category-settings-hint" style="margin:0 0 8px;">A scrolling message at the top of the customer page. Customers cannot close it; it stays until you change or clear it. Text only.</p>
+                <div id="bannerStatus" class="category-settings-notice" style="display:none; margin:0 0 8px;"></div>
+                <div id="bannerCurrent" class="notice-admin-preview">Loading...</div>
+                <form class="notice-admin-form" onsubmit="return handlePublishBanner(event)">
+                    <textarea id="bannerText" maxlength="1000" placeholder="Banner text" required></textarea>
                     <div class="notice-admin-actions">
-                        <button type="submit" id="noticeImagePublishBtn">Publish Image</button>
-                        <button type="button" id="noticeImageClearBtn" class="secondary" onclick="handleClearNotice('image')">Clear Image</button>
+                        <button type="submit" id="bannerPublishBtn">Publish Banner</button>
+                        <button type="button" id="bannerClearBtn" class="secondary" onclick="handleClearBanner()">Clear Banner</button>
                     </div>
                 </form>
             </section>
@@ -3232,65 +3354,79 @@ function clearCategorySettingsNotice() {
     }
 }
 
-// ---- Manage Notice (admin): two independent slots, text and image ----
-function setNoticeStatus(message, level) {
-    const el = document.getElementById("noticeStatus");
+// ---- Popup & Important Banner (admin) -- two separate sections, no shared state ----
+function setPanelStatus(id, message, level) {
+    const el = document.getElementById(id);
     el.textContent = message;
     el.className = `category-settings-notice ${level}`;
     el.style.display = message ? "block" : "none";
 }
 
-function renderNoticeSlots(payload) {
-    const text = payload && payload.text;
-    const image = payload && payload.image;
-
-    const textEl = document.getElementById("noticeTextCurrent");
-    textEl.textContent = "";
-    if (text) {
-        const label = document.createElement("strong");
-        label.textContent = `Active${text.important ? " (important banner)" : ""}:`;
-        const body = document.createElement("div");
-        body.style.whiteSpace = "pre-wrap";
-        body.textContent = text.content;
-        textEl.appendChild(label);
-        textEl.appendChild(body);
-    } else {
-        textEl.textContent = "No active text notice.";
+function renderPopupCurrent(popup) {
+    const el = document.getElementById("popupCurrent");
+    el.textContent = "";
+    document.getElementById("popupClearBtn").disabled = !popup;
+    if (!popup) {
+        el.textContent = "No active popup.";
+        return;
     }
-    document.getElementById("noticeTextClearBtn").disabled = !text;
-
-    const imageEl = document.getElementById("noticeImageCurrent");
-    imageEl.textContent = "";
-    if (image) {
-        const label = document.createElement("strong");
-        label.textContent = "Active:";
+    const label = document.createElement("strong");
+    label.textContent = "Active:";
+    el.appendChild(label);
+    if (popup.text) {
+        const text = document.createElement("div");
+        text.style.whiteSpace = "pre-wrap";
+        text.textContent = popup.text;
+        el.appendChild(text);
+    }
+    if (popup.image_url) {
         const img = document.createElement("img");
-        img.src = image.url;
-        img.alt = "Current notice image";
-        imageEl.appendChild(label);
-        imageEl.appendChild(img);
-    } else {
-        imageEl.textContent = "No active image notice.";
+        img.src = popup.image_url;
+        img.alt = "Current popup image";
+        el.appendChild(img);
     }
-    document.getElementById("noticeImageClearBtn").disabled = !image;
+}
+
+function renderBannerCurrent(banner) {
+    const el = document.getElementById("bannerCurrent");
+    el.textContent = "";
+    document.getElementById("bannerClearBtn").disabled = !banner;
+    if (!banner) {
+        el.textContent = "No active banner.";
+        return;
+    }
+    const label = document.createElement("strong");
+    label.textContent = "Active:";
+    const text = document.createElement("div");
+    text.style.whiteSpace = "pre-wrap";
+    text.textContent = banner.text;
+    el.appendChild(label);
+    el.appendChild(text);
 }
 
 async function openNoticeModal() {
     if (!isAdmin) {
         return;
     }
-    setNoticeStatus("", "");
-    document.getElementById("noticeText").value = "";
-    document.getElementById("noticeFile").value = "";
-    document.getElementById("noticeImportant").checked = false;
+    setPanelStatus("popupStatus", "", "");
+    setPanelStatus("bannerStatus", "", "");
+    document.getElementById("popupText").value = "";
+    document.getElementById("popupFile").value = "";
+    document.getElementById("bannerText").value = "";
     const modal = document.getElementById("noticeModal");
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
     try {
-        const res = await fetch("/admin/notice");
-        renderNoticeSlots(await res.json());
+        const res = await fetch("/admin/popup");
+        renderPopupCurrent((await res.json()).popup);
     } catch (error) {
-        setNoticeStatus("Could not load the current notices.", "error");
+        setPanelStatus("popupStatus", "Could not load the current popup.", "error");
+    }
+    try {
+        const res = await fetch("/admin/banner");
+        renderBannerCurrent((await res.json()).banner);
+    } catch (error) {
+        setPanelStatus("bannerStatus", "Could not load the current banner.", "error");
     }
 }
 
@@ -3300,52 +3436,89 @@ function closeNoticeModal() {
     modal.setAttribute("aria-hidden", "true");
 }
 
-async function handlePublishNotice(event, type) {
+async function handlePublishPopup(event) {
     event.preventDefault();
-    const form = new FormData();
-    form.append("type", type);
-    if (type === "image") {
-        const file = document.getElementById("noticeFile").files[0];
-        if (!file) {
-            setNoticeStatus("Choose an image first.", "error");
-            return false;
-        }
-        form.append("file", file);
-    } else {
-        form.append("text", document.getElementById("noticeText").value);
-        form.append("important", document.getElementById("noticeImportant").checked ? "1" : "0");
+    const text = document.getElementById("popupText").value;
+    const file = document.getElementById("popupFile").files[0];
+    if (!text.trim() && !file) {
+        setPanelStatus("popupStatus", "Add text, an image, or both.", "error");
+        return false;
     }
-    const btn = document.getElementById(type === "image" ? "noticeImagePublishBtn" : "noticeTextPublishBtn");
+    const form = new FormData();
+    form.append("text", text);
+    if (file) {
+        form.append("file", file);
+    }
+    const btn = document.getElementById("popupPublishBtn");
     btn.disabled = true;
     try {
-        const res = await fetch("/admin/notice", { method: "POST", body: form });
+        const res = await fetch("/admin/popup", { method: "POST", body: form });
         const data = await res.json();
         if (!res.ok || !data.success) {
-            throw new Error(data.error || "Failed to publish notice.");
+            throw new Error(data.error || "Failed to publish popup.");
         }
-        renderNoticeSlots(data);
-        setNoticeStatus(type === "image" ? "Image notice published." : "Text notice published.", "success");
+        renderPopupCurrent(data.popup);
+        setPanelStatus("popupStatus", "Popup published.", "success");
     } catch (error) {
-        setNoticeStatus(error.message, "error");
+        setPanelStatus("popupStatus", error.message, "error");
     } finally {
         btn.disabled = false;
     }
     return false;
 }
 
-async function handleClearNotice(type) {
-    const form = new FormData();
-    form.append("type", type);
+async function handleClearPopup() {
     try {
-        const res = await fetch("/admin/notice/clear", { method: "POST", body: form });
+        const res = await fetch("/admin/popup/clear", { method: "POST" });
         const data = await res.json();
         if (!res.ok || !data.success) {
-            throw new Error(data.error || "Failed to clear notice.");
+            throw new Error(data.error || "Failed to clear popup.");
         }
-        renderNoticeSlots(data);
-        setNoticeStatus(type === "image" ? "Image notice cleared." : "Text notice cleared.", "success");
+        renderPopupCurrent(null);
+        setPanelStatus("popupStatus", "Popup cleared.", "success");
     } catch (error) {
-        setNoticeStatus(error.message, "error");
+        setPanelStatus("popupStatus", error.message, "error");
+    }
+}
+
+async function handlePublishBanner(event) {
+    event.preventDefault();
+    const text = document.getElementById("bannerText").value;
+    if (!text.trim()) {
+        setPanelStatus("bannerStatus", "Banner text is required.", "error");
+        return false;
+    }
+    const form = new FormData();
+    form.append("text", text);
+    const btn = document.getElementById("bannerPublishBtn");
+    btn.disabled = true;
+    try {
+        const res = await fetch("/admin/banner", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || "Failed to publish banner.");
+        }
+        renderBannerCurrent(data.banner);
+        setPanelStatus("bannerStatus", "Banner published.", "success");
+    } catch (error) {
+        setPanelStatus("bannerStatus", error.message, "error");
+    } finally {
+        btn.disabled = false;
+    }
+    return false;
+}
+
+async function handleClearBanner() {
+    try {
+        const res = await fetch("/admin/banner/clear", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || "Failed to clear banner.");
+        }
+        renderBannerCurrent(null);
+        setPanelStatus("bannerStatus", "Banner cleared.", "success");
+    } catch (error) {
+        setPanelStatus("bannerStatus", error.message, "error");
     }
 }
 
@@ -5212,32 +5385,119 @@ async function refreshStock() {
 }
 
 // ============================================================
-// Customer notice: ONE combined popup (text above image, whichever are
-// active) plus, for an important text notice, a top banner. Customer
-// sessions only -- the server sends no notice to admin.
-//   - popup: dismissal stored in localStorage against the COMBINED version
-//     (text version + image version), so a change to either slot shows it
-//     again, and it otherwise stays closed across visits.
-//   - banner: scrolling text, deliberately has no close control. It tucks
-//     away while the customer scrolls down the page and returns when they
-//     are back at the top (see updateNoticeBannerScrollState()).
+// Customer-visible content. Two unrelated features that share no state or
+// code paths -- each has its own endpoint, its own render/remove functions
+// and its own load function. Customer sessions only (the server returns
+// nothing to admin sessions).
+//
+//   POPUP  (/api/popup):  optional text on top, optional image below.
+//          Closed only with its X. Dismissal is stored in localStorage
+//          against the popup's own version, so it stays closed until a new
+//          popup is published.
+//   BANNER (/api/banner): required text as a scrolling marquee with no
+//          close control. It tucks away while the customer scrolls down and
+//          returns when they are back at the top; only the admin
+//          publishing new text or clearing it changes or removes it.
 // ============================================================
-const NOTICE_DISMISSED_KEY = "noticeDismissedVersion";
-const BANNER_HIDE_AFTER_SCROLL_PX = 80;
-const BANNER_SHOW_WITHIN_TOP_PX = 10;
-let shownPopupVersion = null;
-let shownBannerVersion = null;
-let bannerHiddenByScroll = false;
-let bannerSpacePx = 0;
-let bannerScrollListenerAttached = false;
 
-function getDismissedNoticeVersion() {
+// ---- Popup ----
+const POPUP_DISMISSED_KEY = "popupDismissedVersion";
+let shownPopupVersion = null;
+
+function getDismissedPopupVersion() {
     try {
-        return localStorage.getItem(NOTICE_DISMISSED_KEY);
+        return localStorage.getItem(POPUP_DISMISSED_KEY);
     } catch (error) {
         return null;
     }
 }
+
+function removePopup() {
+    const popup = document.getElementById("noticePopup");
+    if (popup) popup.remove();
+}
+
+function dismissPopup(version) {
+    try {
+        localStorage.setItem(POPUP_DISMISSED_KEY, String(version));
+    } catch (error) {
+        // Private mode / blocked storage: it just shows again next load.
+    }
+    removePopup();
+}
+
+function renderPopup(popup) {
+    const overlay = document.createElement("div");
+    overlay.id = "noticePopup";
+    overlay.className = "notice-popup";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "notice-popup-backdrop";
+    overlay.appendChild(backdrop);
+
+    const box = document.createElement("div");
+    box.className = "notice-popup-box";
+
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "notice-popup-x";
+    x.setAttribute("aria-label", "Close");
+    x.innerHTML = "&times;";
+    x.onclick = () => dismissPopup(popup.version);
+    box.appendChild(x);
+
+    if (popup.text) {
+        const text = document.createElement("p");
+        text.className = "notice-popup-text";
+        text.textContent = popup.text;
+        box.appendChild(text);
+    }
+    if (popup.image_url) {
+        const img = document.createElement("img");
+        img.className = "notice-popup-image";
+        img.src = popup.image_url;
+        img.alt = "";
+        box.appendChild(img);
+    }
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+}
+
+async function loadPopup() {
+    if (!isCustomer) {
+        return;
+    }
+    let popup = null;
+    try {
+        const res = await fetch("/api/popup", { cache: "no-store" });
+        if (res.ok) {
+            popup = (await res.json()).popup;
+        }
+    } catch (error) {
+        return;
+    }
+    if (!popup) {
+        removePopup();
+        shownPopupVersion = null;
+        return;
+    }
+    if (String(popup.version) !== getDismissedPopupVersion() && popup.version !== shownPopupVersion) {
+        removePopup();
+        shownPopupVersion = popup.version;
+        renderPopup(popup);
+    }
+}
+
+// ---- Important banner ----
+const BANNER_HIDE_AFTER_SCROLL_PX = 80;
+const BANNER_SHOW_WITHIN_TOP_PX = 10;
+let shownBannerVersion = null;
+let bannerHiddenByScroll = false;
+let bannerSpacePx = 0;
+let bannerScrollListenerAttached = false;
 
 // The page is always padded down by the banner's full height (so hiding it
 // doesn't shift content); only the sticky toolbar / select bar offset
@@ -5248,12 +5508,7 @@ function applyBannerOffsets() {
     document.documentElement.style.setProperty("--notice-banner-h", `${visiblePx}px`);
 }
 
-function removeNoticePopup() {
-    const popup = document.getElementById("noticePopup");
-    if (popup) popup.remove();
-}
-
-function removeNoticeBanner() {
+function removeBanner() {
     const banner = document.getElementById("noticeBanner");
     if (banner) banner.remove();
     bannerSpacePx = 0;
@@ -5261,68 +5516,11 @@ function removeNoticeBanner() {
     applyBannerOffsets();
 }
 
-function dismissNoticePopup(version) {
-    try {
-        localStorage.setItem(NOTICE_DISMISSED_KEY, String(version));
-    } catch (error) {
-        // Private mode / blocked storage: it just shows again next load.
-    }
-    removeNoticePopup();
-}
-
-function renderNoticePopup(notice) {
-    const popup = document.createElement("div");
-    popup.id = "noticePopup";
-    popup.className = "notice-popup";
-    popup.setAttribute("role", "dialog");
-    popup.setAttribute("aria-modal", "true");
-
-    const backdrop = document.createElement("div");
-    backdrop.className = "notice-popup-backdrop";
-    backdrop.onclick = () => dismissNoticePopup(notice.version);
-    popup.appendChild(backdrop);
-
-    const box = document.createElement("div");
-    box.className = "notice-popup-box";
-
-    const x = document.createElement("button");
-    x.type = "button";
-    x.className = "notice-popup-x";
-    x.setAttribute("aria-label", "Close notice");
-    x.innerHTML = "&times;";
-    x.onclick = () => dismissNoticePopup(notice.version);
-    box.appendChild(x);
-
-    if (notice.text) {
-        const text = document.createElement("p");
-        text.className = "notice-popup-text";
-        text.textContent = notice.text.content;
-        box.appendChild(text);
-    }
-    if (notice.image) {
-        const img = document.createElement("img");
-        img.className = "notice-popup-image";
-        img.src = notice.image.url;
-        img.alt = "Notice";
-        box.appendChild(img);
-    }
-
-    const ok = document.createElement("button");
-    ok.type = "button";
-    ok.className = "notice-popup-ok";
-    ok.textContent = "Close";
-    ok.onclick = () => dismissNoticePopup(notice.version);
-    box.appendChild(ok);
-
-    popup.appendChild(box);
-    document.body.appendChild(popup);
-}
-
 // Hide once the customer has scrolled well down; show again only when they
 // are back at the very top. Two different thresholds (hysteresis) so it
 // can't flicker around a single boundary. Visibility only -- the banner is
 // never removed or dismissed by this.
-function updateNoticeBannerScrollState() {
+function updateBannerScrollState() {
     const banner = document.getElementById("noticeBanner");
     if (!banner) {
         return;
@@ -5339,7 +5537,7 @@ function updateNoticeBannerScrollState() {
     applyBannerOffsets();
 }
 
-function renderNoticeBanner(text) {
+function renderBanner(bannerData) {
     const banner = document.createElement("div");
     banner.id = "noticeBanner";
     banner.className = "notice-banner";
@@ -5350,9 +5548,9 @@ function renderNoticeBanner(text) {
     track.className = "notice-banner-track";
     const marquee = document.createElement("span");
     marquee.className = "notice-banner-marquee";
-    marquee.textContent = text.content.replace(/\s+/g, " ");
+    marquee.textContent = bannerData.text.replace(/\s+/g, " ");
     // Roughly constant reading speed regardless of message length.
-    const seconds = Math.max(12, Math.round(text.content.length * 0.25) + 10);
+    const seconds = Math.max(12, Math.round(bannerData.text.length * 0.25) + 10);
     marquee.style.setProperty("--notice-marquee-duration", `${seconds}s`);
     track.appendChild(marquee);
     banner.appendChild(track);
@@ -5368,53 +5566,149 @@ function renderNoticeBanner(text) {
 
     if (!bannerScrollListenerAttached) {
         bannerScrollListenerAttached = true;
-        window.addEventListener("scroll", updateNoticeBannerScrollState, { passive: true });
+        window.addEventListener("scroll", updateBannerScrollState, { passive: true });
     }
-    updateNoticeBannerScrollState();
+    updateBannerScrollState();
 }
 
-async function loadCustomerNotice() {
+async function loadBanner() {
     if (!isCustomer) {
         return;
     }
-    let notice = null;
+    let bannerData = null;
     try {
-        const res = await fetch("/api/notice", { cache: "no-store" });
+        const res = await fetch("/api/banner", { cache: "no-store" });
         if (res.ok) {
-            notice = await res.json();
+            bannerData = (await res.json()).banner;
         }
     } catch (error) {
         return;
     }
-    if (!notice || (!notice.text && !notice.image)) {
-        removeNoticePopup();
-        removeNoticeBanner();
-        shownPopupVersion = null;
+    if (!bannerData) {
+        removeBanner();
         shownBannerVersion = null;
         return;
     }
-
-    if (notice.version !== getDismissedNoticeVersion() && notice.version !== shownPopupVersion) {
-        removeNoticePopup();
-        shownPopupVersion = notice.version;
-        renderNoticePopup(notice);
-    }
-
-    if (notice.text && notice.text.important) {
-        if (notice.text.version !== shownBannerVersion) {
-            removeNoticeBanner();
-            shownBannerVersion = notice.text.version;
-            renderNoticeBanner(notice.text);
-        }
-    } else {
-        removeNoticeBanner();
-        shownBannerVersion = null;
+    if (bannerData.version !== shownBannerVersion) {
+        removeBanner();
+        shownBannerVersion = bannerData.version;
+        renderBanner(bannerData);
     }
 }
 
 document.addEventListener("visibilitychange", () => {
-    // A long-lived installed PWA tab picks up a new/cleared notice on return.
-    if (!document.hidden) loadCustomerNotice();
+    // A long-lived installed PWA tab picks up new/cleared content on return.
+    if (!document.hidden) {
+        loadPopup();
+        loadBanner();
+    }
+});
+
+// ---- Customer reports bell (admin header, next to Logout) ----
+// Polled on the same 30s cadence as the admin "Last updated" timestamp.
+const REPORT_POLL_INTERVAL_MS = 30000;
+let openCustomerReports = [];
+
+function renderReportBell() {
+    const badge = document.getElementById("reportBellBadge");
+    if (!badge) {
+        return;
+    }
+    const count = openCustomerReports.length;
+    badge.textContent = String(count);
+    badge.style.display = count > 0 ? "" : "none";
+    document.getElementById("reportBellBtn").setAttribute(
+        "aria-label", count > 0 ? `Customer reports (${count} open)` : "Customer reports (none open)"
+    );
+
+    const list = document.getElementById("reportPanelList");
+    list.innerHTML = "";
+    if (!count) {
+        const empty = document.createElement("p");
+        empty.className = "report-panel-empty";
+        empty.textContent = "No open customer reports.";
+        list.appendChild(empty);
+        return;
+    }
+    openCustomerReports.forEach(report => {
+        const row = document.createElement("div");
+        row.className = "report-panel-item";
+
+        const car = document.createElement("div");
+        car.className = "report-panel-car";
+        car.textContent = report.car;
+        const detail = document.createElement("div");
+        detail.className = "report-panel-detail";
+        detail.textContent = report.details;
+        const when = document.createElement("div");
+        when.className = "report-panel-when";
+        when.textContent = `Reported ${report.reported_at.replace("T", " ")}`;
+
+        const resolveBtn = document.createElement("button");
+        resolveBtn.type = "button";
+        resolveBtn.className = "secondary";
+        resolveBtn.textContent = "Mark Resolved";
+        resolveBtn.onclick = () => resolveCustomerReport(report.id);
+
+        row.appendChild(car);
+        row.appendChild(detail);
+        row.appendChild(when);
+        row.appendChild(resolveBtn);
+        list.appendChild(row);
+    });
+}
+
+async function pollCustomerReports() {
+    if (!isAdmin || !document.getElementById("reportBellBtn")) {
+        return;
+    }
+    try {
+        const res = await fetch("/api/customer_reports");
+        if (!res.ok) {
+            return;
+        }
+        openCustomerReports = (await res.json()).reports || [];
+        renderReportBell();
+    } catch (error) {
+        // Best-effort indicator -- the next poll will catch up.
+    }
+}
+
+async function resolveCustomerReport(reportId) {
+    const previous = openCustomerReports;
+    // Remove it (and drop the badge count) right away; put it back if the
+    // server refuses.
+    openCustomerReports = previous.filter(report => report.id !== reportId);
+    renderReportBell();
+    try {
+        const res = await fetch(`/admin/customer_reports/${reportId}/resolve`, { method: "POST" });
+        if (!res.ok && res.status !== 404) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+    } catch (error) {
+        openCustomerReports = previous;
+        renderReportBell();
+        showError(`Could not mark the report resolved: ${error.message}`);
+    }
+}
+
+function toggleReportPanel() {
+    const panel = document.getElementById("reportPanel");
+    const open = panel.style.display === "none";
+    panel.style.display = open ? "" : "none";
+    document.getElementById("reportBellBtn").setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+        pollCustomerReports();
+    }
+}
+
+document.addEventListener("click", event => {
+    const wrap = document.getElementById("reportBellWrap");
+    const panel = document.getElementById("reportPanel");
+    if (wrap && panel && panel.style.display !== "none" && !wrap.contains(event.target)) {
+        panel.style.display = "none";
+        document.getElementById("reportBellBtn").setAttribute("aria-expanded", "false");
+    }
 });
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -5428,9 +5722,12 @@ window.addEventListener("DOMContentLoaded", () => {
         // then the admin navigated back here. pollBadgeRegenStatus() itself
         // is a no-op (hides the indicator) if nothing is running.
         startBadgeRegenPolling();
+        pollCustomerReports();
+        setInterval(pollCustomerReports, REPORT_POLL_INTERVAL_MS);
     }
     if (isCustomer) {
-        loadCustomerNotice();
+        loadPopup();
+        loadBanner();
         maybeScrollToSectionFromUrl();
     }
     setInterval(checkTimestampFreshness, 10000);
