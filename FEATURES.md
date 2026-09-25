@@ -76,7 +76,9 @@ customer users - built and run by one person on an office PC.
 **Installable customer app (PWA)**
 - The customer-facing view installs like a native app (home screen icon, no browser chrome) - admin sessions are completely unaffected, no install prompt ever offered there
 - A conservative service worker: always fetches live data first, only ever falls back to a clear "you're offline" message - it never silently shows stale stock/catalog data as if it were current
-- Installed customers stay logged in for 90 days instead of the normal 8-hour session (customer accounts only - admin login is unchanged)
+- Customers who leave "Remember me" ticked (the default) stay logged in for 90 days instead of the normal 8-hour session; unticking it, or logging in as admin, gives the normal short session
+- Customers can long-press a design to select several and tap Share in a minimal top bar (always plain, no category badge; same 10-image batching as admin) - there is no separate select button, and the admin flow is unchanged
+- Admins publish one customer notice at a time from More > Manage Notice (text or image, optionally "important"): customers see it as a popup, and important ones also get a top banner (scrolling text, or a static image strip); closing either hides both until a new notice is published
 - A client-side "Recently Viewed" strip (per-device, since customer access codes are shared by multiple real people - so this is deliberately not tied to the account) and two home-screen shortcuts (Recently Viewed, Contact Us)
 
 ## How good is it, honestly

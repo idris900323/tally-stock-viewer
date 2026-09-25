@@ -113,7 +113,7 @@
            list. */
         .sticky-toolbar {
             position: sticky;
-            top: 0;
+            top: var(--notice-banner-h, 0px);
             z-index: 500;
             background: var(--panel);
             border: 1px solid var(--border);
@@ -834,8 +834,270 @@
             -webkit-font-smoothing: antialiased;
         }
 
+        /* The ribbon carries both the short and the full category name;
+           desktop's small thumbnail shows the abbreviation, phone (where
+           the thumbnail is full-width) shows the full name. */
+        .category-ribbon .ribbon-full {
+            display: none;
+        }
+
         .selection-toolbar {
             margin-bottom: 14px;
+        }
+
+        /* ---- Customer notice (popup + important banner) ----
+           Layers: banner 700 (above the sticky toolbar 500 and the customer
+           select bar 650; the WhatsApp button is a bottom-right corner
+           button so a top strip can never overlap it); popup 1000 like
+           .modal. The banner's live height is published as
+           --notice-banner-h so the sticky toolbar / select bar sit below it
+           and the page is padded down instead of being covered. */
+        .notice-banner {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 700;
+            display: flex;
+            align-items: center;
+            background: #b45309;
+            color: #fff;
+            box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+            padding-top: env(safe-area-inset-top, 0px);
+        }
+
+        /* While the popup is open its backdrop would otherwise cover the
+           banner's close button; lift the banner above it for that time. */
+        body.notice-popup-open .notice-banner {
+            z-index: 1001;
+        }
+
+        .notice-banner-track {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .notice-banner-marquee {
+            display: inline-block;
+            padding-left: 100%;
+            font-size: 15px;
+            font-weight: 700;
+            line-height: 40px;
+            animation: notice-marquee var(--notice-marquee-duration, 18s) linear infinite;
+        }
+
+        @keyframes notice-marquee {
+            from { transform: translateX(0); }
+            to { transform: translateX(-100%); }
+        }
+
+        .notice-banner-image {
+            flex: 1 1 auto;
+            min-width: 0;
+            height: clamp(48px, 13vw, 84px);
+            background: #f1f5f9;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .notice-banner-image img {
+            height: 100%;
+            width: auto;
+            max-width: 100%;
+            object-fit: contain;
+        }
+
+        .notice-banner .notice-close {
+            flex: 0 0 auto;
+            width: 40px;
+            height: 40px;
+            padding: 0;
+            margin: 0 2px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-size: 22px;
+            line-height: 1;
+        }
+
+        .notice-popup {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .notice-popup-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.7);
+        }
+
+        .notice-popup-box {
+            position: relative;
+            width: min(92vw, 440px);
+            max-height: 82vh;
+            overflow: auto;
+            background: #fff;
+            border-radius: 16px;
+            padding: 22px 20px 18px;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
+        }
+
+        .notice-popup-text {
+            margin: 0 0 16px;
+            font-size: 16px;
+            line-height: 1.5;
+            color: var(--text);
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .notice-popup-box .notice-popup-ok {
+            width: 100%;
+            min-height: 44px;
+        }
+
+        .notice-popup-image-box {
+            position: relative;
+            line-height: 0;
+        }
+
+        .notice-popup-image-box img {
+            display: block;
+            max-width: 92vw;
+            max-height: 82vh;
+            border-radius: 12px;
+            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
+        }
+
+        .notice-popup-image-box .notice-close {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.6);
+            color: #fff;
+            font-size: 20px;
+            line-height: 1;
+        }
+
+        .notice-admin-preview {
+            margin: 0 16px 12px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: #f8fafc;
+            font-size: 13px;
+        }
+
+        .notice-admin-preview img {
+            display: block;
+            max-width: 100%;
+            max-height: 140px;
+            margin-top: 8px;
+            border-radius: 8px;
+        }
+
+        .notice-admin-form {
+            padding: 0 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow: auto;
+        }
+
+        .notice-admin-form textarea {
+            width: 100%;
+            min-height: 90px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            font: inherit;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        .notice-admin-form label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .notice-admin-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        /* Customer selection bar -- fixed to the top of the viewport (above
+           the sticky car selector, below the notice banner), never the
+           bottom where the WhatsApp button lives. */
+        .customer-select-bar {
+            position: fixed;
+            top: var(--notice-banner-h, 0px);
+            left: 0;
+            right: 0;
+            z-index: 650;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 6px 20px rgba(19, 34, 56, 0.15);
+            padding: 8px 12px;
+            padding-top: calc(8px + env(safe-area-inset-top, 0px));
+        }
+
+        .customer-select-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .customer-select-row button {
+            width: auto;
+            min-height: 44px;
+            white-space: nowrap;
+        }
+
+        .customer-select-row .customer-select-close:hover {
+            background: #eef2f7;
+            transform: none;
+        }
+
+        .customer-select-count {
+            flex: 1 1 auto;
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text);
+        }
+
+        .customer-select-row .customer-select-close {
+            flex: 0 0 auto;
+            width: 44px;
+            padding: 0;
+            font-size: 26px;
+            line-height: 1;
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        @media (pointer: coarse) {
+            #designsList .design-item {
+                -webkit-touch-callout: none;
+                -webkit-user-select: none;
+                user-select: none;
+            }
         }
 
         .selection-count {
@@ -1535,6 +1797,23 @@
                 object-fit: cover;
             }
 
+            /* Full-width phone thumbnail: a bigger strip with the whole
+               category name instead of the abbreviation. */
+            .category-ribbon {
+                font-size: 16px;
+                padding: 9px 10px;
+                letter-spacing: 0.03em;
+                border-radius: 0 0 11px 11px;
+            }
+
+            .category-ribbon .ribbon-full {
+                display: inline;
+            }
+
+            .category-ribbon .ribbon-abbr {
+                display: none;
+            }
+
             .thumbnail-button {
                 width: 100%;
             }
@@ -1807,6 +2086,7 @@
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
                         <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openCategorySettingsModal)" title="Add, rename, or delete material-tier categories (Pearl, Ruby, Saka, etc.) -- not to be confused with Assign Category, which tags individual items">Category Settings</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openNoticeModal)" title="Publish or clear the popup/banner notice customers see">Manage Notice</button>
                         <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=work')" title="Open Train Matches with the prioritized work queue already visible -- toggle between Needs Category and Needs Image Matching from there">Work Queue</button>
                     </div>
@@ -1894,6 +2174,26 @@
     <div id="statusMessage" class="status-line"></div>
     {% endif %}
 
+    {% if not is_admin %}
+    <!-- Customer selection bar: entered only by long-pressing a design (no
+         button anywhere), fixed at the top -- a bottom bar would sit on the
+         WhatsApp button. Element ids intentionally match the admin toolbar's
+         so the shared share pipeline (updateSelectModeUI(), copySelectedImages(),
+         showBatchContinueBar()) drives it unchanged; it's always plain-share. -->
+    <div id="customerSelectBar" class="customer-select-bar" style="display:none;" role="toolbar" aria-label="Share selected images">
+        <div id="selectionToolbar" class="customer-select-row">
+            <button type="button" id="customerSelectCancelBtn" class="customer-select-close" onclick="exitSelectMode()" aria-label="Cancel selection">&times;</button>
+            <span id="selectionCount" class="customer-select-count">0 selected</span>
+            <button type="button" id="copySelectedBtn" onclick="copySelectedImages('plain')" disabled>Share</button>
+        </div>
+        <div id="batchContinueBar" class="customer-select-row" style="display:none;">
+            <span id="batchContinueText" class="customer-select-count"></span>
+            <button type="button" id="batchContinueActionBtn"></button>
+            <button type="button" id="batchContinueCancelBtn" class="secondary">Cancel</button>
+        </div>
+    </div>
+    {% endif %}
+
     <div id="errorMsg" class="notice error"></div>
     <div id="infoMsg" class="notice success"></div>
 
@@ -1960,6 +2260,30 @@
      elsewhere in this file) -- this panel only edits the category LIST
      itself. Advanced controls (reorder, abbreviation override) live in the
      System panel instead (Part 6), gated to admin + paired device there. -->
+<div class="modal" id="noticeModal" aria-hidden="true">
+    <div class="modal-backdrop" onclick="closeNoticeModal()"></div>
+    <div class="category-settings-panel" role="dialog" aria-modal="true" aria-label="Manage Notice">
+        <div class="category-settings-head">
+            <strong>Manage Notice</strong>
+            <button class="secondary" onclick="closeNoticeModal()">Close</button>
+        </div>
+        <p class="category-settings-hint">One notice at a time, shown to customers as a popup. Publishing always counts as a new notice, so customers who closed the previous one see it again.</p>
+        <div id="noticeCurrent" class="notice-admin-preview">Loading...</div>
+        <div id="noticeStatus" class="category-settings-notice" style="display:none;"></div>
+        <form id="noticeForm" class="notice-admin-form" onsubmit="return handlePublishNotice(event)">
+            <label><input type="radio" name="noticeType" value="text" checked onchange="updateNoticeTypeFields()"> Text</label>
+            <label><input type="radio" name="noticeType" value="image" onchange="updateNoticeTypeFields()"> Image</label>
+            <textarea id="noticeText" maxlength="1000" placeholder="Message shown to customers"></textarea>
+            <input type="file" id="noticeFile" accept="image/*" style="display:none;">
+            <label><input type="checkbox" id="noticeImportant"> Important (also show a banner at the top)</label>
+            <div class="notice-admin-actions">
+                <button type="submit" id="noticePublishBtn">Publish Notice</button>
+                <button type="button" id="noticeClearBtn" class="secondary" onclick="handleClearNotice()">Clear Notice</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div class="modal" id="categorySettingsModal" aria-hidden="true">
     <div class="modal-backdrop" onclick="closeCategorySettingsModal()"></div>
     <div class="category-settings-panel" role="dialog" aria-modal="true" aria-label="Category Settings">
@@ -2047,6 +2371,14 @@ let CATEGORY_RIBBON_ABBREVIATIONS = {};
 // both the ribbon map above and the "Assign Category" <select> options
 // (see rebuildCategoryPickerOptions()).
 let LIVE_CATEGORIES = {{ design_categories_json|tojson }};
+
+// Both forms live in the ribbon; CSS shows the abbreviation on desktop and
+// the full name on phone (see .ribbon-full / .ribbon-abbr).
+function ribbonInnerHtml(category) {
+    const abbr = escapeHtml((CATEGORY_RIBBON_ABBREVIATIONS[category] || category).toUpperCase());
+    const full = escapeHtml(String(category).toUpperCase());
+    return `<span class="ribbon-abbr">${abbr}</span><span class="ribbon-full">${full}</span>`;
+}
 
 function applyCategoryData(categories) {
     LIVE_CATEGORIES = Array.isArray(categories) ? categories : [];
@@ -2663,7 +2995,9 @@ function toggleSelectMode() {
 }
 
 function enterSelectMode() {
-    if (!isAdmin) {
+    // Admin enters via the Share Images button or a long-press; customers
+    // only ever via long-press (there is no customer-facing button).
+    if (!isAdmin && !isCustomer) {
         return;
     }
     // Mutually exclusive with categoryAssignMode -- entering one always
@@ -2714,6 +3048,12 @@ function toggleImageSelection(imageId, itemKey) {
     }
     syncSelectedImageIdsFromCardKeys();
     prefetchSelectedImageBlobs();
+    // Like WhatsApp: deselecting the last item leaves selection mode. Only
+    // customers -- admin has an explicit Cancel button and keeps its behavior.
+    if (!isAdmin && !selectedCardKeys.size) {
+        exitSelectMode();
+        return;
+    }
     updateSelectModeUI();
 }
 
@@ -2949,6 +3289,120 @@ function clearCategorySettingsNotice() {
     const notice = document.getElementById("categorySettingsNotice");
     if (notice) {
         notice.style.display = "none";
+    }
+}
+
+// ---- Manage Notice (admin) ----
+function setNoticeStatus(message, level) {
+    const el = document.getElementById("noticeStatus");
+    el.textContent = message;
+    el.className = `category-settings-notice ${level}`;
+    el.style.display = message ? "block" : "none";
+}
+
+function renderNoticeCurrent(notice) {
+    const el = document.getElementById("noticeCurrent");
+    el.textContent = "";
+    const clearBtn = document.getElementById("noticeClearBtn");
+    if (clearBtn) clearBtn.disabled = !notice;
+    if (!notice) {
+        el.textContent = "No active notice.";
+        return;
+    }
+    const label = document.createElement("strong");
+    label.textContent = `Active notice (version ${notice.version}${notice.important ? ", important" : ""}):`;
+    el.appendChild(label);
+    if (notice.type === "image") {
+        const img = document.createElement("img");
+        img.src = notice.content;
+        img.alt = "Current notice image";
+        el.appendChild(img);
+    } else {
+        const text = document.createElement("div");
+        text.style.whiteSpace = "pre-wrap";
+        text.textContent = notice.content;
+        el.appendChild(text);
+    }
+}
+
+function updateNoticeTypeFields() {
+    const isImage = document.querySelector('input[name="noticeType"]:checked').value === "image";
+    document.getElementById("noticeText").style.display = isImage ? "none" : "";
+    document.getElementById("noticeFile").style.display = isImage ? "" : "none";
+}
+
+async function openNoticeModal() {
+    if (!isAdmin) {
+        return;
+    }
+    setNoticeStatus("", "");
+    document.getElementById("noticeText").value = "";
+    document.getElementById("noticeFile").value = "";
+    document.getElementById("noticeImportant").checked = false;
+    updateNoticeTypeFields();
+    const modal = document.getElementById("noticeModal");
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    try {
+        const res = await fetch("/admin/notice");
+        const data = await res.json();
+        renderNoticeCurrent(data.notice);
+    } catch (error) {
+        document.getElementById("noticeCurrent").textContent = "Could not load the current notice.";
+    }
+}
+
+function closeNoticeModal() {
+    const modal = document.getElementById("noticeModal");
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+async function handlePublishNotice(event) {
+    event.preventDefault();
+    const type = document.querySelector('input[name="noticeType"]:checked').value;
+    const form = new FormData();
+    form.append("type", type);
+    form.append("important", document.getElementById("noticeImportant").checked ? "1" : "0");
+    if (type === "image") {
+        const file = document.getElementById("noticeFile").files[0];
+        if (!file) {
+            setNoticeStatus("Choose an image first.", "error");
+            return false;
+        }
+        form.append("file", file);
+    } else {
+        form.append("text", document.getElementById("noticeText").value);
+    }
+    const btn = document.getElementById("noticePublishBtn");
+    btn.disabled = true;
+    try {
+        const res = await fetch("/admin/notice", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || "Failed to publish notice.");
+        }
+        renderNoticeCurrent(data.notice);
+        setNoticeStatus("Notice published.", "success");
+    } catch (error) {
+        setNoticeStatus(error.message, "error");
+    } finally {
+        btn.disabled = false;
+    }
+    return false;
+}
+
+async function handleClearNotice() {
+    try {
+        const res = await fetch("/admin/notice/clear", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || "Failed to clear notice.");
+        }
+        renderNoticeCurrent(null);
+        setNoticeStatus("Notice cleared.", "success");
+    } catch (error) {
+        setNoticeStatus(error.message, "error");
     }
 }
 
@@ -3260,6 +3714,13 @@ function updateSelectModeUI() {
 
     updateModeToggleVisibility();
 
+    // Customer-only lean bar (absent from admin markup) -- shown for the
+    // whole selection session, including while batch-continue is pending.
+    const customerBar = document.getElementById("customerSelectBar");
+    if (customerBar) {
+        customerBar.style.display = selectMode ? "block" : "none";
+    }
+
     if (toolbar) {
         // While a batched share is waiting on the user (see
         // batchContinuePending / showBatchContinueBar()), #batchContinueBar
@@ -3306,7 +3767,9 @@ function updateSelectModeUI() {
     const anyCategorized = selectedCards.some(card => card.dataset.category);
     const hasSelection = selectedImageIds.size > 0;
     if (copyBtn) {
-        copyBtn.style.display = anyCategorized ? "none" : "";
+        // Customers never get the badge choice, so their single plain
+        // Share button stays visible regardless of categories.
+        copyBtn.style.display = (anyCategorized && isAdmin) ? "none" : "";
         copyBtn.disabled = !hasSelection;
     }
     if (badgeBtn) {
@@ -3544,7 +4007,7 @@ function updateCardCategoryBadge(card, category) {
         // before .select-check (which always exists on every card).
         thumbBtn.insertBefore(ribbon, thumbBtn.querySelector(".select-check"));
     }
-    ribbon.textContent = (CATEGORY_RIBBON_ABBREVIATIONS[category] || category).toUpperCase();
+    ribbon.innerHTML = ribbonInnerHtml(category);
     ribbon.title = category;
 }
 
@@ -3647,7 +4110,7 @@ function cancelLongPressFeedback() {
 }
 
 function handleDesignsListTouchStart(event) {
-    if (!isAdmin) {
+    if (!isAdmin && !isCustomer) {
         return;
     }
     if (categoryAssignMode) {
@@ -3778,7 +4241,9 @@ function prefetchImageBlob(imageId, mode) {
 // fetchImageForShare(id, "plain") below still gets the same retry-once
 // robustness either way.
 function prefetchSelectedImageBlobs() {
-    selectedImageIds.forEach(imageId => prefetchImageBlob(imageId, "badge"));
+    // Customers only ever share plain, so prefetch that variant for them.
+    const prefetchMode = isAdmin ? "badge" : "plain";
+    selectedImageIds.forEach(imageId => prefetchImageBlob(imageId, prefetchMode));
 }
 
 // One automatic retry per image on top of prefetchImageBlob(): a flaky
@@ -3988,9 +4453,13 @@ async function copySelectedImages(mode) {
     allShareBtns.forEach(btn => { btn.disabled = true; });
     try {
         clearMessages();
-        if (!isAdmin) {
-            showError("Sharing is available for admin users only.");
+        if (!isAdmin && !isCustomer) {
+            showError("Sharing is not available.");
             return;
+        }
+        // Customers only ever share plain (no badge), whatever was passed.
+        if (!isAdmin) {
+            mode = "plain";
         }
 
         if (!selectedImageIds.size) {
@@ -4631,8 +5100,7 @@ function renderDesignItem(item, index) {
     // Ribbon shows the short form (Part 6); title="..." and the full-screen
     // modal (see displayModalImage(), which reads data-category on this same
     // card's thumbnail-button below) both keep showing the real full name.
-    const ribbonText = escapeHtml((CATEGORY_RIBBON_ABBREVIATIONS[category] || category).toUpperCase());
-    const categoryRibbon = category ? `<span class="category-ribbon" title="${escapedCategory}">${ribbonText}</span>` : "";
+    const categoryRibbon = category ? `<span class="category-ribbon" title="${escapedCategory}">${ribbonInnerHtml(category)}</span>` : "";
     const detailText = isCustomer
         ? ``
         : `
@@ -4654,9 +5122,9 @@ function renderDesignItem(item, index) {
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
                     ${isAdmin ? `<a href="${addImageUrl}" class="add-image-link" title="Find or upload a photo for this specific item">Add Image</a>` : ''}
-                    <div class="thumbnail-actions">
+                    ${isAdmin ? `<div class="thumbnail-actions">
                         <button class="secondary" data-src="${safeThumbnail}" onclick="copyImageToClipboard(this.dataset.src)">Copy Image</button>
-                    </div>
+                    </div>` : ''}
                 </div>
             </div>
         </li>
@@ -4799,6 +5267,169 @@ async function refreshStock() {
     }
 }
 
+// ============================================================
+// Customer notice (popup + optional important banner). Customer sessions
+// only -- the server sends no notice to admin, and this is never called for
+// them. Dismissing the popup OR the banner records the notice's version in
+// localStorage, which removes both; a newly published version (different
+// number) shows again.
+// ============================================================
+const NOTICE_DISMISSED_KEY = "noticeDismissedVersion";
+let shownNoticeVersion = null;
+
+function getDismissedNoticeVersion() {
+    try {
+        return localStorage.getItem(NOTICE_DISMISSED_KEY);
+    } catch (error) {
+        return null;
+    }
+}
+
+function setBannerHeight(px) {
+    document.documentElement.style.setProperty("--notice-banner-h", `${px}px`);
+    document.body.style.paddingTop = px ? `${px}px` : "";
+}
+
+function removeNoticeElements() {
+    const popup = document.getElementById("noticePopup");
+    if (popup) popup.remove();
+    document.body.classList.remove("notice-popup-open");
+    const banner = document.getElementById("noticeBanner");
+    if (banner) banner.remove();
+    setBannerHeight(0);
+    shownNoticeVersion = null;
+}
+
+function dismissNotice(version) {
+    try {
+        localStorage.setItem(NOTICE_DISMISSED_KEY, String(version));
+    } catch (error) {
+        // Private mode / blocked storage: it just shows again next load.
+    }
+    removeNoticeElements();
+}
+
+function makeNoticeCloseButton(label, version) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "notice-close";
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = "&times;";
+    btn.onclick = () => dismissNotice(version);
+    return btn;
+}
+
+function renderNoticePopup(notice) {
+    const popup = document.createElement("div");
+    popup.id = "noticePopup";
+    popup.className = "notice-popup";
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+
+    const backdrop = document.createElement("div");
+    backdrop.className = "notice-popup-backdrop";
+    backdrop.onclick = () => dismissNotice(notice.version);
+    popup.appendChild(backdrop);
+
+    if (notice.type === "image") {
+        const box = document.createElement("div");
+        box.className = "notice-popup-image-box";
+        const img = document.createElement("img");
+        img.src = notice.content;
+        img.alt = "Notice";
+        box.appendChild(img);
+        box.appendChild(makeNoticeCloseButton("Close notice", notice.version));
+        popup.appendChild(box);
+    } else {
+        const box = document.createElement("div");
+        box.className = "notice-popup-box";
+        const text = document.createElement("p");
+        text.className = "notice-popup-text";
+        text.textContent = notice.content;
+        const ok = document.createElement("button");
+        ok.type = "button";
+        ok.className = "notice-popup-ok";
+        ok.textContent = "Close";
+        ok.onclick = () => dismissNotice(notice.version);
+        box.appendChild(text);
+        box.appendChild(ok);
+        popup.appendChild(box);
+    }
+    document.body.appendChild(popup);
+    document.body.classList.add("notice-popup-open");
+}
+
+function renderNoticeBanner(notice) {
+    const banner = document.createElement("div");
+    banner.id = "noticeBanner";
+    banner.className = "notice-banner";
+    banner.setAttribute("role", "region");
+    banner.setAttribute("aria-label", "Important notice");
+
+    if (notice.type === "image") {
+        // Static strip -- a sliding image doesn't read naturally.
+        const strip = document.createElement("div");
+        strip.className = "notice-banner-image";
+        const img = document.createElement("img");
+        img.src = notice.content;
+        img.alt = "Important notice";
+        strip.appendChild(img);
+        banner.appendChild(strip);
+    } else {
+        const track = document.createElement("div");
+        track.className = "notice-banner-track";
+        const marquee = document.createElement("span");
+        marquee.className = "notice-banner-marquee";
+        marquee.textContent = notice.content.replace(/\s+/g, " ");
+        // Roughly constant reading speed regardless of message length.
+        const seconds = Math.max(12, Math.round(notice.content.length * 0.25) + 10);
+        marquee.style.setProperty("--notice-marquee-duration", `${seconds}s`);
+        track.appendChild(marquee);
+        banner.appendChild(track);
+    }
+    banner.appendChild(makeNoticeCloseButton("Close banner", notice.version));
+    document.body.appendChild(banner);
+
+    const sync = () => setBannerHeight(banner.offsetHeight);
+    const setHeightOnLoad = banner.querySelector("img");
+    if (setHeightOnLoad) setHeightOnLoad.addEventListener("load", sync);
+    if (window.ResizeObserver) new ResizeObserver(sync).observe(banner);
+    sync();
+}
+
+async function loadCustomerNotice() {
+    if (!isCustomer) {
+        return;
+    }
+    let notice = null;
+    try {
+        const res = await fetch("/api/notice", { cache: "no-store" });
+        if (res.ok) {
+            notice = (await res.json()).notice;
+        }
+    } catch (error) {
+        return;
+    }
+    if (!notice) {
+        removeNoticeElements();
+        return;
+    }
+    if (String(notice.version) === getDismissedNoticeVersion() || notice.version === shownNoticeVersion) {
+        return;
+    }
+    removeNoticeElements();
+    shownNoticeVersion = notice.version;
+    renderNoticePopup(notice);
+    if (notice.important) {
+        renderNoticeBanner(notice);
+    }
+}
+
+document.addEventListener("visibilitychange", () => {
+    // A long-lived installed PWA tab picks up a new/cleared notice on return.
+    if (!document.hidden) loadCustomerNotice();
+});
+
 window.addEventListener("DOMContentLoaded", () => {
     loadCars();
     if (isAdmin) {
@@ -4812,6 +5443,7 @@ window.addEventListener("DOMContentLoaded", () => {
         startBadgeRegenPolling();
     }
     if (isCustomer) {
+        loadCustomerNotice();
         renderRecentlyViewed();
         maybeScrollToSectionFromUrl();
     }
@@ -4820,6 +5452,15 @@ window.addEventListener("DOMContentLoaded", () => {
     const designsList = document.getElementById("designsList");
     if (designsList) {
         designsList.addEventListener("click", handleDesignsListClick, true);
+        if (isCustomer) {
+            // Touch long-press on a design would otherwise open the browser's
+            // image context menu instead of entering selection mode.
+            designsList.addEventListener("contextmenu", event => {
+                if (window.matchMedia("(pointer: coarse)").matches && event.target.closest(".design-item")) {
+                    event.preventDefault();
+                }
+            });
+        }
         designsList.addEventListener("touchstart", handleDesignsListTouchStart, { passive: true });
         designsList.addEventListener("touchmove", handleDesignsListTouchMove, { passive: true });
         designsList.addEventListener("touchend", handleDesignsListTouchEnd, { passive: true });

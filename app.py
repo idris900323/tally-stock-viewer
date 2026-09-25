@@ -61,7 +61,10 @@ class _RoleAwareSessionInterface(SecureCookieSessionInterface):
     one session being saved -- no shared mutable state, no race."""
 
     def get_expiration_time(self, app, session):
-        if session.get("role") == "customer":
+        # "remember" is set at login from the Remember-me checkbox. A session
+        # without the key (issued before the checkbox existed) keeps the
+        # long lifetime it was already given.
+        if session.get("role") == "customer" and session.get("remember", True):
             if not session.permanent:
                 return None
             return datetime.now(timezone.utc) + CUSTOMER_SESSION_LIFETIME
@@ -2212,6 +2215,9 @@ def login():
     session["user_id"] = user_record["id"]
     session["username"] = user_record["username"]
     session["role"] = user_record["role"]
+    # Only customers can be "remembered"; the session interface ignores this
+    # flag for admin, and an unchecked box gives the normal short lifetime.
+    session["remember"] = bool(request.form.get("remember_me"))
     return redirect(next_url)
 
 
@@ -3518,6 +3524,135 @@ def _unique_filename_in_dir(target_dir, base_name):
         counter += 1
         candidate = f"{name_part} ({counter}){ext_part}"
     return candidate
+
+
+# ----------------------------
+# Customer notice (single active popup/banner, managed from the More menu)
+# ----------------------------
+NOTICE_IMAGE_DIR = os.path.join(BASE_DIR, "data", "notice_images")
+NOTICE_TEXT_MAX_LENGTH = 1000
+
+
+def _notice_public_payload(notice):
+    """Shape sent to the browser: image notices expose a URL, never a path."""
+    if not notice:
+        return None
+    content = notice["content"]
+    if notice["type"] == "image":
+        content = url_for("notice_image", version=notice["version"])
+    return {
+        "version": notice["version"],
+        "type": notice["type"],
+        "content": content,
+        "important": notice["important"],
+    }
+
+
+def _remove_notice_image_files(keep=None):
+    if not os.path.isdir(NOTICE_IMAGE_DIR):
+        return
+    for name in os.listdir(NOTICE_IMAGE_DIR):
+        if name == keep:
+            continue
+        try:
+            os.remove(os.path.join(NOTICE_IMAGE_DIR, name))
+        except OSError:
+            logger.warning("Could not remove old notice image %s", name)
+
+
+@app.route("/api/notice")
+def api_notice():
+    # Customers only: an admin session never receives notice content, so
+    # nothing notice-related can render for them regardless of what's active.
+    notice = db.get_active_notice() if _current_role() == "customer" else None
+    response = jsonify({"notice": _notice_public_payload(notice)})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/notice_image/<int:version>")
+def notice_image(version):
+    notice = db.get_active_notice()
+    if not notice or notice["type"] != "image" or notice["version"] != version:
+        return "", 404
+    path = os.path.join(NOTICE_IMAGE_DIR, os.path.basename(notice["content"]))
+    if not os.path.isfile(path):
+        return "", 404
+    return send_file(path, conditional=True)
+
+
+@app.route("/admin/notice", methods=["GET"])
+@admin_required
+def admin_get_notice():
+    return jsonify({"notice": _notice_public_payload(db.get_active_notice())})
+
+
+@app.route("/admin/notice", methods=["POST"])
+@admin_required
+def admin_publish_notice():
+    notice_type = (request.form.get("type") or "").strip().lower()
+    important = (request.form.get("important") or "").strip().lower() in ("1", "true", "on", "yes")
+
+    if notice_type == "text":
+        text = (request.form.get("text") or "").strip()
+        if not text:
+            return jsonify({"success": False, "error": "Notice text is required"}), 400
+        if len(text) > NOTICE_TEXT_MAX_LENGTH:
+            return jsonify({"success": False, "error": f"Notice text exceeds {NOTICE_TEXT_MAX_LENGTH} characters"}), 400
+        version = db.publish_notice("text", text, important)
+        _remove_notice_image_files()
+    elif notice_type == "image":
+        uploaded_file = request.files.get("file")
+        if not uploaded_file or not uploaded_file.filename:
+            return jsonify({"success": False, "error": "No image was uploaded"}), 400
+        extension = os.path.splitext(uploaded_file.filename)[1].lower()
+        if extension not in Config.ALLOWED_IMAGE_EXTENSIONS:
+            allowed = ", ".join(sorted(Config.ALLOWED_IMAGE_EXTENSIONS))
+            return jsonify({"success": False, "error": f"Unsupported file type '{extension or 'unknown'}'. Allowed types: {allowed}"}), 400
+        data = uploaded_file.read(Config.MAX_IMAGE_SIZE + 1)
+        if not data:
+            return jsonify({"success": False, "error": "Uploaded file is empty"}), 400
+        if len(data) > Config.MAX_IMAGE_SIZE:
+            max_mb = Config.MAX_IMAGE_SIZE / (1024 * 1024)
+            return jsonify({"success": False, "error": f"File is too large. Maximum size is {max_mb:.0f} MB"}), 400
+        try:
+            with Image.open(BytesIO(data)) as probe:
+                probe.verify()
+        except Exception:
+            return jsonify({"success": False, "error": "That file is not a valid image"}), 400
+
+        os.makedirs(NOTICE_IMAGE_DIR, exist_ok=True)
+        # Version is unknown until the DB row is bumped, so write under a
+        # temp name, publish, then rename to the versioned name.
+        temp_name = f"pending_{os.getpid()}_{int(time.time() * 1000)}{extension}"
+        temp_path = os.path.join(NOTICE_IMAGE_DIR, temp_name)
+        try:
+            with open(temp_path, "wb") as handle:
+                handle.write(data)
+            version = db.publish_notice("image", temp_name, important)
+            final_name = f"notice_v{version}{extension}"
+            os.replace(temp_path, os.path.join(NOTICE_IMAGE_DIR, final_name))
+            db.set_notice_content(final_name)
+        except Exception:
+            logger.exception("Failed to publish image notice")
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+            return jsonify({"success": False, "error": "Failed to save the notice image"}), 500
+        _remove_notice_image_files(keep=final_name)
+    else:
+        return jsonify({"success": False, "error": "Notice type must be 'text' or 'image'"}), 400
+
+    return jsonify({"success": True, "notice": _notice_public_payload(db.get_active_notice())})
+
+
+@app.route("/admin/notice/clear", methods=["POST"])
+@admin_required
+def admin_clear_notice():
+    db.clear_notice()
+    _remove_notice_image_files()
+    return jsonify({"success": True})
 
 
 @app.route("/admin/upload_image", methods=["POST"])
