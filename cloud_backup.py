@@ -82,12 +82,62 @@ _status_lock = threading.Lock()
 # already running at that exact moment) never touches _status["last_run"]
 # (no run actually happened), so without this an admin checking the panel
 # would just see whatever the previous real run's result was, with no hint
-# that today's scheduled attempt never ran at all. In-memory only, same as
-# _status above -- doesn't survive an app restart, which is an accepted
-# limitation shared with the rest of this module's status tracking.
+# that today's scheduled attempt never ran at all.
 _SKIPPED_RUNS_CAPACITY = 20
 _skipped_runs_lock = threading.Lock()
 _skipped_runs = []  # most recent last; each: {"timestamp", "reason", "message"}
+
+# _status["last_run"] and _skipped_runs both used to be in-memory only --
+# an admin restarting the app (pull_and_restart/restart_app_only, a crash,
+# a Windows reboot) lost the last-run summary and the skipped-run history
+# from the System panel entirely, even though the real backup (the
+# manifest, the files on Drive) was completely untouched. That looked like
+# "the cloud backup data disappeared" even though nothing was actually
+# lost -- persisted here the same way (temp file + os.replace) as
+# MANIFEST_PATH above, loaded once at import time. _progress (the live,
+# in-flight sync state) deliberately still isn't persisted -- it's
+# meaningless after a restart, "not running" is exactly the right default.
+STATUS_PATH = os.path.join(DATA_DIR, ".cloud_backup_status.json")
+_persisted_status_lock = threading.Lock()  # guards the on-disk file only, separate from _status_lock/_skipped_runs_lock so saving never has to nest another state lock inside itself
+
+
+def _save_persisted_status():
+    with _status_lock:
+        last_run_snapshot = dict(_status["last_run"]) if _status["last_run"] else None
+    with _skipped_runs_lock:
+        skipped_runs_snapshot = list(_skipped_runs)
+    payload = {"last_run": last_run_snapshot, "skipped_runs": skipped_runs_snapshot}
+    try:
+        with _persisted_status_lock:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            tmp_path = f"{STATUS_PATH}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, sort_keys=True)
+            os.replace(tmp_path, STATUS_PATH)
+    except Exception:
+        # Best-effort -- the in-memory state (what the System panel actually
+        # reads right now) is already correct either way; only surviving a
+        # restart is at risk if this fails, not this run's own correctness.
+        logger.exception("Failed to persist cloud backup status to %s", STATUS_PATH)
+
+
+def _load_persisted_status():
+    if not os.path.isfile(STATUS_PATH):
+        return
+    try:
+        with open(STATUS_PATH, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception:
+        logger.exception("Failed to load persisted cloud backup status, starting fresh: %s", STATUS_PATH)
+        return
+    if not isinstance(data, dict):
+        return
+    with _status_lock:
+        _status["last_run"] = data.get("last_run")
+    with _skipped_runs_lock:
+        skipped = data.get("skipped_runs")
+        if isinstance(skipped, list):
+            _skipped_runs[:] = skipped[-_SKIPPED_RUNS_CAPACITY:]
 
 
 def _record_skipped_run(reason, message):
@@ -99,11 +149,15 @@ def _record_skipped_run(reason, message):
         })
         if len(_skipped_runs) > _SKIPPED_RUNS_CAPACITY:
             del _skipped_runs[0]
+    _save_persisted_status()
 
 
 def get_skipped_runs():
     with _skipped_runs_lock:
         return list(_skipped_runs)
+
+
+_load_persisted_status()
 
 # Cooperative cancellation for the "Stop Sync" button (Part 3): checked
 # before starting each new file/folder operation, never mid-write, so a
@@ -1104,6 +1158,7 @@ def run_sync(triggered_by="schedule"):
         with _status_lock:
             _status["running"] = False
             _status["last_run"] = summary
+        _save_persisted_status()
         _progress_stop()
         _cancel_event.clear()
 
