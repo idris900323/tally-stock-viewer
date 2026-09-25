@@ -399,12 +399,16 @@ def init_database():
                 car TEXT NOT NULL,
                 car_key TEXT NOT NULL,
                 details TEXT NOT NULL,
+                reported_by TEXT NOT NULL DEFAULT '',
                 reported_at TEXT NOT NULL,
                 resolved INTEGER NOT NULL DEFAULT 0,
                 resolved_at TEXT
             )
             """
         )
+        report_columns = [row["name"] for row in conn.execute("PRAGMA table_info(customer_reports)")]
+        if "reported_by" not in report_columns:
+            conn.execute("ALTER TABLE customer_reports ADD COLUMN reported_by TEXT NOT NULL DEFAULT ''")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_reports_open_car ON customer_reports(car_key) WHERE resolved = 0"
         )
@@ -1057,16 +1061,16 @@ def clear_banner():
         conn.execute("UPDATE banner_notice SET active = 0, text = '' WHERE id = 1")
 
 
-def add_customer_report(car, car_key, details):
+def add_customer_report(car, car_key, details, reported_by=""):
     """Records a report unless the car already has an unresolved one.
     Returns True when a new row was created, False for a repeat."""
     with _connect() as conn:
         cursor = conn.execute(
             """
-            INSERT OR IGNORE INTO customer_reports (car, car_key, details, reported_at)
-            VALUES (?, ?, ?, ?)
+            INSERT OR IGNORE INTO customer_reports (car, car_key, details, reported_by, reported_at)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (car, car_key, details, datetime.now().isoformat(timespec="seconds")),
+            (car, car_key, details, reported_by, datetime.now().isoformat(timespec="seconds")),
         )
         return cursor.rowcount > 0
 
@@ -1074,7 +1078,7 @@ def add_customer_report(car, car_key, details):
 def list_open_customer_reports():
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, car, details, reported_at FROM customer_reports WHERE resolved = 0 ORDER BY id ASC"
+            "SELECT id, car, details, reported_by, reported_at FROM customer_reports WHERE resolved = 0 ORDER BY id ASC"
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
 

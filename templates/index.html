@@ -5642,7 +5642,7 @@ function renderReportBell() {
         detail.textContent = report.details;
         const when = document.createElement("div");
         when.className = "report-panel-when";
-        when.textContent = `Reported ${report.reported_at.replace("T", " ")}`;
+        when.textContent = `Reported by ${report.reported_by || "unknown"} · ${report.reported_at.replace("T", " ")}`;
 
         const resolveBtn = document.createElement("button");
         resolveBtn.type = "button";
