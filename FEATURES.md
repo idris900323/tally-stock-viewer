@@ -55,11 +55,29 @@ customer users - built and run by one person on an office PC.
 **Deployment / ops**
 - One-shot Windows setup script (venv, dependencies, `.env`, desktop shortcuts, auto-start)
 - Tray launcher that runs the server, monitors it, and can start a Cloudflare tunnel for public access
-- Remote System panel (token-paired devices only): git status, pull-and-restart, restart-app-only, duplicate-image report, log tail, DB backup download, disk/uptime/env read-outs, autostart check, Tally status, a live Tally performance test, and badge-cache inspection/clearing - the office PC can be managed without remote desktop
-- Restarts are self-sufficient: a detached relaunch helper brings the server back even if the tray launcher's watchdog is broken or absent
+- Remote System panel (token-paired devices only): git status, pull-and-restart, restart-app-only, duplicate-image report, log tail, DB backup download, disk/uptime/env read-outs, autostart check, Tally status, a live Tally performance test, badge-cache inspection/clearing, and full cloud-backup control (below) - the office PC can be managed without remote desktop
+- Restarts are self-sufficient: a detached relaunch helper brings the server back even if the tray launcher's watchdog is broken or absent; restart buttons refuse to run while a cloud backup sync is actively in progress, instead of killing it mid-file
 - Git-based one-command update path that also verifies and repairs the Windows autostart entry on every update
-- `/health` endpoint, file-based logging, self-migrating SQLite schema (no manual DB migration steps when columns are added - even a table-level constraint removal runs as an automatic, backed-up rebuild)
+- `/health` endpoint (public/unauthenticated, so an automated platform health check - e.g. Render's - can actually read it), file-based + console logging, self-migrating SQLite schema (no manual DB migration steps when columns are added - even a table-level constraint removal runs as an automatic, backed-up rebuild)
 - `robots.txt` disallows all crawling and every response carries hardening headers (`Referrer-Policy`, `Permissions-Policy`, `X-Robots-Tag`, plus HSTS once the deployment is confirmed to be HTTPS-only) - this is a private admin/customer catalog, not a public site, so it's kept out of search indexes regardless of what domain fronts it
+- Runs unmodified on a PaaS host (Render) as an alternative/addition to the office-PC-plus-tunnel setup: reads the platform's assigned port automatically, binds correctly, and (see "Cloud deployment" below) never has to reach Tally to serve a working site
+
+**Cloud backup (Google Drive)**
+- Incremental, verified backup of the mappings database, every product photo, and the small JSON stock caches to a Google Drive folder - OAuth-authenticated as a real account (not a Service Account, which has no storage quota of its own), one-time browser consent then silent token refresh forever after
+- Self-healing against drift between the local manifest and Drive's real state (a folder or file deleted by hand on Drive is detected and recreated automatically, not a hard failure)
+- Live progress on the System panel while a sync runs, a Stop button with safe resume, and per-run verification that recounts Drive's actual contents rather than trusting the API calls succeeded
+- Skipped scheduled runs (already syncing, not yet authorized) and the last run's full result - including how long each phase took - are tracked and now survive an app restart
+- Google Drive's own folder listing during verification runs concurrently (bounded, rate-limit-safe) instead of one request at a time - a real ~2.5x speedup on a large photo library, measured, not estimated
+
+**Cloud deployment (push-based, for a Tally-less public instance)**
+- A second, cloud-hosted deployment (e.g. Render) can serve the public site without ever needing to reach Tally directly - the office PC pushes fresh stock/car/hierarchy data to it after every local refresh instead
+- Fully optional and off by default; the office PC's own behavior is completely unaffected unless deliberately configured
+
+**Installable customer app (PWA)**
+- The customer-facing view installs like a native app (home screen icon, no browser chrome) - admin sessions are completely unaffected, no install prompt ever offered there
+- A conservative service worker: always fetches live data first, only ever falls back to a clear "you're offline" message - it never silently shows stale stock/catalog data as if it were current
+- Installed customers stay logged in for 90 days instead of the normal 8-hour session (customer accounts only - admin login is unchanged)
+- A client-side "Recently Viewed" strip (per-device, since customer access codes are shared by multiple real people - so this is deliberately not tied to the account) and two home-screen shortcuts (Recently Viewed, Contact Us)
 
 ## How good is it, honestly
 
@@ -81,15 +99,18 @@ Overall: a genuinely useful, correctly-engineered internal tool - not a toy, not
 
 ## How much effort this took
 
-From the repo history: 80 commits spanning **2026-05-20 to 2026-09-11** (about 16 weeks), ~18,900 lines of code across the app, plus three separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`) documenting setup, public rollout, and architecture.
+From the repo history: 93 commits spanning **2026-05-20 to 2026-09-25** (about 18 weeks), ~24,100 lines of code across the app, plus four separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`, and this one) documenting setup, public rollout, cloud deployment, and architecture.
 
 That includes:
-- 73 Flask routes covering auth, stock, training, bulk matching, accounts, search, remote system management, material-tier categorization, and the prioritized work queue
+- 79 Flask routes covering auth, stock, training, bulk matching, accounts, search, remote system management, material-tier categorization, the prioritized work queue, cloud backup control, and a cloud-instance data intake endpoint
 - A custom XML request/response layer for talking to Tally directly (no official SDK), including TDL collection requests tuned against real production timing measurements
 - A full account-management system with pause/resume/bulk actions and audit logging, now with its own secondary password gate independent of the admin login
 - An image-matching pipeline from filesystem scan through heuristic suggestion to confirmed mapping, now a true two-way sync (add and remove, with a mass-deletion safety threshold), plus a one-to-many bulk matching workflow with automatic product categorization
 - A material-tier tagging system (continuous multi-batch session, an admin-editable category list, and a category picker built directly into the confirm-match/upload-image flow) and a prioritized work queue with tabs, item-name previews, and its own completion stat, tucked behind a consolidated More menu instead of cluttering the page
 - A version-stamped badge cache (so a fix to how badges are drawn can never keep serving stale-looking badges indefinitely) with dedicated System panel tooling to inspect and clear it on demand
 - End-to-end Windows packaging: setup script, tray app, production server, auto-start (self-repairing on every update), optional public tunnel, hardened response headers plus a disallow-all `robots.txt`, and a remote ops panel
+- A standalone OAuth-authenticated Google Drive backup module (`cloud_backup.py`) with manifest-based incremental sync, self-healing against real Drive-side drift, live cancellable progress, concurrent (rate-limit-safe) verification, and a persisted status/skip history that survives a restart
+- A second deployment mode (push-based cloud sync) letting the same codebase run as a Tally-less public instance on a PaaS host, fully inert unless deliberately configured
+- An installable customer PWA (manifest, icons, a deliberately conservative network-first service worker, 90-day persistent customer login, client-side Recently Viewed, home screen shortcuts) with zero footprint on the admin experience
 
-The early history was committed in large batches, so the hands-on-keyboard time is more than the commit count alone implies; the later history shows the opposite pattern - small, heavily-verified fixes hardened against a real, live use case (an actual office running actual Tally data), several of them diagnosed with measurements taken on the production machine, plus a couple of genuine regression-and-fix cycles (a badge briefly burning the wrong text, then its cache invalidation being hardened so the same class of bug can't recur silently). This is not a weekend project; it's a small production system built and maintained iteratively.
+The early history was committed in large batches, so the hands-on-keyboard time is more than the commit count alone implies; the later history shows the opposite pattern - small, heavily-verified fixes hardened against a real, live use case (an actual office running actual Tally data), several of them diagnosed with measurements taken on the production machine or a real, disposable Drive test structure, plus genuine regression-and-fix cycles (a badge briefly burning the wrong text and its cache invalidation hardened afterward; a naive concurrent Google API client corrupting its own SSL connection, caught and fixed before it shipped). This is not a weekend project; it's a small production system built and maintained iteratively.
