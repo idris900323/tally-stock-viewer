@@ -847,7 +847,7 @@ Network-first for everything except `STATIC_ASSETS` (`shared.css`, `shared.js`, 
 
 ### Home screen shortcuts
 
-`manifest.json`'s `shortcuts` array has two entries, both deep-linking to `/?section=<name>`. `templates/index.html`'s `maybeScrollToSectionFromUrl()` reads `?section=recently-viewed`/`?section=contact-us` once on load, strips it (`history.replaceState`, same one-shot pattern as `?manage_categories=1` and `?open_queue=`, section 18/23), and scrolls to `#recentlyViewedSection`/`#contactUsSection` if the session is a customer.
+`manifest.json`'s `shortcuts` array has one entry, deep-linking to `/?section=contact-us`. `templates/index.html`'s `maybeScrollToSectionFromUrl()` reads it once on load, strips it (`history.replaceState`, same one-shot pattern as `?manage_categories=1` and `?open_queue=`, section 18/23), and scrolls to `#contactUsSection` if the session is a customer.
 
 ## 28. Persistent customer login
 
@@ -857,13 +857,11 @@ Implemented as a custom `flask.sessions.SecureCookieSessionInterface` subclass (
 
 A simpler-looking alternative — temporarily overwriting `app.config["PERMANENT_SESSION_LIFETIME"]` for the duration of a customer's login request — was considered and rejected: waitress serves requests from a thread pool, so that shared, mutable app-config value would race against any OTHER request being handled concurrently on a different thread while the override was in effect. Overriding `get_expiration_time()` instead reads the role off the one session object actually being saved; no shared state, no race, and admin's path is byte-for-byte the same code Flask always ran.
 
-## 29. Recently Viewed (client-side, per-device)
+## 29. Customer notices and "Flag this" reports
 
-Customer-only, `templates/index.html`. Deliberately client-side (`localStorage`, key `superSeatingsRecentlyViewed`), not server-side: customer accounts use shared access codes, so server-side per-account tracking would mix different real people's viewing history together. Per-device is the architecturally correct choice here, not just the simpler one.
+**Notices.** Two independent slots in `notice_slots` (`text`, `image`), each with an ever-increasing `version` that survives a clear. Admins manage them from More > Manage Notice; only the text slot can be "important". `/api/notice` returns both slots plus a composite version (`t<text>-i<image>`) to customer sessions only (admin gets nothing). The customer page shows one combined popup (text above image); its dismissal is stored in `localStorage` against the composite version, so a change to either slot shows it again. An important text notice also gets a scrolling top banner with no close control: it slides away once the customer scrolls past 80px and returns only when they are back within 10px of the top (visibility only; the sticky toolbar's `top` follows `--notice-banner-h`). Images live in `data/notice_images/`.
 
-`recordRecentlyViewedFromButton()` hooks into the existing `openImageModal(button)` (one added call, gated on the `isCustomer` JS flag) — reads the same `button.dataset.*` attributes `displayModalImage()` already reads, so it doesn't duplicate or touch modal/swipe/grid state at all. Entries are keyed by `image_id` when present, falling back to `car+label` for the rare unmapped-placeholder case; `recordRecentlyViewed()` de-duplicates on that key (moving a re-viewed entry to the front rather than adding a second copy) and caps the list at 10, oldest evicted first.
-
-`renderRecentlyViewed()` populates a horizontal-scroll card row above the design grid (`#recentlyViewedSection`, hidden while the list is empty); each card's `jumpToRecentlyViewed()` sets the car via the existing `setSelect2Value()`/`loadDesigns()` path (the same one `restoreCarFromUrl()` uses for `?car=` deep links), then finds and reopens the matching thumbnail's modal once the design list has loaded.
+**Report button.** Customers get one button below a car's design list (shown only if that car has an incomplete design) that POSTs `/api/report_item` with just the car. The server works out which designs lack an image or category, stores a summary, and a partial unique index on unresolved rows (`customer_reports`) keeps it to one open report per car. Admins see open reports in the Work Queue's "Customer Reports" tab (`/api/customer_reports`) and mark them resolved.
 
 ## 30. File map for maintenance
 
@@ -892,4 +890,3 @@ If you need to change a behavior, start here:
 - Render/PaaS hosting: `serve.py` (`PORT`, host binding, diagnostic prints), `app.py` (`_configure_logging`'s console handler, `"health"` in `PUBLIC_ENDPOINTS`)
 - installable PWA: `static/manifest.json`, `static/sw.js`, `static/icons/`, `templates/index.html` (customer-only `<head>` tags and SW registration, `maybeScrollToSectionFromUrl`)
 - persistent customer login: `app.py` (`_RoleAwareSessionInterface`, `CUSTOMER_SESSION_LIFETIME`)
-- Recently Viewed: `templates/index.html` (`recordRecentlyViewedFromButton`, `renderRecentlyViewed`, `jumpToRecentlyViewed`)

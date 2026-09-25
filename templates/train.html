@@ -1077,6 +1077,7 @@
         <div class="queue-tabs" role="tablist" aria-label="Work queue">
             <button type="button" class="queue-tab" id="queueTabBtn-needsCategory" role="tab" onclick="switchQueueTab('needsCategory')">Needs Category</button>
             <button type="button" class="queue-tab" id="queueTabBtn-needsImageMatching" role="tab" onclick="switchQueueTab('needsImageMatching')">Needs Image Matching</button>
+            <button type="button" class="queue-tab" id="queueTabBtn-customerReports" role="tab" onclick="switchQueueTab('customerReports')">Customer Reports</button>
             <button type="button" class="queue-close-btn" onclick="closeQueuePanel()" title="Close this queue" aria-label="Close work queue">&times;</button>
         </div>
         <div class="panel queue-panel" id="needsCategoryPanel" style="display:none;">
@@ -1090,6 +1091,13 @@
                 <p class="muted queue-empty" id="needsImageMatchingEmpty">Loading&hellip;</p>
             </div>
             <button type="button" class="secondary queue-show-more" id="needsImageMatchingShowMore" style="display:none;" onclick="toggleQueueExpanded('needsImageMatching')"></button>
+        </div>
+        <!-- Customer "Flag this" reports (unresolved only) -- separate from the
+             two car-level queues above; each row is one reported car. -->
+        <div class="panel queue-panel" id="customerReportsPanel" style="display:none;">
+            <div class="queue-list" id="customerReportsList">
+                <p class="muted queue-empty">Loading&hellip;</p>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -1493,11 +1501,16 @@ async function loadWorkQueue(queueKey) {
 // ============================================================
 
 function switchQueueTab(queueKey) {
+    if (queueKey === "customerReports") {
+        showCustomerReportsTab();
+        return;
+    }
     const queue = workQueues[queueKey];
     const grid = document.getElementById("workQueuesGrid");
     if (!isAdmin || !queue || !grid) {
         return;
     }
+    hideCustomerReportsTab();
 
     Object.keys(workQueues).forEach(key => {
         const panel = document.getElementById(workQueues[key].panelId);
@@ -1519,6 +1532,138 @@ function switchQueueTab(queueKey) {
     }
 }
 
+// ============================================================
+// Customer Reports tab -- unresolved "Flag this" reports from customers
+// (see /api/customer_reports). Independent of workQueues above (different
+// shape: one row per flagged item, with a Resolve action, not a car with a
+// remaining-count), so the queue logic above is untouched.
+// ============================================================
+let customerReports = [];
+
+function renderCustomerReports() {
+    const listEl = document.getElementById("customerReportsList");
+    const tabBtn = document.getElementById("queueTabBtn-customerReports");
+    if (!listEl) {
+        return;
+    }
+    if (tabBtn) {
+        tabBtn.textContent = `Customer Reports (${customerReports.length})`;
+    }
+    listEl.innerHTML = "";
+    if (!customerReports.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted queue-empty";
+        empty.textContent = "No open customer reports.";
+        listEl.appendChild(empty);
+        return;
+    }
+    customerReports.forEach(report => {
+        const row = document.createElement("div");
+        row.className = "queue-item";
+
+        const main = document.createElement("div");
+        main.className = "queue-item-main";
+        const name = document.createElement("span");
+        name.className = "queue-item-car";
+        name.textContent = report.car;
+        const detail = document.createElement("span");
+        detail.className = "queue-item-detail";
+        detail.textContent = `${report.details} · reported ${report.reported_at.replace("T", " ")}`;
+        main.appendChild(name);
+        main.appendChild(detail);
+        row.appendChild(main);
+
+        const actions = document.createElement("div");
+        actions.style.cssText = "display:flex; gap:8px; flex:0 0 auto; align-items:center;";
+        const open = document.createElement("a");
+        open.className = "queue-item-badge";
+        open.href = `/train?car=${encodeURIComponent(report.car)}`;
+        open.textContent = "Open";
+        open.title = "Open this car in Training Mode to add the missing images";
+        const resolveBtn = document.createElement("button");
+        resolveBtn.type = "button";
+        resolveBtn.className = "secondary";
+        resolveBtn.textContent = "Resolve";
+        resolveBtn.onclick = () => resolveCustomerReport(report.id, resolveBtn);
+        actions.appendChild(open);
+        actions.appendChild(resolveBtn);
+        row.appendChild(actions);
+        listEl.appendChild(row);
+    });
+}
+
+async function loadCustomerReports() {
+    const listEl = document.getElementById("customerReportsList");
+    if (!listEl) {
+        return;
+    }
+    try {
+        const res = await fetch("/api/customer_reports");
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        customerReports = (await res.json()).reports || [];
+        renderCustomerReports();
+    } catch (error) {
+        listEl.innerHTML = "";
+        const errorEl = document.createElement("p");
+        errorEl.className = "muted queue-empty";
+        errorEl.textContent = `Could not load reports: ${error.message}`;
+        listEl.appendChild(errorEl);
+    }
+}
+
+async function resolveCustomerReport(reportId, button) {
+    button.disabled = true;
+    try {
+        const res = await fetch(`/admin/customer_reports/${reportId}/resolve`, { method: "POST" });
+        if (!res.ok && res.status !== 404) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        customerReports = customerReports.filter(report => report.id !== reportId);
+        renderCustomerReports();
+    } catch (error) {
+        button.disabled = false;
+        alert(`Could not resolve: ${error.message}`);
+    }
+}
+
+function hideCustomerReportsTab() {
+    const panel = document.getElementById("customerReportsPanel");
+    if (panel) {
+        panel.style.display = "none";
+    }
+    const tabBtn = document.getElementById("queueTabBtn-customerReports");
+    if (tabBtn) {
+        tabBtn.classList.remove("active");
+        tabBtn.setAttribute("aria-selected", "false");
+    }
+}
+
+function showCustomerReportsTab() {
+    const grid = document.getElementById("workQueuesGrid");
+    if (!isAdmin || !grid) {
+        return;
+    }
+    Object.keys(workQueues).forEach(key => {
+        const panel = document.getElementById(workQueues[key].panelId);
+        if (panel) {
+            panel.style.display = "none";
+        }
+        const tabBtn = document.getElementById(`queueTabBtn-${key}`);
+        if (tabBtn) {
+            tabBtn.classList.remove("active");
+            tabBtn.setAttribute("aria-selected", "false");
+        }
+    });
+    document.getElementById("customerReportsPanel").style.display = "";
+    const tabBtn = document.getElementById("queueTabBtn-customerReports");
+    tabBtn.classList.add("active");
+    tabBtn.setAttribute("aria-selected", "true");
+    grid.style.display = "";
+    loadCustomerReports();
+}
+
 function closeQueuePanel() {
     const grid = document.getElementById("workQueuesGrid");
     if (grid) {
@@ -1537,7 +1682,7 @@ async function openWorkQueuePanelWithDefaultTab() {
     if (grid) {
         grid.style.display = "";
     }
-    await Promise.all(Object.keys(workQueues).map(key => loadWorkQueue(key)));
+    await Promise.all([...Object.keys(workQueues).map(key => loadWorkQueue(key)), loadCustomerReports()]);
     const defaultKey = workQueues.needsImageMatching.cars.length > workQueues.needsCategory.cars.length
         ? "needsImageMatching"
         : "needsCategory";

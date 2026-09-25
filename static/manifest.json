@@ -23,18 +23,6 @@
   ],
   "shortcuts": [
     {
-      "name": "Recently Viewed",
-      "short_name": "Recently Viewed",
-      "url": "/?section=recently-viewed",
-      "icons": [
-        {
-          "src": "icons/icon-192.png",
-          "sizes": "192x192",
-          "type": "image/png"
-        }
-      ]
-    },
-    {
       "name": "Contact Us",
       "short_name": "Contact Us",
       "url": "/?section=contact-us",

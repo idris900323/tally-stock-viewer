@@ -2564,6 +2564,56 @@ def _queue_item_name_fields(stats, missing_items_key, remaining):
     }
 
 
+@app.route("/api/report_item", methods=["POST"])
+def api_report_item():
+    """One-tap report from the button below a car's design list. Customer
+    sessions only (admin can edit directly). The server works out which of
+    the car's designs are missing an image or category, refuses if none are,
+    and never creates a second unresolved report for the same car."""
+    if _current_role() != "customer":
+        return jsonify({"success": False, "error": "Customers only"}), 403
+    body = request.get_json(silent=True) or {}
+    car = str(body.get("car") or "").strip()
+    if not car or len(car) > 300:
+        return jsonify({"success": False, "error": "car is required"}), 400
+
+    load_error = ensure_data_loaded()
+    if load_error:
+        return jsonify({"success": False, "error": load_error}), 500
+    _found, children = _find_children_by_qty(car)
+    payload = _build_design_payload(children or [])
+    if not payload:
+        return jsonify({"success": False, "error": "Unknown car"}), 404
+    no_image = [i for i in payload if not i.get("mapped")]
+    no_category = [i for i in payload if not i.get("category")]
+    if not no_image and not no_category:
+        return jsonify({"success": False, "error": "Nothing to report for this car"}), 400
+
+    names = []
+    for item in no_image + no_category:
+        name = item.get("design") or item.get("raw") or "Unknown"
+        if name not in names:
+            names.append(name)
+    shown = ", ".join(names[:5]) + (f", +{len(names) - 5} more" if len(names) > 5 else "")
+    details = f"{len(no_image)} without image, {len(no_category)} without category: {shown}"
+    created = db.add_customer_report(car, _normalize_lookup_key(car), details)
+    return jsonify({"success": True, "created": created})
+
+
+@app.route("/api/customer_reports")
+@admin_required
+def api_customer_reports():
+    return jsonify({"reports": db.list_open_customer_reports()})
+
+
+@app.route("/admin/customer_reports/<int:report_id>/resolve", methods=["POST"])
+@admin_required
+def admin_resolve_customer_report(report_id):
+    if not db.resolve_customer_report(report_id):
+        return jsonify({"success": False, "error": "Report not found or already resolved"}), 404
+    return jsonify({"success": True})
+
+
 @app.route("/api/needs_category_queue")
 @admin_required
 def needs_category_queue():
@@ -3533,18 +3583,16 @@ NOTICE_IMAGE_DIR = os.path.join(BASE_DIR, "data", "notice_images")
 NOTICE_TEXT_MAX_LENGTH = 1000
 
 
-def _notice_public_payload(notice):
-    """Shape sent to the browser: image notices expose a URL, never a path."""
-    if not notice:
-        return None
-    content = notice["content"]
-    if notice["type"] == "image":
-        content = url_for("notice_image", version=notice["version"])
+def _notice_public_payload(slots):
+    """Shape sent to the browser: the two slots plus one composite version
+    that changes whenever either slot's content changes. The image slot is
+    exposed as a URL, never a filesystem path."""
+    text = slots["text"]
+    image = slots["image"]
     return {
-        "version": notice["version"],
-        "type": notice["type"],
-        "content": content,
-        "important": notice["important"],
+        "text": {"content": text["content"], "important": text["important"], "version": text["version"]} if text else None,
+        "image": {"url": url_for("notice_image", version=image["version"]), "version": image["version"]} if image else None,
+        "version": f"t{text['version'] if text else 0}-i{image['version'] if image else 0}",
     }
 
 
@@ -3564,18 +3612,21 @@ def _remove_notice_image_files(keep=None):
 def api_notice():
     # Customers only: an admin session never receives notice content, so
     # nothing notice-related can render for them regardless of what's active.
-    notice = db.get_active_notice() if _current_role() == "customer" else None
-    response = jsonify({"notice": _notice_public_payload(notice)})
+    if _current_role() == "customer":
+        payload = _notice_public_payload(db.get_notice_slots())
+    else:
+        payload = {"text": None, "image": None, "version": "t0-i0"}
+    response = jsonify(payload)
     response.headers["Cache-Control"] = "no-store"
     return response
 
 
 @app.route("/notice_image/<int:version>")
 def notice_image(version):
-    notice = db.get_active_notice()
-    if not notice or notice["type"] != "image" or notice["version"] != version:
+    image = db.get_notice_slots()["image"]
+    if not image or image["version"] != version:
         return "", 404
-    path = os.path.join(NOTICE_IMAGE_DIR, os.path.basename(notice["content"]))
+    path = os.path.join(NOTICE_IMAGE_DIR, os.path.basename(image["content"]))
     if not os.path.isfile(path):
         return "", 404
     return send_file(path, conditional=True)
@@ -3584,24 +3635,24 @@ def notice_image(version):
 @app.route("/admin/notice", methods=["GET"])
 @admin_required
 def admin_get_notice():
-    return jsonify({"notice": _notice_public_payload(db.get_active_notice())})
+    return jsonify(_notice_public_payload(db.get_notice_slots()))
 
 
 @app.route("/admin/notice", methods=["POST"])
 @admin_required
 def admin_publish_notice():
     notice_type = (request.form.get("type") or "").strip().lower()
-    important = (request.form.get("important") or "").strip().lower() in ("1", "true", "on", "yes")
 
     if notice_type == "text":
+        important = (request.form.get("important") or "").strip().lower() in ("1", "true", "on", "yes")
         text = (request.form.get("text") or "").strip()
         if not text:
             return jsonify({"success": False, "error": "Notice text is required"}), 400
         if len(text) > NOTICE_TEXT_MAX_LENGTH:
             return jsonify({"success": False, "error": f"Notice text exceeds {NOTICE_TEXT_MAX_LENGTH} characters"}), 400
-        version = db.publish_notice("text", text, important)
-        _remove_notice_image_files()
+        db.publish_notice("text", text, important)
     elif notice_type == "image":
+        # Image notices are popup-only; any "important" value is ignored.
         uploaded_file = request.files.get("file")
         if not uploaded_file or not uploaded_file.filename:
             return jsonify({"success": False, "error": "No image was uploaded"}), 400
@@ -3629,10 +3680,10 @@ def admin_publish_notice():
         try:
             with open(temp_path, "wb") as handle:
                 handle.write(data)
-            version = db.publish_notice("image", temp_name, important)
+            version = db.publish_notice("image", temp_name)
             final_name = f"notice_v{version}{extension}"
             os.replace(temp_path, os.path.join(NOTICE_IMAGE_DIR, final_name))
-            db.set_notice_content(final_name)
+            db.set_notice_content("image", final_name)
         except Exception:
             logger.exception("Failed to publish image notice")
             try:
@@ -3644,15 +3695,20 @@ def admin_publish_notice():
     else:
         return jsonify({"success": False, "error": "Notice type must be 'text' or 'image'"}), 400
 
-    return jsonify({"success": True, "notice": _notice_public_payload(db.get_active_notice())})
+    return jsonify({"success": True, **_notice_public_payload(db.get_notice_slots())})
 
 
 @app.route("/admin/notice/clear", methods=["POST"])
 @admin_required
 def admin_clear_notice():
-    db.clear_notice()
-    _remove_notice_image_files()
-    return jsonify({"success": True})
+    """Clears one slot (type=text|image) or, with no type, both."""
+    notice_type = (request.form.get("type") or "").strip().lower() or None
+    if notice_type not in (None, "text", "image"):
+        return jsonify({"success": False, "error": "Notice type must be 'text' or 'image'"}), 400
+    db.clear_notice(notice_type)
+    if notice_type in (None, "image"):
+        _remove_notice_image_files()
+    return jsonify({"success": True, **_notice_public_payload(db.get_notice_slots())})
 
 
 @app.route("/admin/upload_image", methods=["POST"])
