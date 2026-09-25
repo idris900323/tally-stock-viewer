@@ -78,7 +78,7 @@ customer users - built and run by one person on an office PC.
 - A conservative service worker: always fetches live data first, only ever falls back to a clear "you're offline" message - it never silently shows stale stock/catalog data as if it were current
 - Customers who leave "Remember me" ticked (the default) stay logged in for 90 days instead of the normal 8-hour session; unticking it, or logging in as admin, gives the normal short session
 - Customers can long-press a design to select several and tap Share in a minimal top bar (always plain, no category badge; same 10-image batching as admin) - there is no separate select button, and the admin flow is unchanged
-- Admins publish one customer notice at a time from More > Manage Notice (text or image, optionally "important"): customers see it as a popup, and important ones also get a top banner (scrolling text, or a static image strip); closing either hides both until a new notice is published
+- Admins publish one customer notice at a time from More > Manage Notice (text or image, optionally "important"): customers see it as a popup, and important ones also get a top banner (scrolling text, or a static image strip); closing the popup keeps it away until a new notice is published, while the banner has its own close button and only stays hidden for the rest of that visit
 - A client-side "Recently Viewed" strip (per-device, since customer access codes are shared by multiple real people - so this is deliberately not tied to the account) and two home-screen shortcuts (Recently Viewed, Contact Us)
 
 ## How good is it, honestly

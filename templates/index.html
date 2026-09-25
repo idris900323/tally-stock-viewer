@@ -5270,18 +5270,30 @@ async function refreshStock() {
 // ============================================================
 // Customer notice (popup + optional important banner). Customer sessions
 // only -- the server sends no notice to admin, and this is never called for
-// them. Dismissing the popup OR the banner records the notice's version in
-// localStorage, which removes both; a newly published version (different
-// number) shows again.
+// them. The two are dismissed independently:
+//   - popup: localStorage, per version -- stays closed across visits until
+//     a new version is published.
+//   - banner: sessionStorage, per version -- closed for the rest of this
+//     visit only, back on a new visit; a newly published version shows again.
 // ============================================================
 const NOTICE_DISMISSED_KEY = "noticeDismissedVersion";
-let shownNoticeVersion = null;
+const NOTICE_BANNER_DISMISSED_KEY = "noticeBannerDismissedVersion";
+let shownPopupVersion = null;
+let shownBannerVersion = null;
 
-function getDismissedNoticeVersion() {
+function readStoredVersion(storageName, key) {
     try {
-        return localStorage.getItem(NOTICE_DISMISSED_KEY);
+        return window[storageName].getItem(key);
     } catch (error) {
         return null;
+    }
+}
+
+function writeStoredVersion(storageName, key, version) {
+    try {
+        window[storageName].setItem(key, String(version));
+    } catch (error) {
+        // Private mode / blocked storage: it just shows again later.
     }
 }
 
@@ -5290,32 +5302,35 @@ function setBannerHeight(px) {
     document.body.style.paddingTop = px ? `${px}px` : "";
 }
 
-function removeNoticeElements() {
+function removeNoticePopup() {
     const popup = document.getElementById("noticePopup");
     if (popup) popup.remove();
     document.body.classList.remove("notice-popup-open");
+}
+
+function removeNoticeBanner() {
     const banner = document.getElementById("noticeBanner");
     if (banner) banner.remove();
     setBannerHeight(0);
-    shownNoticeVersion = null;
 }
 
-function dismissNotice(version) {
-    try {
-        localStorage.setItem(NOTICE_DISMISSED_KEY, String(version));
-    } catch (error) {
-        // Private mode / blocked storage: it just shows again next load.
-    }
-    removeNoticeElements();
+function dismissNoticePopup(version) {
+    writeStoredVersion("localStorage", NOTICE_DISMISSED_KEY, version);
+    removeNoticePopup();
 }
 
-function makeNoticeCloseButton(label, version) {
+function dismissNoticeBanner(version) {
+    writeStoredVersion("sessionStorage", NOTICE_BANNER_DISMISSED_KEY, version);
+    removeNoticeBanner();
+}
+
+function makeNoticeCloseButton(label, onClose) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "notice-close";
     btn.setAttribute("aria-label", label);
     btn.innerHTML = "&times;";
-    btn.onclick = () => dismissNotice(version);
+    btn.onclick = onClose;
     return btn;
 }
 
@@ -5328,7 +5343,7 @@ function renderNoticePopup(notice) {
 
     const backdrop = document.createElement("div");
     backdrop.className = "notice-popup-backdrop";
-    backdrop.onclick = () => dismissNotice(notice.version);
+    backdrop.onclick = () => dismissNoticePopup(notice.version);
     popup.appendChild(backdrop);
 
     if (notice.type === "image") {
@@ -5338,7 +5353,7 @@ function renderNoticePopup(notice) {
         img.src = notice.content;
         img.alt = "Notice";
         box.appendChild(img);
-        box.appendChild(makeNoticeCloseButton("Close notice", notice.version));
+        box.appendChild(makeNoticeCloseButton("Close notice", () => dismissNoticePopup(notice.version)));
         popup.appendChild(box);
     } else {
         const box = document.createElement("div");
@@ -5350,7 +5365,7 @@ function renderNoticePopup(notice) {
         ok.type = "button";
         ok.className = "notice-popup-ok";
         ok.textContent = "Close";
-        ok.onclick = () => dismissNotice(notice.version);
+        ok.onclick = () => dismissNoticePopup(notice.version);
         box.appendChild(text);
         box.appendChild(ok);
         popup.appendChild(box);
@@ -5387,7 +5402,7 @@ function renderNoticeBanner(notice) {
         track.appendChild(marquee);
         banner.appendChild(track);
     }
-    banner.appendChild(makeNoticeCloseButton("Close banner", notice.version));
+    banner.appendChild(makeNoticeCloseButton("Close banner", () => dismissNoticeBanner(notice.version)));
     document.body.appendChild(banner);
 
     const sync = () => setBannerHeight(banner.offsetHeight);
@@ -5411,17 +5426,29 @@ async function loadCustomerNotice() {
         return;
     }
     if (!notice) {
-        removeNoticeElements();
+        removeNoticePopup();
+        removeNoticeBanner();
+        shownPopupVersion = null;
+        shownBannerVersion = null;
         return;
     }
-    if (String(notice.version) === getDismissedNoticeVersion() || notice.version === shownNoticeVersion) {
-        return;
+    const version = String(notice.version);
+
+    if (version !== readStoredVersion("localStorage", NOTICE_DISMISSED_KEY) && notice.version !== shownPopupVersion) {
+        removeNoticePopup();
+        shownPopupVersion = notice.version;
+        renderNoticePopup(notice);
     }
-    removeNoticeElements();
-    shownNoticeVersion = notice.version;
-    renderNoticePopup(notice);
+
     if (notice.important) {
-        renderNoticeBanner(notice);
+        if (version !== readStoredVersion("sessionStorage", NOTICE_BANNER_DISMISSED_KEY) && notice.version !== shownBannerVersion) {
+            removeNoticeBanner();
+            shownBannerVersion = notice.version;
+            renderNoticeBanner(notice);
+        }
+    } else {
+        removeNoticeBanner();
+        shownBannerVersion = null;
     }
 }
 
