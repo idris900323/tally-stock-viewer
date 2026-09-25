@@ -114,6 +114,7 @@
         .sticky-toolbar {
             position: sticky;
             top: var(--notice-banner-h, 0px);
+            transition: top 0.25s ease;
             z-index: 500;
             background: var(--panel);
             border: 1px solid var(--border);
@@ -594,66 +595,6 @@
             margin-bottom: 14px;
         }
 
-        /* Recently Viewed (customer-only, Part 2) -- a compact horizontal
-           scroll row, deliberately separate from #designsList's grid so it
-           never shares markup/logic with the main design cards it links
-           back into. */
-        .recently-viewed-section h2 {
-            margin: 0 0 12px;
-            font-size: 17px;
-        }
-
-        .recently-viewed-list {
-            display: flex;
-            gap: 12px;
-            overflow-x: auto;
-            padding-bottom: 4px;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .recently-viewed-card {
-            flex: 0 0 auto;
-            width: 108px;
-            background: none;
-            border: 0;
-            padding: 0;
-            cursor: pointer;
-            text-align: left;
-            font: inherit;
-            color: inherit;
-        }
-
-        .recently-viewed-thumb {
-            width: 108px;
-            height: 108px;
-            object-fit: cover;
-            border-radius: 12px;
-            border: 1px solid var(--border);
-            display: block;
-            background: var(--bg);
-        }
-
-        .recently-viewed-label {
-            margin-top: 6px;
-            font-size: 12px;
-            line-height: 1.3;
-            color: var(--text);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-        }
-
-        .recently-viewed-car {
-            margin-top: 2px;
-            font-size: 11px;
-            color: var(--muted);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
         #designsList {
             list-style: none;
             padding: 0;
@@ -763,6 +704,46 @@
             flex: 0 0 auto;
         }
 
+        .car-report-row {
+            margin-top: 18px;
+            text-align: center;
+        }
+
+        .car-report-row .flag-btn {
+            width: auto;
+            min-height: 44px;
+            padding: 10px 16px;
+            font-size: 14px;
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--border);
+        }
+
+        .car-report-row .flag-btn:hover:not(:disabled) {
+            background: #f1f5f9;
+            transform: none;
+        }
+
+        .car-report-row .flag-btn:disabled {
+            cursor: default;
+            opacity: 0.75;
+        }
+
+        .app-toast {
+            position: fixed;
+            left: 50%;
+            bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+            transform: translateX(-50%);
+            max-width: 80vw;
+            padding: 10px 16px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.92);
+            color: #fff;
+            font-size: 14px;
+            z-index: 1200;
+            pointer-events: none;
+        }
+
         .thumbnail-actions {
             display: flex;
             gap: 6px;
@@ -845,36 +826,33 @@
             margin-bottom: 14px;
         }
 
-        /* ---- Customer notice (popup + important banner) ----
+        /* ---- Customer notice (combined popup + important text banner) ----
            Layers: banner 700 (above the sticky toolbar 500 and the customer
            select bar 650; the WhatsApp button is a bottom-right corner
            button so a top strip can never overlap it); popup 1000 like
-           .modal. The banner's live height is published as
-           --notice-banner-h so the sticky toolbar / select bar sit below it
-           and the page is padded down instead of being covered. */
+           .modal. --notice-banner-h is the banner's CURRENT footprint (0
+           while it's tucked away on scroll) and offsets the sticky toolbar
+           / select bar; the page itself is padded down by the banner's full
+           height so hiding it never makes the content jump. */
         .notice-banner {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
             z-index: 700;
-            display: flex;
-            align-items: center;
             background: #b45309;
             color: #fff;
             box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
             padding-top: env(safe-area-inset-top, 0px);
+            transition: transform 0.25s ease;
         }
 
-        /* While the popup is open its backdrop would otherwise cover the
-           banner's close button; lift the banner above it for that time. */
-        body.notice-popup-open .notice-banner {
-            z-index: 1001;
+        .notice-banner.notice-banner-hidden {
+            transform: translateY(-100%);
+            box-shadow: none;
         }
 
         .notice-banner-track {
-            flex: 1 1 auto;
-            min-width: 0;
             overflow: hidden;
             white-space: nowrap;
         }
@@ -893,36 +871,6 @@
             to { transform: translateX(-100%); }
         }
 
-        .notice-banner-image {
-            flex: 1 1 auto;
-            min-width: 0;
-            height: clamp(48px, 13vw, 84px);
-            background: #f1f5f9;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .notice-banner-image img {
-            height: 100%;
-            width: auto;
-            max-width: 100%;
-            object-fit: contain;
-        }
-
-        .notice-banner .notice-close {
-            flex: 0 0 auto;
-            width: 40px;
-            height: 40px;
-            padding: 0;
-            margin: 0 2px;
-            border-radius: 50%;
-            background: rgba(0, 0, 0, 0.3);
-            color: #fff;
-            font-size: 22px;
-            line-height: 1;
-        }
-
         .notice-popup {
             position: fixed;
             inset: 0;
@@ -939,56 +887,57 @@
             background: rgba(2, 6, 23, 0.7);
         }
 
+        /* One shell for text-only, image-only and text-above-image. */
         .notice-popup-box {
             position: relative;
-            width: min(92vw, 440px);
-            max-height: 82vh;
+            width: min(92vw, 460px);
+            max-height: 88vh;
             overflow: auto;
             background: #fff;
             border-radius: 16px;
-            padding: 22px 20px 18px;
+            padding: 20px 18px 16px;
             box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
         }
 
+        .notice-popup-x {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.7);
+            color: #fff;
+            font-size: 20px;
+            line-height: 1;
+            z-index: 1;
+        }
+
         .notice-popup-text {
-            margin: 0 0 16px;
-            font-size: 16px;
-            line-height: 1.5;
+            margin: 0 0 14px;
+            padding-right: 30px;
+            font-size: 18px;
+            font-weight: 700;
+            line-height: 1.4;
             color: var(--text);
             white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
 
+        .notice-popup-image {
+            display: block;
+            width: 100%;
+            max-height: 60vh;
+            object-fit: contain;
+            border-radius: 10px;
+            margin: 0 0 14px;
+            background: #f1f5f9;
+        }
+
         .notice-popup-box .notice-popup-ok {
             width: 100%;
             min-height: 44px;
-        }
-
-        .notice-popup-image-box {
-            position: relative;
-            line-height: 0;
-        }
-
-        .notice-popup-image-box img {
-            display: block;
-            max-width: 92vw;
-            max-height: 82vh;
-            border-radius: 12px;
-            box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
-        }
-
-        .notice-popup-image-box .notice-close {
-            position: absolute;
-            top: 6px;
-            right: 6px;
-            width: 32px;
-            height: 32px;
-            padding: 0;
-            border-radius: 50%;
-            background: rgba(0, 0, 0, 0.6);
-            color: #fff;
-            font-size: 20px;
-            line-height: 1;
         }
 
         .notice-admin-preview {
@@ -1034,6 +983,37 @@
             font-size: 14px;
         }
 
+        .notice-admin-body {
+            padding: 12px 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: auto;
+        }
+
+        .notice-slot {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+        }
+
+        .notice-slot h3 {
+            margin: 0 0 8px;
+            font-size: 14px;
+        }
+
+        .notice-slot .notice-admin-preview,
+        .notice-slot .notice-admin-form {
+            margin: 0 0 10px;
+            padding-left: 0;
+            padding-right: 0;
+            padding-bottom: 0;
+        }
+
+        .notice-slot .notice-admin-preview {
+            padding: 10px 12px;
+        }
+
         .notice-admin-actions {
             display: flex;
             gap: 8px;
@@ -1045,6 +1025,7 @@
         .customer-select-bar {
             position: fixed;
             top: var(--notice-banner-h, 0px);
+            transition: top 0.25s ease;
             left: 0;
             right: 0;
             z-index: 650;
@@ -2197,24 +2178,17 @@
     <div id="errorMsg" class="notice error"></div>
     <div id="infoMsg" class="notice success"></div>
 
-    {% if not is_admin %}
-    <!-- Recently Viewed (customer-only). Populated entirely client-side
-         from localStorage (see recordRecentlyViewed()/renderRecentlyViewed())
-         -- deliberately per-device, not per-account, since customer access
-         codes are shared by multiple real people. Hidden whenever the list
-         is empty. -->
-    <div id="recentlyViewedSection" class="panel recently-viewed-section" style="display:none;">
-        <h2>Recently Viewed</h2>
-        <div id="recentlyViewedList" class="recently-viewed-list"></div>
-    </div>
-    {% endif %}
-
     <div id="designsContainer" class="panel designs-container">
         <div class="designs-header">
             <h2 style="margin:0;"><span id="designsHeaderPrefix">Available Designs for</span> <span id="selectedCarName"></span></h2>
             <p id="designCount" style="margin:0; color: var(--muted);"></p>
         </div>
         <ul id="designsList"></ul>
+        {% if not is_admin %}
+        <div id="carReportRow" class="car-report-row" style="display:none;">
+            <button type="button" class="flag-btn" onclick="flagCar(this)" title="Let us know some designs for this car are missing an image or category">&#9873; Report missing images or categories</button>
+        </div>
+        {% endif %}
     </div>
 
     <footer class="contact-footer" id="contactUsSection">
@@ -2267,20 +2241,35 @@
             <strong>Manage Notice</strong>
             <button class="secondary" onclick="closeNoticeModal()">Close</button>
         </div>
-        <p class="category-settings-hint">One notice at a time, shown to customers as a popup. Publishing always counts as a new notice, so customers who closed the previous one see it again.</p>
-        <div id="noticeCurrent" class="notice-admin-preview">Loading...</div>
-        <div id="noticeStatus" class="category-settings-notice" style="display:none;"></div>
-        <form id="noticeForm" class="notice-admin-form" onsubmit="return handlePublishNotice(event)">
-            <label><input type="radio" name="noticeType" value="text" checked onchange="updateNoticeTypeFields()"> Text</label>
-            <label><input type="radio" name="noticeType" value="image" onchange="updateNoticeTypeFields()"> Image</label>
-            <textarea id="noticeText" maxlength="1000" placeholder="Message shown to customers"></textarea>
-            <input type="file" id="noticeFile" accept="image/*" style="display:none;">
-            <label><input type="checkbox" id="noticeImportant"> Important (also show a banner at the top)</label>
-            <div class="notice-admin-actions">
-                <button type="submit" id="noticePublishBtn">Publish Notice</button>
-                <button type="button" id="noticeClearBtn" class="secondary" onclick="handleClearNotice()">Clear Notice</button>
-            </div>
-        </form>
+        <div class="notice-admin-body">
+            <p class="category-settings-hint" style="margin:0;">A text notice and an image notice are managed separately. Customers see whatever is active as one popup (text above image). Changing either one makes the popup show again for everyone.</p>
+            <div id="noticeStatus" class="category-settings-notice" style="display:none; margin:0;"></div>
+
+            <section class="notice-slot">
+                <h3>Text notice</h3>
+                <div id="noticeTextCurrent" class="notice-admin-preview">Loading...</div>
+                <form class="notice-admin-form" onsubmit="return handlePublishNotice(event, 'text')">
+                    <textarea id="noticeText" maxlength="1000" placeholder="Message shown to customers"></textarea>
+                    <label><input type="checkbox" id="noticeImportant"> Important (also show a scrolling banner at the top)</label>
+                    <div class="notice-admin-actions">
+                        <button type="submit" id="noticeTextPublishBtn">Publish Text</button>
+                        <button type="button" id="noticeTextClearBtn" class="secondary" onclick="handleClearNotice('text')">Clear Text</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="notice-slot">
+                <h3>Image notice</h3>
+                <div id="noticeImageCurrent" class="notice-admin-preview">Loading...</div>
+                <form class="notice-admin-form" onsubmit="return handlePublishNotice(event, 'image')">
+                    <input type="file" id="noticeFile" accept="image/*">
+                    <div class="notice-admin-actions">
+                        <button type="submit" id="noticeImagePublishBtn">Publish Image</button>
+                        <button type="button" id="noticeImageClearBtn" class="secondary" onclick="handleClearNotice('image')">Clear Image</button>
+                    </div>
+                </form>
+            </section>
+        </div>
     </div>
 </div>
 
@@ -2804,119 +2793,70 @@ function openImageModal(button) {
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
     openModalWithBackSupport(hideImageModalUI);
-
-    if (isCustomer) {
-        recordRecentlyViewedFromButton(button);
-    }
 }
 
 function closeImageModal() {
     closeModalWithBackSupport(hideImageModalUI);
 }
 
-// ---------------------------------------------------------------------------
-// Recently Viewed (customer-only). Purely additive: reads button.dataset
-// the same way displayModalImage() above already does, never touches modal/
-// swipe/grid state. Per-device localStorage, not per-account -- customer
-// access codes are shared by multiple real people, so server-side per-
-// account tracking would mix different people's history together.
-// ---------------------------------------------------------------------------
-const RECENTLY_VIEWED_STORAGE_KEY = "superSeatingsRecentlyViewed";
-const RECENTLY_VIEWED_MAX = 10;
+let appToastTimer = null;
 
-function getRecentlyViewed() {
+// Small self-dismissing message near the bottom, visible wherever the
+// customer has scrolled (unlike the in-flow #infoMsg notice at the top).
+function showToast(message) {
+    let el = document.getElementById("appToast");
+    if (!el) {
+        el = document.createElement("div");
+        el.id = "appToast";
+        el.className = "app-toast";
+        el.setAttribute("role", "status");
+        document.body.appendChild(el);
+    }
+    el.textContent = message;
+    el.style.display = "";
+    clearTimeout(appToastTimer);
+    appToastTimer = setTimeout(() => { el.style.display = "none"; }, 2500);
+}
+
+// One-tap report, shown once below the design list, that the selected car has
+// designs missing an image or category. No confirmation or typing; the server
+// works out which items are incomplete and ignores a repeat while an earlier
+// report for the same car is still unresolved.
+async function flagCar(button) {
+    if (!isCustomer || button.disabled) {
+        return;
+    }
+    button.disabled = true;
     try {
-        const raw = window.localStorage.getItem(RECENTLY_VIEWED_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : [];
-        return Array.isArray(parsed) ? parsed : [];
+        const res = await fetch("/api/report_item", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ car: document.getElementById("carSelect").value || "" }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || "Could not send report");
+        }
+        button.textContent = "\u2713 Reported";
+        showToast("Thanks, we'll take a look");
     } catch (error) {
-        // Private browsing / storage disabled / corrupted value -- fail
-        // quiet, this feature is a convenience, never a requirement.
-        return [];
+        button.disabled = false;
+        showToast("Couldn't send that, please try again");
     }
 }
 
-function saveRecentlyViewed(list) {
-    try {
-        window.localStorage.setItem(RECENTLY_VIEWED_STORAGE_KEY, JSON.stringify(list));
-    } catch (error) {
-        // Same reasoning as getRecentlyViewed() -- never let this break browsing.
-    }
-}
-
-function recentlyViewedEntryKey(entry) {
-    // image_id is the stable identity when present; falls back to the
-    // car+label combo for the rare placeholder/unmapped case (openImageModal
-    // can be reached from those too), matching the same "car+item" identity
-    // the spec calls out as the fallback.
-    return entry.imageId ? `id:${entry.imageId}` : `car:${entry.car}|item:${entry.label}`;
-}
-
-function recordRecentlyViewed(entry) {
-    if (!entry.label) {
+// Shown below the list only when this car actually has an incomplete design.
+function updateCarReportRow(items) {
+    const row = document.getElementById("carReportRow");
+    if (!row) {
         return;
     }
-    const key = recentlyViewedEntryKey(entry);
-    const list = getRecentlyViewed().filter(existing => recentlyViewedEntryKey(existing) !== key);
-    list.unshift(entry);
-    saveRecentlyViewed(list.slice(0, RECENTLY_VIEWED_MAX));
-    renderRecentlyViewed();
-}
-
-function recordRecentlyViewedFromButton(button) {
-    const carSelect = document.getElementById("carSelect");
-    recordRecentlyViewed({
-        imageId: button.dataset.imageId || "",
-        car: carSelect ? carSelect.value : "",
-        label: button.dataset.label || "",
-        category: button.dataset.category || "",
-        thumbnailSrc: button.dataset.src || "",
-        viewedAt: new Date().toISOString(),
-    });
-}
-
-function renderRecentlyViewed() {
-    const section = document.getElementById("recentlyViewedSection");
-    const list = document.getElementById("recentlyViewedList");
-    if (!section || !list) {
-        // Admin sessions never render this section's markup at all
-        // (Jinja-gated to customer sessions only) -- nothing to do.
-        return;
-    }
-    const items = getRecentlyViewed();
-    if (items.length === 0) {
-        section.style.display = "none";
-        list.innerHTML = "";
-        return;
-    }
-    section.style.display = "";
-    list.innerHTML = items.map((item, index) => `
-        <button type="button" class="recently-viewed-card" data-recently-viewed-index="${index}" onclick="jumpToRecentlyViewed(${index})">
-            <img class="recently-viewed-thumb" src="${getImageSource(escapeHtml(item.thumbnailSrc))}" alt="${escapeHtml(item.label)}" loading="lazy">
-            <div class="recently-viewed-label">${escapeHtml(item.label)}</div>
-            <div class="recently-viewed-car">${escapeHtml(stripShelfCodeForDisplay(item.car))}</div>
-        </button>
-    `).join("");
-}
-
-async function jumpToRecentlyViewed(index) {
-    const items = getRecentlyViewed();
-    const item = items[index];
-    if (!item || !item.car) {
-        return;
-    }
-    setSelect2Value("#carSelect", item.car, stripShelfCodeForDisplay(item.car));
-    setUrlCarParam(item.car);
-    updateClearButtonVisibility();
-    await loadDesigns();
-
-    const buttons = getMappedThumbnailButtons();
-    const match = buttons.find(button =>
-        item.imageId ? button.dataset.imageId === item.imageId : button.dataset.label === item.label
-    );
-    if (match) {
-        match.scrollIntoView({ behavior: "smooth", block: "center" });
-        openImageModal(match);
+    const incomplete = Array.isArray(items) && items.some(item => !item.mapped || !item.category);
+    row.style.display = incomplete ? "" : "none";
+    const button = row.querySelector("button");
+    if (button) {
+        button.disabled = false;
+        button.textContent = "\u2691 Report missing images or categories";
     }
 }
 
@@ -3292,7 +3232,7 @@ function clearCategorySettingsNotice() {
     }
 }
 
-// ---- Manage Notice (admin) ----
+// ---- Manage Notice (admin): two independent slots, text and image ----
 function setNoticeStatus(message, level) {
     const el = document.getElementById("noticeStatus");
     el.textContent = message;
@@ -3300,35 +3240,39 @@ function setNoticeStatus(message, level) {
     el.style.display = message ? "block" : "none";
 }
 
-function renderNoticeCurrent(notice) {
-    const el = document.getElementById("noticeCurrent");
-    el.textContent = "";
-    const clearBtn = document.getElementById("noticeClearBtn");
-    if (clearBtn) clearBtn.disabled = !notice;
-    if (!notice) {
-        el.textContent = "No active notice.";
-        return;
-    }
-    const label = document.createElement("strong");
-    label.textContent = `Active notice (version ${notice.version}${notice.important ? ", important" : ""}):`;
-    el.appendChild(label);
-    if (notice.type === "image") {
-        const img = document.createElement("img");
-        img.src = notice.content;
-        img.alt = "Current notice image";
-        el.appendChild(img);
-    } else {
-        const text = document.createElement("div");
-        text.style.whiteSpace = "pre-wrap";
-        text.textContent = notice.content;
-        el.appendChild(text);
-    }
-}
+function renderNoticeSlots(payload) {
+    const text = payload && payload.text;
+    const image = payload && payload.image;
 
-function updateNoticeTypeFields() {
-    const isImage = document.querySelector('input[name="noticeType"]:checked').value === "image";
-    document.getElementById("noticeText").style.display = isImage ? "none" : "";
-    document.getElementById("noticeFile").style.display = isImage ? "" : "none";
+    const textEl = document.getElementById("noticeTextCurrent");
+    textEl.textContent = "";
+    if (text) {
+        const label = document.createElement("strong");
+        label.textContent = `Active${text.important ? " (important banner)" : ""}:`;
+        const body = document.createElement("div");
+        body.style.whiteSpace = "pre-wrap";
+        body.textContent = text.content;
+        textEl.appendChild(label);
+        textEl.appendChild(body);
+    } else {
+        textEl.textContent = "No active text notice.";
+    }
+    document.getElementById("noticeTextClearBtn").disabled = !text;
+
+    const imageEl = document.getElementById("noticeImageCurrent");
+    imageEl.textContent = "";
+    if (image) {
+        const label = document.createElement("strong");
+        label.textContent = "Active:";
+        const img = document.createElement("img");
+        img.src = image.url;
+        img.alt = "Current notice image";
+        imageEl.appendChild(label);
+        imageEl.appendChild(img);
+    } else {
+        imageEl.textContent = "No active image notice.";
+    }
+    document.getElementById("noticeImageClearBtn").disabled = !image;
 }
 
 async function openNoticeModal() {
@@ -3339,16 +3283,14 @@ async function openNoticeModal() {
     document.getElementById("noticeText").value = "";
     document.getElementById("noticeFile").value = "";
     document.getElementById("noticeImportant").checked = false;
-    updateNoticeTypeFields();
     const modal = document.getElementById("noticeModal");
     modal.classList.add("open");
     modal.setAttribute("aria-hidden", "false");
     try {
         const res = await fetch("/admin/notice");
-        const data = await res.json();
-        renderNoticeCurrent(data.notice);
+        renderNoticeSlots(await res.json());
     } catch (error) {
-        document.getElementById("noticeCurrent").textContent = "Could not load the current notice.";
+        setNoticeStatus("Could not load the current notices.", "error");
     }
 }
 
@@ -3358,12 +3300,10 @@ function closeNoticeModal() {
     modal.setAttribute("aria-hidden", "true");
 }
 
-async function handlePublishNotice(event) {
+async function handlePublishNotice(event, type) {
     event.preventDefault();
-    const type = document.querySelector('input[name="noticeType"]:checked').value;
     const form = new FormData();
     form.append("type", type);
-    form.append("important", document.getElementById("noticeImportant").checked ? "1" : "0");
     if (type === "image") {
         const file = document.getElementById("noticeFile").files[0];
         if (!file) {
@@ -3373,8 +3313,9 @@ async function handlePublishNotice(event) {
         form.append("file", file);
     } else {
         form.append("text", document.getElementById("noticeText").value);
+        form.append("important", document.getElementById("noticeImportant").checked ? "1" : "0");
     }
-    const btn = document.getElementById("noticePublishBtn");
+    const btn = document.getElementById(type === "image" ? "noticeImagePublishBtn" : "noticeTextPublishBtn");
     btn.disabled = true;
     try {
         const res = await fetch("/admin/notice", { method: "POST", body: form });
@@ -3382,8 +3323,8 @@ async function handlePublishNotice(event) {
         if (!res.ok || !data.success) {
             throw new Error(data.error || "Failed to publish notice.");
         }
-        renderNoticeCurrent(data.notice);
-        setNoticeStatus("Notice published.", "success");
+        renderNoticeSlots(data);
+        setNoticeStatus(type === "image" ? "Image notice published." : "Text notice published.", "success");
     } catch (error) {
         setNoticeStatus(error.message, "error");
     } finally {
@@ -3392,15 +3333,17 @@ async function handlePublishNotice(event) {
     return false;
 }
 
-async function handleClearNotice() {
+async function handleClearNotice(type) {
+    const form = new FormData();
+    form.append("type", type);
     try {
-        const res = await fetch("/admin/notice/clear", { method: "POST" });
+        const res = await fetch("/admin/notice/clear", { method: "POST", body: form });
         const data = await res.json();
         if (!res.ok || !data.success) {
             throw new Error(data.error || "Failed to clear notice.");
         }
-        renderNoticeCurrent(null);
-        setNoticeStatus("Notice cleared.", "success");
+        renderNoticeSlots(data);
+        setNoticeStatus(type === "image" ? "Image notice cleared." : "Text notice cleared.", "success");
     } catch (error) {
         setNoticeStatus(error.message, "error");
     }
@@ -4745,13 +4688,12 @@ function maybeOpenCategorySessionFromUrl() {
 }
 
 // Home screen shortcuts (manifest.json's "shortcuts" array) deep-link here
-// with ?section=recently-viewed or ?section=contact-us -- one-shot, same
+// with ?section=contact-us -- one-shot, same
 // pattern as MANAGE_CATEGORIES_QUERY_PARAM above: read once, strip
 // immediately, so a later refresh/bookmark of the resulting URL doesn't
 // re-trigger the scroll on every visit.
 const SECTION_QUERY_PARAM = "section";
 const SECTION_ELEMENT_IDS = {
-    "recently-viewed": "recentlyViewedSection",
     "contact-us": "contactUsSection",
 };
 
@@ -5191,7 +5133,9 @@ async function loadDesigns() {
             document.getElementById("designCount").textContent = `Total: ${data.length} designs with stock`;
             container.classList.add("show");
             showInfo(`Showing ${data.length} designs for ${stripShelfCodeForDisplay(car)}`);
+            updateCarReportRow(data);
         } else {
+            updateCarReportRow([]);
             list.innerHTML = '<li><div class="empty-state">No designs found for this car.</div></li>';
             container.classList.add("show");
             showInfo("No designs found");
@@ -5268,70 +5212,62 @@ async function refreshStock() {
 }
 
 // ============================================================
-// Customer notice (popup + optional important banner). Customer sessions
-// only -- the server sends no notice to admin, and this is never called for
-// them. The two are dismissed independently:
-//   - popup: localStorage, per version -- stays closed across visits until
-//     a new version is published.
-//   - banner: sessionStorage, per version -- closed for the rest of this
-//     visit only, back on a new visit; a newly published version shows again.
+// Customer notice: ONE combined popup (text above image, whichever are
+// active) plus, for an important text notice, a top banner. Customer
+// sessions only -- the server sends no notice to admin.
+//   - popup: dismissal stored in localStorage against the COMBINED version
+//     (text version + image version), so a change to either slot shows it
+//     again, and it otherwise stays closed across visits.
+//   - banner: scrolling text, deliberately has no close control. It tucks
+//     away while the customer scrolls down the page and returns when they
+//     are back at the top (see updateNoticeBannerScrollState()).
 // ============================================================
 const NOTICE_DISMISSED_KEY = "noticeDismissedVersion";
-const NOTICE_BANNER_DISMISSED_KEY = "noticeBannerDismissedVersion";
+const BANNER_HIDE_AFTER_SCROLL_PX = 80;
+const BANNER_SHOW_WITHIN_TOP_PX = 10;
 let shownPopupVersion = null;
 let shownBannerVersion = null;
+let bannerHiddenByScroll = false;
+let bannerSpacePx = 0;
+let bannerScrollListenerAttached = false;
 
-function readStoredVersion(storageName, key) {
+function getDismissedNoticeVersion() {
     try {
-        return window[storageName].getItem(key);
+        return localStorage.getItem(NOTICE_DISMISSED_KEY);
     } catch (error) {
         return null;
     }
 }
 
-function writeStoredVersion(storageName, key, version) {
-    try {
-        window[storageName].setItem(key, String(version));
-    } catch (error) {
-        // Private mode / blocked storage: it just shows again later.
-    }
-}
-
-function setBannerHeight(px) {
-    document.documentElement.style.setProperty("--notice-banner-h", `${px}px`);
-    document.body.style.paddingTop = px ? `${px}px` : "";
+// The page is always padded down by the banner's full height (so hiding it
+// doesn't shift content); only the sticky toolbar / select bar offset
+// follows whether the banner is currently showing.
+function applyBannerOffsets() {
+    document.body.style.paddingTop = bannerSpacePx ? `${bannerSpacePx}px` : "";
+    const visiblePx = bannerHiddenByScroll ? 0 : bannerSpacePx;
+    document.documentElement.style.setProperty("--notice-banner-h", `${visiblePx}px`);
 }
 
 function removeNoticePopup() {
     const popup = document.getElementById("noticePopup");
     if (popup) popup.remove();
-    document.body.classList.remove("notice-popup-open");
 }
 
 function removeNoticeBanner() {
     const banner = document.getElementById("noticeBanner");
     if (banner) banner.remove();
-    setBannerHeight(0);
+    bannerSpacePx = 0;
+    bannerHiddenByScroll = false;
+    applyBannerOffsets();
 }
 
 function dismissNoticePopup(version) {
-    writeStoredVersion("localStorage", NOTICE_DISMISSED_KEY, version);
+    try {
+        localStorage.setItem(NOTICE_DISMISSED_KEY, String(version));
+    } catch (error) {
+        // Private mode / blocked storage: it just shows again next load.
+    }
     removeNoticePopup();
-}
-
-function dismissNoticeBanner(version) {
-    writeStoredVersion("sessionStorage", NOTICE_BANNER_DISMISSED_KEY, version);
-    removeNoticeBanner();
-}
-
-function makeNoticeCloseButton(label, onClose) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "notice-close";
-    btn.setAttribute("aria-label", label);
-    btn.innerHTML = "&times;";
-    btn.onclick = onClose;
-    return btn;
 }
 
 function renderNoticePopup(notice) {
@@ -5346,70 +5282,95 @@ function renderNoticePopup(notice) {
     backdrop.onclick = () => dismissNoticePopup(notice.version);
     popup.appendChild(backdrop);
 
-    if (notice.type === "image") {
-        const box = document.createElement("div");
-        box.className = "notice-popup-image-box";
-        const img = document.createElement("img");
-        img.src = notice.content;
-        img.alt = "Notice";
-        box.appendChild(img);
-        box.appendChild(makeNoticeCloseButton("Close notice", () => dismissNoticePopup(notice.version)));
-        popup.appendChild(box);
-    } else {
-        const box = document.createElement("div");
-        box.className = "notice-popup-box";
+    const box = document.createElement("div");
+    box.className = "notice-popup-box";
+
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "notice-popup-x";
+    x.setAttribute("aria-label", "Close notice");
+    x.innerHTML = "&times;";
+    x.onclick = () => dismissNoticePopup(notice.version);
+    box.appendChild(x);
+
+    if (notice.text) {
         const text = document.createElement("p");
         text.className = "notice-popup-text";
-        text.textContent = notice.content;
-        const ok = document.createElement("button");
-        ok.type = "button";
-        ok.className = "notice-popup-ok";
-        ok.textContent = "Close";
-        ok.onclick = () => dismissNoticePopup(notice.version);
+        text.textContent = notice.text.content;
         box.appendChild(text);
-        box.appendChild(ok);
-        popup.appendChild(box);
     }
+    if (notice.image) {
+        const img = document.createElement("img");
+        img.className = "notice-popup-image";
+        img.src = notice.image.url;
+        img.alt = "Notice";
+        box.appendChild(img);
+    }
+
+    const ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "notice-popup-ok";
+    ok.textContent = "Close";
+    ok.onclick = () => dismissNoticePopup(notice.version);
+    box.appendChild(ok);
+
+    popup.appendChild(box);
     document.body.appendChild(popup);
-    document.body.classList.add("notice-popup-open");
 }
 
-function renderNoticeBanner(notice) {
+// Hide once the customer has scrolled well down; show again only when they
+// are back at the very top. Two different thresholds (hysteresis) so it
+// can't flicker around a single boundary. Visibility only -- the banner is
+// never removed or dismissed by this.
+function updateNoticeBannerScrollState() {
+    const banner = document.getElementById("noticeBanner");
+    if (!banner) {
+        return;
+    }
+    const y = window.scrollY || document.documentElement.scrollTop || 0;
+    if (!bannerHiddenByScroll && y > BANNER_HIDE_AFTER_SCROLL_PX) {
+        bannerHiddenByScroll = true;
+    } else if (bannerHiddenByScroll && y <= BANNER_SHOW_WITHIN_TOP_PX) {
+        bannerHiddenByScroll = false;
+    } else {
+        return;
+    }
+    banner.classList.toggle("notice-banner-hidden", bannerHiddenByScroll);
+    applyBannerOffsets();
+}
+
+function renderNoticeBanner(text) {
     const banner = document.createElement("div");
     banner.id = "noticeBanner";
     banner.className = "notice-banner";
     banner.setAttribute("role", "region");
     banner.setAttribute("aria-label", "Important notice");
 
-    if (notice.type === "image") {
-        // Static strip -- a sliding image doesn't read naturally.
-        const strip = document.createElement("div");
-        strip.className = "notice-banner-image";
-        const img = document.createElement("img");
-        img.src = notice.content;
-        img.alt = "Important notice";
-        strip.appendChild(img);
-        banner.appendChild(strip);
-    } else {
-        const track = document.createElement("div");
-        track.className = "notice-banner-track";
-        const marquee = document.createElement("span");
-        marquee.className = "notice-banner-marquee";
-        marquee.textContent = notice.content.replace(/\s+/g, " ");
-        // Roughly constant reading speed regardless of message length.
-        const seconds = Math.max(12, Math.round(notice.content.length * 0.25) + 10);
-        marquee.style.setProperty("--notice-marquee-duration", `${seconds}s`);
-        track.appendChild(marquee);
-        banner.appendChild(track);
-    }
-    banner.appendChild(makeNoticeCloseButton("Close banner", () => dismissNoticeBanner(notice.version)));
+    const track = document.createElement("div");
+    track.className = "notice-banner-track";
+    const marquee = document.createElement("span");
+    marquee.className = "notice-banner-marquee";
+    marquee.textContent = text.content.replace(/\s+/g, " ");
+    // Roughly constant reading speed regardless of message length.
+    const seconds = Math.max(12, Math.round(text.content.length * 0.25) + 10);
+    marquee.style.setProperty("--notice-marquee-duration", `${seconds}s`);
+    track.appendChild(marquee);
+    banner.appendChild(track);
     document.body.appendChild(banner);
 
-    const sync = () => setBannerHeight(banner.offsetHeight);
-    const setHeightOnLoad = banner.querySelector("img");
-    if (setHeightOnLoad) setHeightOnLoad.addEventListener("load", sync);
+    bannerHiddenByScroll = false;
+    const sync = () => {
+        bannerSpacePx = banner.offsetHeight;
+        applyBannerOffsets();
+    };
     if (window.ResizeObserver) new ResizeObserver(sync).observe(banner);
     sync();
+
+    if (!bannerScrollListenerAttached) {
+        bannerScrollListenerAttached = true;
+        window.addEventListener("scroll", updateNoticeBannerScrollState, { passive: true });
+    }
+    updateNoticeBannerScrollState();
 }
 
 async function loadCustomerNotice() {
@@ -5420,31 +5381,30 @@ async function loadCustomerNotice() {
     try {
         const res = await fetch("/api/notice", { cache: "no-store" });
         if (res.ok) {
-            notice = (await res.json()).notice;
+            notice = await res.json();
         }
     } catch (error) {
         return;
     }
-    if (!notice) {
+    if (!notice || (!notice.text && !notice.image)) {
         removeNoticePopup();
         removeNoticeBanner();
         shownPopupVersion = null;
         shownBannerVersion = null;
         return;
     }
-    const version = String(notice.version);
 
-    if (version !== readStoredVersion("localStorage", NOTICE_DISMISSED_KEY) && notice.version !== shownPopupVersion) {
+    if (notice.version !== getDismissedNoticeVersion() && notice.version !== shownPopupVersion) {
         removeNoticePopup();
         shownPopupVersion = notice.version;
         renderNoticePopup(notice);
     }
 
-    if (notice.important) {
-        if (version !== readStoredVersion("sessionStorage", NOTICE_BANNER_DISMISSED_KEY) && notice.version !== shownBannerVersion) {
+    if (notice.text && notice.text.important) {
+        if (notice.text.version !== shownBannerVersion) {
             removeNoticeBanner();
-            shownBannerVersion = notice.version;
-            renderNoticeBanner(notice);
+            shownBannerVersion = notice.text.version;
+            renderNoticeBanner(notice.text);
         }
     } else {
         removeNoticeBanner();
@@ -5471,7 +5431,6 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     if (isCustomer) {
         loadCustomerNotice();
-        renderRecentlyViewed();
         maybeScrollToSectionFromUrl();
     }
     setInterval(checkTimestampFreshness, 10000);

@@ -8,7 +8,7 @@
 // regardless of who ends up served by it: HTML and data always go to the
 // network first, real business data (stock/mappings) is never served stale
 // from a cache.
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const STATIC_CACHE = `super-seatings-static-${CACHE_VERSION}`;
 
 // Genuinely static, rarely-changing assets only -- no HTML, no API/data

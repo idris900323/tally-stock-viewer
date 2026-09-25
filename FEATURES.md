@@ -78,8 +78,9 @@ customer users - built and run by one person on an office PC.
 - A conservative service worker: always fetches live data first, only ever falls back to a clear "you're offline" message - it never silently shows stale stock/catalog data as if it were current
 - Customers who leave "Remember me" ticked (the default) stay logged in for 90 days instead of the normal 8-hour session; unticking it, or logging in as admin, gives the normal short session
 - Customers can long-press a design to select several and tap Share in a minimal top bar (always plain, no category badge; same 10-image batching as admin) - there is no separate select button, and the admin flow is unchanged
-- Admins publish one customer notice at a time from More > Manage Notice (text or image, optionally "important"): customers see it as a popup, and important ones also get a top banner (scrolling text, or a static image strip); closing the popup keeps it away until a new notice is published, while the banner has its own close button and only stays hidden for the rest of that visit
-- A client-side "Recently Viewed" strip (per-device, since customer access codes are shared by multiple real people - so this is deliberately not tied to the account) and two home-screen shortcuts (Recently Viewed, Contact Us)
+- Admins manage a text notice and an image notice separately from More > Manage Notice; customers see whatever is active as one popup (text above image) that stays closed until either changes. An important text notice also shows a scrolling top banner that slides away while scrolling and returns at the top
+- One home-screen shortcut (Contact Us)
+- One button below a car's design list lets customers report, in a single tap, that some designs are missing an image or category; admins see these in the Work Queue's Customer Reports tab (one open report per car) and mark them resolved
 
 ## How good is it, honestly
 
@@ -113,6 +114,6 @@ That includes:
 - End-to-end Windows packaging: setup script, tray app, production server, auto-start (self-repairing on every update), optional public tunnel, hardened response headers plus a disallow-all `robots.txt`, and a remote ops panel
 - A standalone OAuth-authenticated Google Drive backup module (`cloud_backup.py`) with manifest-based incremental sync, self-healing against real Drive-side drift, live cancellable progress, concurrent (rate-limit-safe) verification, and a persisted status/skip history that survives a restart
 - A second deployment mode (push-based cloud sync) letting the same codebase run as a Tally-less public instance on a PaaS host, fully inert unless deliberately configured
-- An installable customer PWA (manifest, icons, a deliberately conservative network-first service worker, 90-day persistent customer login, client-side Recently Viewed, home screen shortcuts) with zero footprint on the admin experience
+- An installable customer PWA (manifest, icons, a deliberately conservative network-first service worker, 90-day persistent customer login, a home screen shortcut) with zero footprint on the admin experience
 
 The early history was committed in large batches, so the hands-on-keyboard time is more than the commit count alone implies; the later history shows the opposite pattern - small, heavily-verified fixes hardened against a real, live use case (an actual office running actual Tally data), several of them diagnosed with measurements taken on the production machine or a real, disposable Drive test structure, plus genuine regression-and-fix cycles (a badge briefly burning the wrong text and its cache invalidation hardened afterward; a naive concurrent Google API client corrupting its own SSL connection, caught and fixed before it shipped). This is not a weekend project; it's a small production system built and maintained iteratively.
