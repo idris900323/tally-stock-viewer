@@ -2482,7 +2482,10 @@ function updateImageView(imageRecord) {
     document.getElementById("imageStatusPill").textContent = imageRecord.mapped ? "Matched" : "Ready for review";
     document.getElementById("carFolderText").textContent = imageRecord.car_folder || "-";
     document.getElementById("imageNameText").textContent = imageRecord.filename || "-";
-    document.getElementById("scanDateText").textContent = imageRecord.scan_date || "-";
+    // formatIST() (static/shared.js) reads this naive ISO timestamp as UTC
+    // and renders it in Asia/Kolkata instead of showing the raw server
+    // clock digits (UTC in production) as-is.
+    document.getElementById("scanDateText").textContent = imageRecord.scan_date ? formatIST(imageRecord.scan_date) : "-";
 }
 
 async function openImage(imageRecord, pushHistory = true) {
