@@ -51,7 +51,17 @@
         .page {
             max-width: 1100px;
             margin: 0 auto;
-            padding: 32px 20px 40px;
+            /* Bottom padding (was 40px) reserves clearance for the fixed
+               .whatsapp-fab (58px + 20px offset = ~78px) so it can't end up
+               permanently covering whatever content happens to be last on
+               the page at max scroll -- previously only .contact-footer
+               reserved this for itself specifically, which didn't help
+               anything above it (e.g. the "Report missing images or
+               categories" row) when the page was short enough that max
+               scroll landed there instead of past the footer. One
+               page-level reservation covers every page state instead of
+               needing a per-section patch. */
+            padding: 32px 20px 100px;
         }
 
         .hero {
@@ -336,7 +346,10 @@
 
         #stickyToolbar.sticky-toolbar-customer .car-select-wrap {
             width: 100%;
-            max-width: 360px;
+            /* Matches the admin car selector's own max-width (.tier1-row
+               .car-select-wrap below) -- was 360px, which cut off longer
+               car names like "GRAND VITARA - EV (2026) 7D MATS". */
+            max-width: 480px;
         }
 
         #stickyToolbar.sticky-toolbar-customer .select2-container {
@@ -542,8 +555,16 @@
             font-size: 12px;
         }
 
+        /* The 180s threshold that triggers this (checkTimestampFreshness())
+           is untouched and correct -- see the comment there. This is a
+           color choice only: #dc2626 is a hard alarm red, but a timestamp
+           reading >180s old is routine and expected for a good chunk of
+           every 180-second auto-export cycle, not a fault. Switched to the
+           same muted amber already used for .warning/.selection-warning/
+           .badge.unmapped elsewhere on this page, so it reads as "a little
+           behind" rather than "something is broken". */
         .stale-timestamp {
-            color: #dc2626 !important;
+            color: #92400e !important;
             font-weight: 600;
         }
 
@@ -668,24 +689,45 @@
             }
         }
 
-        /* "Needs link" cards: a muted, dashed border and a faded thumbnail
-           (that thumbnail is always the generic stock placeholder for these,
-           never a real photo -- see renderDesignItem()'s imageId logic) make
-           gaps in the catalog visible while scanning a whole grid, without
-           needing to read each card's badge text individually. */
+        /* "Needs link"/"Photo coming soon" cards: a muted, dashed border and
+           a small faded placeholder icon (never a real photo -- see
+           renderDesignItem()'s imageId logic) make gaps in the catalog
+           visible while scanning a whole grid, without needing to read each
+           card's badge text individually. Collapsed to a compact row
+           (small icon + text, forced row layout even on phone, where real
+           cards stack the thumbnail full-width above the text) instead of
+           matching a real photo's full card size -- a car with mostly
+           missing photos was otherwise dominated by empty placeholder boxes
+           the same size as real content. Higher specificity than both
+           .design-thumbnail below and the phone media query's
+           width:100%/height:180px override further down, so this one rule
+           holds at every width without needing to be repeated per
+           breakpoint. */
         .design-item.unmapped-card {
             border-style: dashed;
             border-color: #cbd5e1;
             background: linear-gradient(180deg, #fbfbfc, #f5f6f8);
+            flex-direction: row;
+            align-items: center;
+        }
+
+        .design-item.unmapped-card .thumbnail-button {
+            width: auto;
+            flex: 0 0 auto;
         }
 
         .design-item.unmapped-card .design-thumbnail {
             opacity: 0.55;
+            width: 48px;
+            height: 48px;
         }
 
         .design-thumbnail {
-            width: 92px;
-            height: 92px;
+            /* Meaningfully bigger than the old 92px -- photo-first was the
+               whole point of this grid, and a small square icon undersold
+               real photo content. */
+            width: 132px;
+            height: 132px;
             border-radius: 12px;
             object-fit: cover;
             flex: 0 0 auto;
@@ -1736,12 +1778,11 @@
 
         .contact-footer {
             margin-top: 24px;
+            /* WhatsApp FAB clearance now lives on .page itself (covers
+               every page state, not just whatever happens to render last
+               -- see .page's own comment), so this only needs normal
+               padding again. */
             padding: 18px 20px;
-            /* Reserves clearance below the text so the fixed WhatsApp
-               button (bottom-right, up to ~78px tall including its offset)
-               never sits on top of the phone link, even when this is the
-               last thing on the page and the user scrolls to the bottom. */
-            padding-bottom: 90px;
             text-align: center;
             color: var(--muted);
             font-size: 13px;
@@ -1805,7 +1846,11 @@
 
         @media (max-width: 640px) {
             .page {
-                padding: 18px 12px 28px;
+                /* Bottom padding (was 28px) reserves clearance for the
+                   mobile-sized .whatsapp-fab (52px + 16px offset = ~68px)
+                   -- see the non-mobile .page rule above for the full
+                   reasoning. */
+                padding: 18px 12px 90px;
             }
 
             .hero h1 {
@@ -2109,6 +2154,43 @@
                 gap: 8px;
             }
         }
+
+        /* Between the plain single-row tier2-row layout (fits on one line
+           from roughly 714px up, measured with the current button labels)
+           and the intentionally-stacked mobile layout above (<=640px),
+           this band had neither: flex-wrap alone let the general-actions
+           cluster spill onto its own line, but with nothing left for the
+           row's own `justify-content: space-between` to distribute against
+           on that lone second line, it read as an accidental leftover row
+           -- Update Stock/Train Matches/More sitting flush-left, oddly cut
+           off from the row above instead of looking like a deliberate
+           second group. Reuses the exact same stacked treatment the mobile
+           breakpoint above already uses (down to the identical
+           #carScopedCluster/#generalActionsCluster overflow handling, so
+           the More popover positioning logic is completely untouched)
+           rather than inventing a second pattern to maintain. 768px is
+           deliberately rounder than the measured ~714px threshold, so a
+           small future label-text change shifting that threshold by a
+           few px can't reopen this gap. */
+        @media (min-width: 641px) and (max-width: 768px) {
+            .sticky-toolbar .toolbar.tier2-row {
+                flex-direction: column;
+                align-items: stretch;
+                overflow: visible;
+                gap: 8px;
+            }
+
+            .sticky-toolbar .tier2-row #carScopedCluster {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .sticky-toolbar .tier2-row #generalActionsCluster {
+                flex-wrap: wrap;
+                overflow: visible;
+            }
+        }
     </style>
 </head>
 <body>
@@ -2264,14 +2346,18 @@
     {% endif %}
 
     <!-- Consolidated status line (Part 3) -- replaces the old bordered
-         white ".panel" status card with one small muted line. Auto-export
-         text is shown to every role, unchanged; "Last updated" and its
-         stale-timestamp/hint behavior stay admin-only, unchanged (see
-         checkTimestampFreshness()/updateStaleWarningUI()). -->
+         white ".panel" status card with one small muted line. Admin-only:
+         "Auto-export enabled every N seconds" is internal operational
+         wording (how THIS app keeps itself in sync with Tally) that a
+         customer has no use for and no way to act on; "Last updated" and
+         its stale-timestamp/hint behavior stay admin-only too, unchanged
+         (see checkTimestampFreshness()/updateStaleWarningUI()). -->
+    {% if is_admin %}
     <div class="status-summary">
         {% if auto_export_enabled %}Auto-export enabled every {{ refresh_interval }} seconds.{% else %}Auto-export disabled. Use Update Stock to update manually.{% endif %}
-        {% if is_admin %}&nbsp;&middot; <span id="lastUpdate">Last updated: loading...</span> <span id="autoRefreshHint"></span>{% endif %}
+        &nbsp;&middot; <span id="lastUpdate">Last updated: loading...</span> <span id="autoRefreshHint"></span>
     </div>
+    {% endif %}
     {% if is_admin %}
     <div id="statusMessage" class="status-line"></div>
     {% endif %}
@@ -2301,7 +2387,7 @@
 
     <div id="designsContainer" class="panel designs-container">
         <div class="designs-header">
-            <h2 style="margin:0;"><span id="designsHeaderPrefix">Available Designs for</span> <span id="selectedCarName"></span></h2>
+            <h2 style="margin:0;"><span id="designsHeaderPrefix">Available designs for</span> <span id="selectedCarName"></span></h2>
             <p id="designCount" style="margin:0; color: var(--muted);"></p>
         </div>
         <ul id="designsList"></ul>
@@ -2313,7 +2399,7 @@
     </div>
 
     <footer class="contact-footer" id="contactUsSection">
-        <h2>Contact Us</h2>
+        <h2>Contact us</h2>
         <p>No. 1, Ramasamy Street, Woods Road, Anna Salai, Chennai - 600002</p>
         <p><a href="tel:+919500048983">+91 95000 48983</a></p>
     </footer>
@@ -2379,7 +2465,7 @@
             </section>
 
             <section class="notice-slot">
-                <h3>Important Banner</h3>
+                <h3>Important banner</h3>
                 <p class="category-settings-hint" style="margin:0 0 8px;">A scrolling message at the top of the customer page. Customers cannot close it; it stays until you change or clear it. Text only.</p>
                 <div id="bannerStatus" class="category-settings-notice" style="display:none; margin:0 0 8px;"></div>
                 <div id="bannerCurrent" class="notice-admin-preview">Loading...</div>
@@ -4052,7 +4138,7 @@ function updateCategoryAssignModeUI() {
     // Designs for X" as always otherwise (Part 2.1's session-title wording).
     const headerPrefix = document.getElementById("designsHeaderPrefix");
     if (headerPrefix) {
-        headerPrefix.textContent = categoryAssignMode ? "Manage Categories for" : "Available Designs for";
+        headerPrefix.textContent = categoryAssignMode ? "Manage categories for" : "Available designs for";
     }
 
     const label = document.getElementById("categoryAssignLabel");
@@ -5232,7 +5318,7 @@ function renderDesignItem(item, index) {
                 </button>
                 <div class="design-text">
                     <div class="badge-row">
-                        <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : 'Needs link'}</div>
+                        <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : (isCustomer ? 'Photo coming soon' : 'Needs link')}</div>
                     </div>
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
