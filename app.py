@@ -414,6 +414,12 @@ def inject_session_context():
         "is_viewer": role == "customer",
         "design_category_choices": [c["name"] for c in live_categories],
         "design_categories_json": live_categories,
+        # Two-tier architecture flag: True on the Render instance (which can
+        # never reach Tally directly and instead receives pushed data from
+        # the feeder machine), False on a local/office instance that talks
+        # to Tally itself. Used by system.html to show the right mode label
+        # and hide/relabel the panels that only make sense in one of the two.
+        "cloud_mode": Config.DISABLE_TALLY_SCHEDULING,
     }
 
 
@@ -4565,6 +4571,16 @@ def full_refresh_status_route():
 # discipline as every other optional secret in this codebase.
 # ============================================================
 
+# The feeder machine is now the one link in the whole system with no
+# monitoring of its own -- if it silently dies, this cloud instance just
+# keeps serving whatever stock data it last received, with no visible
+# sign anything is wrong. Tracked in memory only (reset on every restart/
+# redeploy, like last_refresh_status above); the next successful push -- up
+# to TALLY_EXPORT_INTERVAL seconds later -- repopulates it, so this is
+# "minimal tracking", not a durable audit log. See /admin/system/feeder_status.
+FEEDER_LAST_SEEN_AT = None
+
+
 @app.route("/admin/intake/sync_data", methods=["POST"])
 def intake_sync_data():
     expected_token = Config.INTAKE_SYNC_TOKEN
@@ -4604,6 +4620,9 @@ def intake_sync_data():
     except Exception as exc:
         logger.exception("Cloud intake sync_data failed to apply pushed data")
         return jsonify({"error": f"Failed to apply pushed data: {exc}"}), 500
+
+    global FEEDER_LAST_SEEN_AT
+    FEEDER_LAST_SEEN_AT = datetime.now()
 
     logger.info(
         "Cloud intake: received and applied pushed data (%d cars, %d hierarchy rows, %d stock rows)",
@@ -4805,7 +4824,29 @@ def system_logs():
 def _spawn_relaunch_helper():
     """Spawn relaunch_helper.py detached so the restart works even if
     launcher.pyw's watchdog isn't running (see relaunch_helper.py's
-    docstring for why this can't just rely on that watchdog alone)."""
+    docstring for why this can't just rely on that watchdog alone).
+
+    Windows-only mechanism: relaunch_helper.py itself hardcodes
+    ".venv/Scripts/pythonw.exe" and waits for the app's own PORT (5000) to
+    free up before relaunching serve.py directly -- there is no watchdog to
+    stand in for on Render, whose platform-level process supervisor already
+    restarts a crashed/exited web service on its own. Audited 2026-09:
+    subprocess.CREATE_NO_WINDOW referenced unconditionally below is a
+    Windows-only constant (see CPython's subprocess.py -- it's only defined
+    "if _mswindows:"); on Linux, evaluating it raises AttributeError before
+    Popen is even reached. That was previously swallowed by the bare
+    except below (spawned=False, a logged error, then os._exit(0) anyway),
+    so on Render this always silently no-op'd. Made explicit here instead:
+    skip spawning this Windows-specific helper entirely off Windows and let
+    Render's own supervisor do the restart, which is what was actually
+    happening already, just without an honest log line explaining it."""
+    if os.name != "nt":
+        logger.info(
+            "Skipping relaunch_helper.py (Windows-only relaunch mechanism); "
+            "the platform's own process supervisor will restart this service."
+        )
+        return False
+
     python_w = os.path.join(BASE_DIR, ".venv", "Scripts", "pythonw.exe")
     python_exe = python_w if os.path.exists(python_w) else sys.executable
     helper_script = os.path.join(BASE_DIR, "relaunch_helper.py")
@@ -4826,7 +4867,7 @@ def _trigger_self_restart(reason):
         time.sleep(1.5)
         logger.info(reason)
         spawned = _spawn_relaunch_helper()
-        if not spawned:
+        if not spawned and os.name == "nt":
             logger.error("relaunch_helper.py failed to spawn; server will NOT come back automatically.")
         os._exit(0)
 
@@ -5096,6 +5137,21 @@ def _tally_is_reachable(timeout=3):
 @admin_required
 @system_device_required
 def system_tally_status():
+    # In cloud mode (DISABLE_TALLY_SCHEDULING), this instance never talks to
+    # Tally at all -- TALLY_URL almost certainly points at a localhost the
+    # feeder machine owns, not this one, so a real reachability check would
+    # just burn a few seconds timing out every single panel load and report
+    # a "problem" that's actually the expected, correct architecture. Skip
+    # the network call entirely and say so plainly instead.
+    if Config.DISABLE_TALLY_SCHEDULING:
+        return jsonify({
+            "cloud_mode": True,
+            "reachable": None,
+            "instance_count": None,
+            "warning": None,
+            "message": "Tally access: N/A — this instance receives data from the feeder machine.",
+        })
+
     reachable = _tally_is_reachable()
     instance_count = _check_multiple_tally_instances()
 
@@ -5106,9 +5162,43 @@ def system_tally_status():
         warning = f"Multiple Tally instances detected ({instance_count} running). Close the duplicates and keep only one open."
 
     return jsonify({
+        "cloud_mode": False,
         "reachable": reachable,
         "instance_count": instance_count,
         "warning": warning,
+    })
+
+
+# How long a feeder push can go quiet before the System panel flags it.
+# The feeder pushes every TALLY_EXPORT_INTERVAL seconds (3 min by default);
+# this is a fixed, generous multiple of that rather than scaling directly
+# with it, matching the ~10-15 minute early-warning window asked for
+# regardless of the configured export interval.
+FEEDER_STALE_WARNING_SECONDS = 900  # 15 minutes
+
+
+@app.route("/admin/system/feeder_status")
+@admin_required
+@system_device_required
+def system_feeder_status():
+    """Cloud-mode-only: when this instance last received a successful push
+    from the feeder machine at /admin/intake/sync_data. See FEEDER_LAST_SEEN_AT."""
+    if FEEDER_LAST_SEEN_AT is None:
+        return jsonify({
+            "configured": bool(Config.INTAKE_SYNC_TOKEN),
+            "last_seen": None,
+            "last_seen_formatted": None,
+            "seconds_ago": None,
+            "stale": None,
+        })
+
+    seconds_ago = (datetime.now() - FEEDER_LAST_SEEN_AT).total_seconds()
+    return jsonify({
+        "configured": bool(Config.INTAKE_SYNC_TOKEN),
+        "last_seen": FEEDER_LAST_SEEN_AT.isoformat(),
+        "last_seen_formatted": _format_ist(FEEDER_LAST_SEEN_AT),
+        "seconds_ago": round(seconds_ago, 1),
+        "stale": seconds_ago > FEEDER_STALE_WARNING_SECONDS,
     })
 
 
@@ -5126,6 +5216,16 @@ def _expected_autostart_command():
 @admin_required
 @system_device_required
 def system_autostart_status():
+    # Windows-only concept (a registry Run key) -- meaningless on Render's
+    # Linux container, which Render's own platform starts/keeps running
+    # instead. The System panel hides this row entirely in cloud mode; this
+    # early return is just defense-in-depth for anyone hitting the route
+    # directly. Without it, the "reg" call below would still fail safely
+    # (caught by the except below) but with a confusing raw exception
+    # message instead of this clear one.
+    if Config.DISABLE_TALLY_SCHEDULING:
+        return jsonify({"cloud_mode": True, "exists": None, "matches": None})
+
     expected = _expected_autostart_command()
     try:
         result = subprocess.run(
@@ -5133,7 +5233,7 @@ def system_autostart_status():
             capture_output=True,
             text=True,
             timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except Exception as exc:
         return jsonify({"exists": False, "matches": False, "error": str(exc)})
@@ -5345,11 +5445,18 @@ def _get_image_folder_size_mb():
 @system_device_required
 def system_disk_usage():
     db_size_mb = round(os.path.getsize(db.DB_PATH) / (1024 * 1024), 2) if os.path.exists(db.DB_PATH) else 0.0
-    free_bytes = shutil.disk_usage(BASE_DIR).free
+    # On Render, BASE_DIR sits on the actual mounted persistent disk (a
+    # fixed, metered, capped size -- 4GB at the time of writing), so total/
+    # used here are real capacity-planning numbers, not a legacy assumption
+    # about a full PC's hard drive. shutil.disk_usage() reads the real
+    # filesystem regardless of host, so this needs no cloud/local branching.
+    usage = shutil.disk_usage(BASE_DIR)
     return jsonify({
         "mappings_db_size_mb": db_size_mb,
         "image_folder_size_mb": _get_image_folder_size_mb(),
-        "free_disk_space_gb": round(free_bytes / (1024 ** 3), 2),
+        "free_disk_space_gb": round(usage.free / (1024 ** 3), 2),
+        "used_disk_space_gb": round(usage.used / (1024 ** 3), 2),
+        "total_disk_space_gb": round(usage.total / (1024 ** 3), 2),
     })
 
 
