@@ -44,3 +44,169 @@ body {
 h1, h2 {
     letter-spacing: -0.01em;
 }
+
+/* Same accessible keyboard-focus treatment already used on button/select
+   throughout the app (see index.html's `button:focus-visible,
+   select:focus-visible { outline: 2px solid var(--accent); ... }`),
+   extended to text inputs here so every input gets it without each page
+   repeating the rule. :focus-visible (not plain :focus) matches the
+   existing convention: shown for keyboard/programmatic focus, not for a
+   mouse click, which is the modern accessible default. This intentionally
+   does NOT touch input's resting/unfocused border -- each page keeps
+   styling that itself (typically `border: 1px solid var(--border)`,
+   already soft everywhere) since :root token names differ slightly
+   page to page. */
+input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ============================================================
+   Auth-gate pages (Part X) -- the small "you can't get in yet, here's
+   why and what to do" pages: Manage Accounts' password gate
+   (accounts_unlock.html) and the System panel's device-pairing gate
+   (system.html, rendered when system_device_required's Flask decorator
+   blocks an unpaired browser -- see app.py). Both are the same shape
+   (centered card, heading, explanation, optional input, actions), so
+   this is one shared component instead of two near-duplicate local
+   style blocks. Deliberately prefixed .auth-gate-* rather than generic
+   names like .panel/.actions -- system.html already has its own
+   differently-shaped .panel/.actions for the authorized dashboard, and
+   reusing those names here would bleed styling across two very
+   different components sharing one page.
+   ============================================================ */
+.auth-gate-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+}
+
+.auth-gate-panel {
+    width: min(100%, 520px);
+    background: #ffffff;
+    border: 1px solid #d6e0ea;
+    border-radius: 20px;
+    padding: 28px;
+    box-shadow: 0 18px 50px rgba(20, 33, 61, 0.1);
+}
+
+.auth-gate-panel h1 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    color: #14213d;
+}
+
+.auth-gate-panel p {
+    margin: 0 0 18px;
+    color: #607086;
+    line-height: 1.5;
+}
+
+.auth-gate-field {
+    margin-bottom: 14px;
+}
+
+.auth-gate-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: #607086;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+
+.auth-gate-panel input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 12px;
+    /* Soft, on-brand resting border -- was relying on the browser's
+       default input outline (heavy and square-cornered against this
+       field's rounded corners) for ANY visual definition, since nothing
+       here previously set border at all beyond the plain input rule this
+       replaces. */
+    border: 1px solid #d6e0ea;
+    background: #fff;
+    font-size: 16px;
+}
+
+.auth-gate-code {
+    display: block;
+    margin: 4px 0 18px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #f4f7fb;
+    border: 1px solid #d6e0ea;
+    color: #14213d;
+    font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+    font-size: 13px;
+    word-break: break-all;
+}
+
+.auth-gate-notice {
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    font-size: 13px;
+}
+
+.auth-gate-hint {
+    margin-top: 10px;
+    color: #607086;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.auth-gate-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+}
+
+.auth-gate-actions button,
+.auth-gate-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    border-radius: 12px;
+    border: 0;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+}
+
+.auth-gate-actions a.auth-gate-btn-secondary,
+.auth-gate-actions button.auth-gate-btn-secondary {
+    background: transparent;
+    color: #607086;
+    border: 1px solid #d6e0ea;
+}
+
+@media (max-width: 640px) {
+    .auth-gate-page {
+        padding: 14px;
+    }
+
+    .auth-gate-panel {
+        padding: 20px;
+    }
+
+    .auth-gate-actions button,
+    .auth-gate-actions a {
+        width: 100%;
+    }
+
+    .auth-gate-panel h1 {
+        font-size: 26px;
+    }
+}

@@ -330,6 +330,42 @@
     </style>
 </head>
 <body>
+{% if not_authorized %}
+<!-- Styled replacement for the raw {"error": "..."} JSON this page used to
+     return directly from app.py's system_device_required decorator when an
+     unpaired browser hits /admin/system. Every OTHER /admin/system/* route
+     (the page's own AJAX calls, e.g. /admin/system/status) is untouched and
+     still returns that same JSON -- see the decorator itself, which only
+     branches to this template for the bare page route. Reuses the same
+     .auth-gate-* component as accounts_unlock.html (shared.css) rather than
+     this page's own .panel/.actions, which mean something different (the
+     full authorized dashboard's cards/buttons) once past this gate. -->
+<div class="auth-gate-page">
+    <div class="auth-gate-panel">
+        <h1>Device not paired</h1>
+        {% if not_configured %}
+        <p>The System panel isn't set up on this instance yet.</p>
+        <div class="auth-gate-notice">System panel is not configured. Set SYSTEM_ACCESS_TOKEN in .env to enable it, then restart the app.</div>
+        {% else %}
+        <p>This browser hasn't been paired with the System panel yet. Pairing is a one-time step per browser/device, separate from your admin login.</p>
+        <div class="auth-gate-field">
+            <label class="auth-gate-label" for="pairToken">System access token</label>
+            <input id="pairToken" type="password" autocomplete="off" placeholder="Paste the SYSTEM_ACCESS_TOKEN from .env" autofocus>
+        </div>
+        <code class="auth-gate-code">/admin/system/authorize-device?token=YOUR_TOKEN</code>
+        <div class="auth-gate-hint">
+            Visit that URL once from this browser to pair it -- replace YOUR_TOKEN with the real SYSTEM_ACCESS_TOKEN value from .env (an admin has this), or paste it above and use the button below to go there directly. The pairing cookie lasts 400 days on this browser.
+        </div>
+        {% endif %}
+        <div class="auth-gate-actions">
+            {% if not not_configured %}
+            <button type="button" onclick="(function(){var t=document.getElementById('pairToken').value.trim(); if(t){window.location.href='/admin/system/authorize-device?token='+encodeURIComponent(t);}})()">Pair this device</button>
+            {% endif %}
+            <a class="auth-gate-btn-secondary" href="/">Back to home</a>
+        </div>
+    </div>
+</div>
+{% else %}
 <div class="page">
     <div class="header">
         <h1>System
@@ -1378,5 +1414,6 @@ window.addEventListener("DOMContentLoaded", () => {
     }
 });
 </script>
+{% endif %}
 </body>
 </html>
