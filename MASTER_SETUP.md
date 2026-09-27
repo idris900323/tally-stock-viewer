@@ -254,12 +254,16 @@ The `Train Matches` page also shows a `Categorized / Total Items / Remaining / C
 1. Log in as admin
 2. Click `Manage Accounts`
 3. Enter the separate Accounts Password when prompted — this is different from your admin login and is asked again every time you start a new login session, even if you're already logged in as admin
-4. Create, pause, resume, or delete customer accounts
+4. Create, pause, resume, delete, or reset the access code of a customer account
 5. Each row shows the account's status (Active/Paused) and last login time; use `Resume All` or `Pause All` to change every customer account's access at once
 
 A paused customer account cannot log in until it is resumed — the login page shows "This account has been paused. Contact the administrator."
 
-The Accounts Password is a separate value (`ACCOUNTS_ACCESS_PASSWORD` in `.env`) set by whoever manages the system — ask them if you don't have it. It exists specifically so that a compromised or shared admin login by itself still can't reach customer account data.
+The Accounts Password can be either the value set by whoever manages the system (`ACCOUNTS_ACCESS_PASSWORD` in `.env`) or a separate in-app password an admin has set from the "Change accounts password" panel on the Manage Accounts page — either one works, always, so the `.env` value doubles as a permanent recovery key if the in-app one is ever forgotten. It exists specifically so that a compromised or shared admin login by itself still can't reach customer account data. Changing it (either way) immediately logs every already-unlocked Manage Accounts session back out, not just future logins.
+
+**A dealer forgot their access code:** open Manage Accounts and click `Reset` on their row, then type a new code and tell them out of band (phone/WhatsApp) — there's no email or SMS reset link in this app, so this is the actual "forgot password" flow for a dealer.
+
+**Changing your own password:** any logged-in user (admin or dealer) can change their own password at `/change_password` if they know their current one — for an admin, the link is on the System panel's topbar. If a failed login, a failed Manage Accounts unlock, or a failed password change happens, a WhatsApp/phone contact hint appears right next to the error.
 
 ### Check cloud backup status
 

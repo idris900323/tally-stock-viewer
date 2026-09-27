@@ -50,7 +50,13 @@ customer users - built and run by one person on an office PC.
 - Create / pause / resume / delete customer accounts, individually or in bulk
 - Paused accounts are locked out at login with a clear message
 - Last-login tracking and an audit log (`account_logs`) for every account action
+- Deleting an account no longer 500s while writing its own audit-log entry (the log used to reference the just-deleted user's id, which the database's foreign key correctly rejected on a brand-new insert - the account was actually gone, but the page showed a crash and only caught up after a manual refresh)
 - Manage Accounts sits behind its own second password on top of the admin login (session-based, re-entered every new login) - a compromised admin session alone can't reach customer account data
+- That second password is stored in the database and changeable in-app (a "Change accounts password" panel on Manage Accounts), not just an `.env` edit + restart - the `.env` value (`ACCOUNTS_ACCESS_PASSWORD`) still always works too, as a permanent recovery key if the in-app one is ever lost or the two drift apart between machines
+- Changing that password immediately re-locks every session that had already unlocked Manage Accounts, including the one making the change, not just future logins
+- Self-service "Change password" for whoever is logged in, admin or dealer (`/change_password`, requires the current password) - the link itself lives in the System panel topbar, so in practice it's reached by an admin
+- An admin can reset a dealer's forgotten access code directly from their row on Manage Accounts (`Reset` button) - the practical "forgot password" path for dealers, since the app has no email/SMS to send a real reset link to; the admin passes on the new code out of band
+- Contact-us hints (WhatsApp + phone) shown right next to the error on a failed login, a failed Manage Accounts unlock, or a failed self-service password change
 
 **Deployment / ops**
 - One-shot Windows setup script (venv, dependencies, `.env`, desktop shortcuts, auto-start)
@@ -60,7 +66,9 @@ customer users - built and run by one person on an office PC.
 - Git-based one-command update path that also verifies and repairs the Windows autostart entry on every update
 - `/health` endpoint (public/unauthenticated, so an automated platform health check - e.g. Render's - can actually read it), file-based + console logging, self-migrating SQLite schema (no manual DB migration steps when columns are added - even a table-level constraint removal runs as an automatic, backed-up rebuild)
 - `robots.txt` disallows all crawling and every response carries hardening headers (`Referrer-Policy`, `Permissions-Policy`, `X-Robots-Tag`, plus HSTS once the deployment is confirmed to be HTTPS-only) - this is a private admin/customer catalog, not a public site, so it's kept out of search indexes regardless of what domain fronts it
+- Every JSON API response carries `Cache-Control: no-store` by default (previously only two endpoints did, the rest were left to browser/CDN defaults) - a POST that changes something is never followed by a stale cached copy of the old state on the very next GET
 - Runs unmodified on a PaaS host (Render) as an alternative/addition to the office-PC-plus-tunnel setup: reads the platform's assigned port automatically, binds correctly, and (see "Cloud deployment" below) never has to reach Tally to serve a working site
+- A token-authenticated remote rescan endpoint plus a companion push script (`push_new_images.py` / double-click `push_new_images.bat`) let a machine holding the real image folder push newly-added or changed photos straight onto a cloud deployment's disk over SCP and trigger the same rescan Training Mode's button runs - new stock photos reach the live site without opening Training Mode at all. A local manifest tracks what's already been pushed (by path/size/modified-time) so re-runs only send what's new, and the very first run seeds itself from the existing folder instead of re-pushing an already-migrated catalog
 
 **Cloud backup (Google Drive)**
 - Incremental, verified backup of the mappings database, every product photo, and the small JSON stock caches to a Google Drive folder - OAuth-authenticated as a real account (not a Service Account, which has no storage quota of its own), one-time browser consent then silent token refresh forever after
@@ -102,12 +110,13 @@ Overall: a genuinely useful, correctly-engineered internal tool - not a toy, not
 
 ## How much effort this took
 
-From the repo history: 93 commits spanning **2026-05-20 to 2026-09-25** (about 18 weeks), ~24,100 lines of code across the app, plus four separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`, and this one) documenting setup, public rollout, cloud deployment, and architecture.
+From the repo history: 110 commits spanning **2026-05-20 to 2026-09-27** (about 19 weeks), plus four separate written guides (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `SOFTWARE_DEEP_DIVE.md`, and this one) documenting setup, public rollout, cloud deployment, and architecture.
 
 That includes:
-- 79 Flask routes covering auth, stock, training, bulk matching, accounts, search, remote system management, material-tier categorization, the prioritized work queue, cloud backup control, and a cloud-instance data intake endpoint
+- 96 Flask routes covering auth, stock, training, bulk matching, accounts, search, remote system management, material-tier categorization, the prioritized work queue, cloud backup control, a cloud-instance data intake endpoint, and a token-triggered remote rescan endpoint
 - A custom XML request/response layer for talking to Tally directly (no official SDK), including TDL collection requests tuned against real production timing measurements
-- A full account-management system with pause/resume/bulk actions and audit logging, now with its own secondary password gate independent of the admin login
+- A full account-management system with pause/resume/bulk actions and audit logging, now with its own secondary password gate independent of the admin login - that gate password is itself DB-backed and admin-changeable with an `.env`-based recovery key, self-service password change exists for any logged-in user, and a forgotten dealer code is reset by an admin from the accounts table
+- A machine-to-machine image sync path (`push_new_images.py` + a token-checked `/admin/system/trigger_rescan` endpoint) so new photos taken on a Tally-side machine reach a cloud deployment's disk and get scanned in without anyone opening Training Mode
 - An image-matching pipeline from filesystem scan through heuristic suggestion to confirmed mapping, now a true two-way sync (add and remove, with a mass-deletion safety threshold), plus a one-to-many bulk matching workflow with automatic product categorization
 - A material-tier tagging system (continuous multi-batch session, an admin-editable category list, and a category picker built directly into the confirm-match/upload-image flow) and a prioritized work queue with tabs, item-name previews, and its own completion stat, tucked behind a consolidated More menu instead of cluttering the page
 - A version-stamped badge cache (so a fix to how badges are drawn can never keep serving stale-looking badges indefinitely) with dedicated System panel tooling to inspect and clear it on demand
