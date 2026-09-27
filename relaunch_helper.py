@@ -64,7 +64,13 @@ def main():
         proc = subprocess.Popen(
             [python_w, SERVE_SCRIPT],
             cwd=BASE_DIR,
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            # CREATE_NO_WINDOW is a Windows-only constant (undefined on
+            # Linux/macOS) -- this script is only ever spawned on Windows
+            # in practice (see app.py's _spawn_relaunch_helper()), but
+            # guarding it here too means running it directly on another
+            # platform fails with a clear error instead of an AttributeError
+            # on this line.
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except Exception as exc:
         _log(f"Failed to relaunch server: {exc}")

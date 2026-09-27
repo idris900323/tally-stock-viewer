@@ -42,6 +42,10 @@
         .header h1 {
             margin: 0 0 8px;
             font-size: 34px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
 
         .header p {
@@ -98,11 +102,12 @@
             flex-wrap: wrap;
         }
 
-        .panel h2 .badge {
+        .badge {
             font-size: 11px;
             font-weight: 700;
             border-radius: 999px;
             padding: 4px 10px;
+            vertical-align: middle;
         }
 
         .badge.ok { background: #ecfdf3; color: #166534; }
@@ -327,7 +332,13 @@
 <body>
 <div class="page">
     <div class="header">
-        <h1>System</h1>
+        <h1>System
+            {% if cloud_mode %}
+            <span class="badge muted" title="This instance runs on Render and can never reach Tally directly -- it receives data pushed from the feeder machine instead. See the Feeder panel below.">Cloud Mode (Render)</span>
+            {% else %}
+            <span class="badge muted" title="This instance talks to Tally directly on its own machine.">Local Mode</span>
+            {% endif %}
+        </h1>
         <p>Deployment status, logs, and environment health — check and fix things from any paired browser.</p>
     </div>
 
@@ -340,6 +351,19 @@
             <a href="/logout" class="link-button" title="Sign out of your account">Logout</a>
         </div>
     </div>
+
+    {% if cloud_mode %}
+    <div class="panel">
+        <h2>Feeder <span class="badge muted" id="feederBadge">Checking...</span></h2>
+        <p class="muted">The feeder machine is the only thing that talks to Tally in this two-tier setup; it pushes fresh stock data here every few minutes. This is the one link in the system with no other monitoring, so if it silently dies, this is where that would first show up.</p>
+        <table class="kv-table">
+            <tr><td>Feeder last seen</td><td id="feederLastSeen">Checking...</td></tr>
+        </table>
+        <div class="actions" style="margin-top:12px;">
+            <button class="secondary" onclick="loadFeederStatus()" title="Reload feeder heartbeat status">Refresh</button>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="panel">
         <h2>Deployment <span class="badge muted" id="deployStatusBadge">Checking...</span></h2>
@@ -354,9 +378,20 @@
             <div id="recentCommits" style="margin-top:8px;"></div>
         </details>
 
+        {% if cloud_mode %}
+        <p class="muted" style="margin-top:12px;">Render auto-deploys a fresh build on every push to <code>main</code>, so "Pull Latest Code &amp; Restart" is redundant here -- worse, pulling code into the live container without going through Render's real build step would skip installing any new/changed dependencies. It's hidden on this instance for that reason.</p>
+        {% endif %}
         <div class="actions" style="margin-top:16px;">
+            {% if not cloud_mode %}
             <button class="primary" id="pullRestartBtn" onclick="pullAndRestart()" title="Pulls the latest code from GitHub and restarts the server. The site will be briefly unavailable while it restarts.">Pull Latest Code &amp; Restart</button>
-            <button class="secondary" id="restartOnlyBtn" onclick="restartAppOnly()" title="Restarts the server without changing any code. Useful if something seems stuck.">Restart App Only</button>
+            {% endif %}
+            <button class="secondary" id="restartOnlyBtn" onclick="restartAppOnly()"
+                {% if cloud_mode %}
+                title="Stops this instance's process. Render has no in-app graceful relaunch here -- it detects the stopped process via failed health checks and restarts it automatically, which normally takes about a minute."
+                {% else %}
+                title="Restarts the server without changing any code. Useful if something seems stuck."
+                {% endif %}
+            >Restart App Only</button>
             <a class="link-button" href="/admin/system/download_backup" title="Downloads a zip of the database and key data files as they are right now.">Download Full Backup</a>
         </div>
 
@@ -414,9 +449,13 @@
             <button class="secondary" onclick="refreshEnvironment()" title="Re-check Tally reachability, config, disk usage, and uptime">Refresh</button>
         </div>
         <table class="kv-table">
-            <tr><td>Tally reachable</td><td id="tallyReachable">-</td></tr>
+            <tr><td>{{ 'Tally access' if cloud_mode else 'Tally reachable' }}</td><td id="tallyReachable">-</td></tr>
+            {% if not cloud_mode %}
             <tr><td>Tally instances running</td><td id="tallyInstances">-</td></tr>
+            {% endif %}
+            {% if not cloud_mode %}
             <tr><td>Autostart</td><td id="autostartStatus">-</td></tr>
+            {% endif %}
             <tr><td>Tally URL</td><td id="envTallyUrl">-</td></tr>
             <tr><td>Database path</td><td id="envDbPath">-</td></tr>
             <tr><td>Log file</td><td id="envLogFile">-</td></tr>
@@ -425,11 +464,12 @@
             <tr><td>Flask debug</td><td id="envDebug">-</td></tr>
             <tr><td>Database size</td><td id="diskDbSize">-</td></tr>
             <tr><td>Image folder size</td><td id="diskImageSize">-</td></tr>
-            <tr><td>Free disk space</td><td id="diskFree">-</td></tr>
+            <tr><td>Disk usage</td><td id="diskUsage">-</td></tr>
             <tr><td>Server uptime</td><td id="serverUptime">-</td></tr>
         </table>
     </div>
 
+    {% if not cloud_mode %}
     <div class="panel">
         <h2>Tally Performance Test <span class="badge muted" id="perfTestBadge"></span></h2>
         <p class="muted">Times the exact Tally requests the stock export sends every cycle, plus a proposed lighter replacement, so slow ones can be identified with real numbers.</p>
@@ -438,6 +478,7 @@
         </div>
         <div id="perfTestResults" style="margin-top:12px;"></div>
     </div>
+    {% endif %}
 
     <div class="panel">
         <h2>Categories <span class="badge muted" id="categoriesBadge"></span></h2>
@@ -465,6 +506,13 @@
 
 <script src="{{ url_for('static', filename='shared.js') }}"></script>
 <script>
+// Two-tier architecture flag from app.py's inject_session_context() --
+// True on the Render instance, False on a local/office instance. Used
+// below to skip Tally/Windows-only checks and to give the restart flow
+// realistic timing (Render's own health-check-triggered restart is slower
+// than the Windows relaunch_helper.py path -- see restartAppOnly()).
+const CLOUD_MODE = {{ cloud_mode|tojson }};
+
 async function fetchJson(url, options) {
     const response = await fetch(url, options);
     let payload = null;
@@ -537,7 +585,15 @@ function clearDeployNotices() {
 }
 
 async function pollUntilBackUp() {
-    const maxAttempts = 10;
+    // relaunch_helper.py (Windows) typically has the site back within a
+    // few seconds of the port freeing up, so 10 x 3s = 30s was plenty
+    // there. On Render there is no such helper (see app.py's
+    // _spawn_relaunch_helper()) -- the process just exits, and Render's
+    // own restart is triggered by 60 seconds of consecutive failed health
+    // checks (per Render's docs), then needs its own time to boot the
+    // process back up. 30s would almost always time out here before the
+    // instance is even back, so cloud mode polls for up to 2 minutes.
+    const maxAttempts = CLOUD_MODE ? 40 : 10;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 3000));
         try {
@@ -553,7 +609,8 @@ async function pollUntilBackUp() {
             // still restarting; keep polling
         }
     }
-    document.getElementById("deploySuccess").textContent = "Server did not respond within 30 seconds — refresh this page manually in a moment.";
+    const waited = maxAttempts * 3;
+    document.getElementById("deploySuccess").textContent = `Server did not respond within ${waited} seconds — refresh this page manually in a moment.`;
 }
 
 async function pullAndRestart() {
@@ -594,7 +651,10 @@ async function pullAndRestart() {
 }
 
 async function restartAppOnly() {
-    if (!confirm("Restart the server now (no code changes)? The site will be briefly unavailable.")) {
+    const confirmMessage = CLOUD_MODE
+        ? "Stop this instance now? Render has no in-app graceful relaunch here -- it detects the stopped process and restarts it automatically, which normally takes about a minute."
+        : "Restart the server now (no code changes)? The site will be briefly unavailable.";
+    if (!confirm(confirmMessage)) {
         return;
     }
     clearDeployNotices();
@@ -604,7 +664,9 @@ async function restartAppOnly() {
 
     try {
         await fetchJson("/admin/system/restart_app_only", { method: "POST" });
-        document.getElementById("deploySuccess").textContent = "Restarting... refresh in 15 seconds.";
+        document.getElementById("deploySuccess").textContent = CLOUD_MODE
+            ? "Instance stopped. Waiting for Render to restart it automatically (usually about a minute)..."
+            : "Restarting... refresh in 15 seconds.";
         document.getElementById("deploySuccess").style.display = "block";
         pollUntilBackUp();
     } catch (error) {
@@ -800,8 +862,10 @@ async function loadCloudBackupStatus() {
                 `${progress.uploaded || 0} uploaded, ${progress.updated || 0} updated, ` +
                 `${progress.deleted || 0} deleted, ${progress.skipped || 0} skipped, ${progress.failed || 0} failed`;
 
-            // Live action log -- the only place this is visible in
-            // production, since the app runs via pythonw with no console.
+            // Live action log -- the only place this is visible without
+            // shelling into the machine (RDP on the Windows PC, which runs
+            // this via pythonw with no console; the Render dashboard's own
+            // log viewer on the cloud instance).
             logEl.style.display = "block";
             logEl.textContent = (progress.log && progress.log.length) ? progress.log.join("\n") : "Starting...";
             logEl.scrollTop = logEl.scrollHeight;
@@ -1008,20 +1072,34 @@ async function stopCloudBackupSync() {
 async function refreshEnvironment() {
     const tallyBadge = document.getElementById("tallyBadge");
     try {
-        const [tally, env, disk, uptime, autostart] = await Promise.all([
+        const fetches = [
             fetchJson("/admin/system/tally_status"),
             fetchJson("/admin/system/env_summary"),
             fetchJson("/admin/system/disk_usage"),
             fetchJson("/admin/system/uptime"),
-            fetchJson("/admin/system/autostart_status"),
-        ]);
+        ];
+        // Windows-only registry check -- pointless (and, before this fix,
+        // errored) on Render's Linux container. The row is hidden in cloud
+        // mode too (the kv-table row above is server-side conditional on
+        // cloud_mode), so there's nothing to populate it with here.
+        if (!CLOUD_MODE) {
+            fetches.push(fetchJson("/admin/system/autostart_status"));
+        }
+        const [tally, env, disk, uptime, autostart] = await Promise.all(fetches);
 
-        document.getElementById("tallyReachable").textContent = tally.reachable ? "Yes" : "No";
-        document.getElementById("tallyInstances").textContent = tally.instance_count;
-        if (tally.warning) {
-            setBadge(tallyBadge, tally.warning, tally.reachable ? "warn" : "bad");
+        if (tally.cloud_mode) {
+            // Neutral, non-alarming -- this instance never reaching Tally
+            // directly is the expected architecture, not a fault.
+            document.getElementById("tallyReachable").textContent = tally.message;
+            setBadge(tallyBadge, "Cloud mode", "muted");
         } else {
-            setBadge(tallyBadge, "OK", "ok");
+            document.getElementById("tallyReachable").textContent = tally.reachable ? "Yes" : "No";
+            document.getElementById("tallyInstances").textContent = tally.instance_count;
+            if (tally.warning) {
+                setBadge(tallyBadge, tally.warning, tally.reachable ? "warn" : "bad");
+            } else {
+                setBadge(tallyBadge, "OK", "ok");
+            }
         }
 
         document.getElementById("envTallyUrl").textContent = env.TALLY_URL;
@@ -1033,15 +1111,52 @@ async function refreshEnvironment() {
 
         document.getElementById("diskDbSize").textContent = `${disk.mappings_db_size_mb} MB`;
         document.getElementById("diskImageSize").textContent = `${disk.image_folder_size_mb} MB`;
-        document.getElementById("diskFree").textContent = `${disk.free_disk_space_gb} GB`;
+        document.getElementById("diskUsage").textContent =
+            `${disk.used_disk_space_gb} GB used of ${disk.total_disk_space_gb} GB (${disk.free_disk_space_gb} GB free)`;
 
         document.getElementById("serverUptime").textContent = uptime.uptime_human;
 
-        const autostartEl = document.getElementById("autostartStatus");
-        autostartEl.textContent = autostart.matches ? "Configured correctly" : "Missing or incorrect";
-        autostartEl.style.color = autostart.matches ? "#166534" : "var(--danger)";
+        if (!CLOUD_MODE) {
+            const autostartEl = document.getElementById("autostartStatus");
+            autostartEl.textContent = autostart.matches ? "Configured correctly" : "Missing or incorrect";
+            autostartEl.style.color = autostart.matches ? "#166534" : "var(--danger)";
+        }
     } catch (error) {
         setBadge(tallyBadge, "Error", "bad");
+    }
+}
+
+async function loadFeederStatus() {
+    if (!CLOUD_MODE) return;
+    const badge = document.getElementById("feederBadge");
+    const lastSeenEl = document.getElementById("feederLastSeen");
+    try {
+        const data = await fetchJson("/admin/system/feeder_status");
+        if (!data.configured) {
+            setBadge(badge, "Not configured", "muted");
+            lastSeenEl.textContent = "INTAKE_SYNC_TOKEN is not set -- the feeder has nowhere to push to.";
+            return;
+        }
+        if (!data.last_seen) {
+            setBadge(badge, "Never seen", "warn");
+            lastSeenEl.textContent = "No push received since this instance last started.";
+            return;
+        }
+
+        const minutesAgo = Math.round(data.seconds_ago / 60);
+        const agoText = data.seconds_ago < 90
+            ? `${Math.round(data.seconds_ago)} seconds ago`
+            : `${minutesAgo} minute${minutesAgo === 1 ? "" : "s"} ago`;
+        lastSeenEl.textContent = `${agoText} (${data.last_seen_formatted})`;
+
+        if (data.stale) {
+            setBadge(badge, "Stale", "bad");
+        } else {
+            setBadge(badge, "OK", "ok");
+        }
+    } catch (error) {
+        setBadge(badge, "Error", "bad");
+        lastSeenEl.textContent = error.message;
     }
 }
 
@@ -1254,6 +1369,13 @@ window.addEventListener("DOMContentLoaded", () => {
         if (data && data.running) startCloudBackupPolling();
     });
     loadCloudBackupAuthStatus();
+    if (CLOUD_MODE) {
+        loadFeederStatus();
+        // Auto-refreshes so a dying feeder shows up here without anyone
+        // having to remember to click Refresh -- the whole point of this
+        // panel being an early-warning signal, not just a manual check.
+        setInterval(loadFeederStatus, 30000);
+    }
 });
 </script>
 </body>
