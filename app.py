@@ -337,7 +337,12 @@ def system_device_required(view_func):
 # ============================================================
 
 def _accounts_password_configured():
-    return bool(str(Config.ACCOUNTS_ACCESS_PASSWORD or "").strip())
+    # DB-backed (app_settings.accounts_password), seeded once from
+    # Config.ACCOUNTS_ACCESS_PASSWORD on first run -- see database.py's
+    # ensure_schema(). Config is no longer read here; db.get_accounts_password()
+    # is now the single source of truth, changeable in-app (see
+    # /admin/accounts/change_password) without an env edit or restart.
+    return bool(db.get_accounts_password().strip())
 
 
 def _accounts_unlocked():
@@ -356,7 +361,7 @@ def accounts_access_required(view_func=None, *, is_page=False):
         def wrapper(*args, **kwargs):
             if not _accounts_password_configured():
                 return jsonify({
-                    "error": "Accounts panel is not configured. Set ACCOUNTS_ACCESS_PASSWORD in .env to enable it."
+                    "error": "Accounts panel is not configured. Set ACCOUNTS_ACCESS_PASSWORD in .env once to set the initial password -- it can be changed from Manage Accounts after that."
                 }), 403
             if not _accounts_unlocked():
                 if is_page:
@@ -2270,6 +2275,46 @@ def login():
     return redirect(next_url)
 
 
+@app.route("/change_password", methods=["GET", "POST"])
+def change_password():
+    """Self-service password change for whoever is currently logged in --
+    admin or dealer, same route and template either way since both log in
+    with the same username + access code shape. Requires knowing the
+    CURRENT password (this is "change my password while logged in", not
+    "I forgot it and can't get in" -- there is no email/SMS in this app to
+    send a real reset link to; a forgotten dealer code is instead reset by
+    an admin from Manage Accounts, see admin_reset_customer_access_code())."""
+    username = session.get("username", "")
+    if request.method == "GET":
+        return render_template("change_password.html", error=None)
+
+    if not _check_login_rate_limit(f"change_password:{username}"):
+        return render_template("change_password.html", error="Too many attempts. Please try again later."), 429
+
+    current_password = (request.form.get("current_password") or "").strip()
+    new_password = (request.form.get("new_password") or "").strip()
+    confirm_password = (request.form.get("confirm_password") or "").strip()
+
+    user_record = db.authenticate_user(username, current_password)
+    if not user_record:
+        return render_template("change_password.html", error="Current password is incorrect."), 401
+    if not new_password:
+        return render_template("change_password.html", error="New password is required."), 400
+    if new_password != confirm_password:
+        return render_template("change_password.html", error="New password and confirmation don't match."), 400
+    if new_password == current_password:
+        return render_template("change_password.html", error="New password must be different from the current one."), 400
+
+    try:
+        db.update_access_code(user_record["id"], new_password)
+    except ValueError as exc:
+        return render_template("change_password.html", error=str(exc)), 400
+
+    db.log_account_action(user_record["id"], "self_password_change", user_record["id"])
+    logger.info("Password self-changed by user_id=%s", user_record["id"])
+    return render_template("change_password.html", error=None, success=True)
+
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -2836,7 +2881,7 @@ def admin_accounts():
 def admin_accounts_unlock():
     if not _accounts_password_configured():
         return jsonify({
-            "error": "Accounts panel is not configured. Set ACCOUNTS_ACCESS_PASSWORD in .env to enable it."
+            "error": "Accounts panel is not configured. Set ACCOUNTS_ACCESS_PASSWORD in .env once to set the initial password -- it can be changed from Manage Accounts after that."
         }), 403
 
     next_url = _safe_next_url(request.form.get("next"))
@@ -2850,7 +2895,7 @@ def admin_accounts_unlock():
             next_url=next_url,
         ), 429
 
-    if not submitted_password or submitted_password != Config.ACCOUNTS_ACCESS_PASSWORD:
+    if not submitted_password or submitted_password != db.get_accounts_password():
         return render_template(
             "accounts_unlock.html",
             error="Incorrect password.",
@@ -2859,6 +2904,65 @@ def admin_accounts_unlock():
 
     session["accounts_unlocked"] = True
     return redirect(next_url)
+
+
+@app.route("/admin/accounts/change_password", methods=["POST"])
+@admin_required
+@accounts_access_required
+def admin_accounts_change_password():
+    """Changes the Manage Accounts gate password itself (app_settings.
+    accounts_password) -- requires the CURRENT password even though this
+    route already sits behind accounts_access_required (an unlocked
+    session could otherwise be left open on a shared machine and used to
+    silently change the password without whoever set it noticing)."""
+    payload = request.get_json(silent=True) or request.form or {}
+    current_password = (payload.get("current_password") or "").strip()
+    new_password = (payload.get("new_password") or "").strip()
+
+    if not current_password or current_password != db.get_accounts_password():
+        return jsonify({"success": False, "error": "Current password is incorrect."}), 401
+    if not new_password:
+        return jsonify({"success": False, "error": "New password is required."}), 400
+    if new_password == current_password:
+        return jsonify({"success": False, "error": "New password must be different from the current one."}), 400
+
+    try:
+        db.set_accounts_password(new_password)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    logger.info("Accounts panel password changed by user_id=%s", _current_user_id())
+    return jsonify({"success": True, "message": "Accounts password updated."})
+
+
+@app.route("/admin/reset_customer_access_code/<int:user_id>", methods=["POST"])
+@admin_required
+@accounts_access_required
+def admin_reset_customer_access_code(user_id):
+    """Admin sets a new access code for a dealer who's forgotten theirs --
+    the practical "forgot password" path for dealers, who have no
+    self-service recovery of their own (this app has no email/SMS to send
+    a reset link to). The dealer is then told the new code out of band
+    (phone/WhatsApp), same as how their account was created in the first
+    place."""
+    payload = request.get_json(silent=True) or request.form or {}
+    new_access_code = (payload.get("access_code") or "").strip()
+    if not new_access_code:
+        return jsonify({"success": False, "error": "New access code is required."}), 400
+
+    row = db.get_user_by_id(user_id)
+    if not row:
+        return jsonify({"success": False, "error": "Account not found."}), 404
+    if row.get("role") != "customer":
+        return jsonify({"success": False, "error": "Only dealer accounts can be reset here."}), 400
+
+    try:
+        db.update_access_code(user_id, new_access_code)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    db.log_account_action(user_id, "access_code_reset", _current_user_id())
+    return jsonify({"success": True, "message": f"Access code for '{row['username']}' updated."})
 
 
 @app.route("/admin/create_user", methods=["POST"])

@@ -365,6 +365,30 @@ def init_database():
         )
         conn.execute("INSERT OR IGNORE INTO popup_notice (id) VALUES (1)")
         conn.execute("INSERT OR IGNORE INTO banner_notice (id) VALUES (1)")
+        # Single-row settings table -- currently just the Manage Accounts
+        # gate password. Previously that password only lived in .env
+        # (Config.ACCOUNTS_ACCESS_PASSWORD), which meant changing it
+        # required editing a server file and restarting/redeploying the
+        # app -- exactly the kind of friction that leaves an admin locked
+        # out with no in-app way to fix it. DB-backed now so there's a real
+        # "change password" UI (see /admin/accounts/change_password); the
+        # INSERT below seeds it from the current .env value ONLY the first
+        # time this table is created, so an existing deployment's password
+        # keeps working unchanged after upgrading to this -- from then on
+        # the DB row is authoritative and .env is no longer read for this.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                accounts_password TEXT NOT NULL DEFAULT '',
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO app_settings (id, accounts_password) VALUES (1, ?)",
+            (str(Config.ACCOUNTS_ACCESS_PASSWORD or "").strip(),),
+        )
         # One-time carry-over from the earlier merged two-slot table: its text
         # slot becomes the popup text (and the banner too if it was important),
         # its image slot the popup image. Then the old table is dropped.
@@ -1973,5 +1997,47 @@ def delete_customer_user(user_id):
 
         conn.execute("DELETE FROM users WHERE id = ?", (user_id_value,))
     return user
+
+
+def update_access_code(user_id, new_access_code):
+    """Set a new access_code for any user, admin or dealer. Used both for
+    an admin resetting a dealer's forgotten code (Manage Accounts) and for
+    self-service "change my password" (any logged-in role). No role
+    restriction here -- callers that must not touch certain accounts
+    (e.g. a dealer-only reset action) check role themselves before calling
+    this, same as toggle_customer_active_status/delete_customer_user do."""
+    user_id_value = int(user_id)
+    access_code_value = str(new_access_code or "").strip()
+    if not access_code_value:
+        raise ValueError("access code is required")
+    if len(access_code_value) > 100:
+        raise ValueError("access code is too long")
+
+    with _connect() as conn:
+        row = conn.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id_value,)).fetchone()
+        user = _row_to_dict(row)
+        if not user:
+            raise ValueError("user not found")
+        conn.execute("UPDATE users SET access_code = ? WHERE id = ?", (access_code_value, user_id_value))
+    return user
+
+
+def get_accounts_password():
+    with _connect() as conn:
+        row = conn.execute("SELECT accounts_password FROM app_settings WHERE id = 1").fetchone()
+    return (row["accounts_password"] if row else "") or ""
+
+
+def set_accounts_password(new_password):
+    password_value = str(new_password or "").strip()
+    if not password_value:
+        raise ValueError("password is required")
+    if len(password_value) > 200:
+        raise ValueError("password is too long")
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE app_settings SET accounts_password = ?, updated_at = ? WHERE id = 1",
+            (password_value, datetime.now().isoformat(timespec="seconds")),
+        )
 
 

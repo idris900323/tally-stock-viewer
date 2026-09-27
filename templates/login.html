@@ -129,6 +129,16 @@
             line-height: 1.5;
         }
 
+        .hint a {
+            color: var(--accent);
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .hint a:hover {
+            text-decoration: underline;
+        }
+
         .actions {
             display: flex;
             gap: 10px;
@@ -254,6 +264,9 @@
 
         {% if error %}
         <div class="notice">{{ error }}</div>
+        <div class="hint">
+            Still can't sign in? <a href="https://wa.me/919500048983" target="_blank" rel="noopener noreferrer">Message us on WhatsApp</a> or call <a href="tel:+919500048983">+91 95000 48983</a>.
+        </div>
         {% endif %}
 
         <input type="hidden" name="next" value="{{ next_url }}">
