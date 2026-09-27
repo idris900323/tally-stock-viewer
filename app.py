@@ -362,7 +362,15 @@ def _accounts_password_matches(submitted):
 
 
 def _accounts_unlocked():
-    return bool(session.get("accounts_unlocked"))
+    # Also compares the DB password's version (its updated_at, stamped
+    # into the session at unlock time in admin_accounts_unlock() below)
+    # against the CURRENT version -- so changing the accounts password
+    # re-locks every session that had already unlocked it, not just future
+    # ones. Without this, session["accounts_unlocked"] alone would stay
+    # valid forever once set, regardless of the password changing later.
+    if not session.get("accounts_unlocked"):
+        return False
+    return session.get("accounts_unlocked_version") == db.get_accounts_password_version()
 
 
 def accounts_access_required(view_func=None, *, is_page=False):
@@ -433,6 +441,25 @@ def add_security_headers(response):
         # HTTPS (SESSION_COOKIE_SECURE=1) -- forcing it earlier would break a
         # plain-http local/office setup.
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # Every jsonify() response in this app reflects live, mutable state
+    # (account lists, image queues, design/category lists, System panel
+    # status, ...) -- only two routes (/api/popup, /api/banner) previously
+    # set Cache-Control themselves, so every other one was left to the
+    # browser's/any CDN's default caching heuristics. That's the likely
+    # cause of "the action happened but the page doesn't show it until I
+    # refresh": a POST that changes something server-side, immediately
+    # followed by a GET re-fetch to show the new state, can get served a
+    # cached copy of the OLD response instead of hitting the server again
+    # -- this app already has one confirmed case of a CDN doing exactly
+    # this to badge images (see BADGE_FORMAT_VERSION's cache-busting
+    # comment). Blanket-applied here instead of editing every route
+    # individually, and only to JSON responses -- HTML pages and image
+    # routes (which have their own deliberate, already-correct caching)
+    # are untouched. setdefault so a route that ever wants something
+    # different (none currently do) can still override it.
+    if response.mimetype == "application/json":
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -2919,6 +2946,7 @@ def admin_accounts_unlock():
         ), 401
 
     session["accounts_unlocked"] = True
+    session["accounts_unlocked_version"] = db.get_accounts_password_version()
     return redirect(next_url)
 
 
@@ -3085,7 +3113,24 @@ def admin_delete_user(user_id):
         status = 404 if "not found" in message.lower() else 400
         return jsonify({"success": False, "error": message}), status
 
-    db.log_account_action(user_id, "deleted", _current_user_id())
+    # account_logs.user_id is a real foreign key into users(id); the row
+    # this would reference is the one just deleted above (ON DELETE SET
+    # NULL only rewrites EXISTING log rows when their user is deleted --
+    # it doesn't let a brand-new INSERT reference an id that's already
+    # gone). That made this always raise an unhandled IntegrityError after
+    # a successful delete: the delete had already committed, so the
+    # account really was gone, but the request then 500'd with Flask's
+    # default HTML error page instead of the JSON response the frontend
+    # expected -- which is what its response.json() call choked on.
+    # Reproduced and confirmed directly against a real (throwaway) row
+    # before this fix. Logging is best-effort here on purpose: the delete
+    # already succeeded and must be reported as such regardless of
+    # whether the audit-log entry for it can be written.
+    try:
+        db.log_account_action(None, "deleted", _current_user_id())
+    except Exception:
+        logger.exception("Failed to log account deletion for former user_id=%s", user_id)
+
     return jsonify({
         "success": True,
         "message": f"Account '{deleted_user['username']}' deleted successfully",

@@ -2028,6 +2028,17 @@ def get_accounts_password():
     return (row["accounts_password"] if row else "") or ""
 
 
+def get_accounts_password_version():
+    """A value that changes exactly when the accounts password does (its
+    updated_at timestamp, NULL/"" until the first change) -- stored in a
+    session at unlock time and re-checked on every accounts_access_required
+    request (see app.py) so changing the password re-locks every session
+    that had already unlocked it, not just new ones going forward."""
+    with _connect() as conn:
+        row = conn.execute("SELECT updated_at FROM app_settings WHERE id = 1").fetchone()
+    return (row["updated_at"] if row else "") or ""
+
+
 def set_accounts_password(new_password):
     password_value = str(new_password or "").strip()
     if not password_value:
