@@ -140,8 +140,8 @@ def trigger_remote_rescan():
     data = resp.json()
     stats = data.get("stats") or {}
     print("  [OK] Remote rescan complete:")
-    print(f"       New images found and added this pass: {data.get('scanned', 0)}")
     print(f"       Total images now catalogued on Render: {stats.get('total_images', 'unknown')}")
+    print(f"       Car folders on Render: {data.get('total_folders', 'unknown')}")
     print(f"       Missing (on-record but file not found): {data.get('missing_count', 0)}")
     return True
 
