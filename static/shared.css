@@ -10,3 +10,37 @@
     --accent: #1f6feb;
     --accent-dark: #1558c0;
 }
+
+/* Outfit replaces plain Arial across every page that loads this file --
+   more distinctive without needing per-template changes. font-display:swap
+   avoids invisible text while it loads; the Arial/system fallback stack
+   means a blocked/slow font fetch (e.g. Fonts CDN unreachable on a bad
+   office connection) never leaves text unreadable. !important is
+   deliberate and narrowly scoped to this one property: every template
+   that loads this file still hardcodes `font-family: Arial, sans-serif`
+   on its own `body` rule (this file is loaded first, so without
+   !important each page's own rule would simply win back to Arial on the
+   next cascade step -- see the file-level comment above). */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
+
+body {
+    font-family: 'Outfit', Arial, sans-serif !important;
+    /* Fixes a background gradient that stopped partway down the page on
+       any view shorter than the viewport (home, login) -- body only grew
+       to fit its content, so the gradient ended there and the plain white
+       <html> background showed through below it. 100dvh (falls back to
+       100vh where unsupported) accounts for mobile browser chrome that
+       vh alone doesn't. Every page's own body rule sets a `background`
+       but none currently set a min-height, so this needs no !important. */
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+/* Slightly tighter, heavier headings read as more deliberate than the
+   browser-default tracking Arial/Outfit both use at display sizes. Scoped
+   to h1/h2 (h3 tends to be small enough already that negative tracking
+   starts to hurt legibility) and kept subtle so it doesn't fight any
+   page's own heading margins/sizes. */
+h1, h2 {
+    letter-spacing: -0.01em;
+}

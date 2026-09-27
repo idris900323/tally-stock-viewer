@@ -86,6 +86,16 @@
             justify-content: center;
         }
 
+        /* Empty state for .image-frame before anything is selected -- see
+           #bulkImagePreviewEmpty in the HTML. Same muted-caption look as
+           .selected-image-empty below, centered in the square frame. */
+        .image-frame-empty {
+            color: #94a3b8;
+            font-size: 13px;
+            text-align: center;
+            padding: 0 24px;
+        }
+
         .image-frame img {
             width: 100%;
             height: 100%;
@@ -618,7 +628,7 @@
 <body>
 <div class="page">
     <div class="header">
-        <h1>Bulk Match</h1>
+        <h1>Bulk match</h1>
         <p>Match one shared image (e.g. a generic "Black Foot Mat" photo) against many stock items at once, across every car.</p>
     </div>
 
@@ -649,7 +659,14 @@
             </div>
 
             <div class="image-frame">
-                <img id="bulkImagePreview" alt="Selected image preview">
+                <img id="bulkImagePreview" alt="Selected image preview" style="display:none;">
+                <!-- Was a bare <img> with no src, so before any selection
+                     the browser rendered its native broken-image icon
+                     instead of anything intentional. Mirrors the
+                     #selectedImageWrap empty state just below (same
+                     hide-the-img / show-friendly-text pattern -- see
+                     setSelectedImage()). -->
+                <div class="image-frame-empty" id="bulkImagePreviewEmpty">Pick a folder to preview an image</div>
                 <div class="image-overlay">
                     <span class="pill" id="bulkImageIdPill">No image selected</span>
                 </div>
@@ -828,12 +845,15 @@ async function loadBulkImageQueue(folderName) {
 function setSelectedImage(imageRecord) {
     selectedImage = imageRecord;
     const preview = document.getElementById("bulkImagePreview");
+    const previewEmpty = document.getElementById("bulkImagePreviewEmpty");
     const idPill = document.getElementById("bulkImageIdPill");
     const bigImg = document.getElementById("currentMatchImg");
     const emptyNote = document.getElementById("selectedImageEmpty");
 
     if (!imageRecord) {
+        preview.style.display = "none";
         preview.src = getPlaceholderImage();
+        previewEmpty.style.display = "block";
         idPill.textContent = "No image selected";
         bigImg.style.display = "none";
         bigImg.src = "";
@@ -843,6 +863,8 @@ function setSelectedImage(imageRecord) {
     }
 
     preview.src = `/get_image/${imageRecord.id}`;
+    preview.style.display = "block";
+    previewEmpty.style.display = "none";
     idPill.textContent = `Image #${imageRecord.id}`;
     bigImg.src = `/get_image/${imageRecord.id}`;
     bigImg.style.display = "block";
