@@ -234,6 +234,24 @@
             color: #fff;
         }
 
+        /* Actions cell (Pause/Resume, Reset, Delete) -- explicit flex-wrap
+           and a consistent gap instead of relying on inline whitespace
+           between buttons, so a third action fits cleanly on two lines
+           instead of looking cramped or unevenly spaced. A wrapper div
+           (not display:flex on the <td> itself, which can drop a cell
+           out of table layout in some browsers) keeps the <td> a normal
+           table cell. */
+        .row-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .row-actions button {
+            padding: 8px 10px;
+            font-size: 13px;
+        }
+
         .bulk-actions {
             margin-bottom: 12px;
         }
@@ -335,7 +353,7 @@
                             <th style="width:110px;">Status</th>
                             <th style="width:200px;">Last login</th>
                             <th style="width:180px;">Created</th>
-                            <th style="width:220px;">Actions</th>
+                            <th style="width:240px;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="accountsTableBody"></tbody>
@@ -343,6 +361,22 @@
             </div>
             <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No dealer accounts found.</div>
         </div>
+    </div>
+
+    <div class="panel">
+        <h2 style="margin:0 0 6px;">Change accounts password</h2>
+        <p class="muted" style="margin:0 0 12px;">Updates the password that gates this page (separate from your own admin login). Takes effect immediately for anyone unlocking Manage Accounts after this.</p>
+        <form id="changeAccountsPasswordForm">
+            <div class="field-row">
+                <label for="current_accounts_password">Current password</label>
+                <input id="current_accounts_password" name="current_password" type="password" autocomplete="off" required>
+            </div>
+            <div class="field-row">
+                <label for="new_accounts_password">New password</label>
+                <input id="new_accounts_password" name="new_password" type="password" autocomplete="off" required>
+            </div>
+            <button id="changeAccountsPasswordBtn" type="submit">Update password</button>
+        </form>
     </div>
 </div>
 
@@ -447,8 +481,11 @@ function renderAccountsTable(customers) {
                 <td>${escapeHtml(lastLoginLabel)}</td>
                 <td>${escapeHtml(createdLabel)}</td>
                 <td>
-                    <button type="button" class="secondary" data-user-id="${Number(customer.id)}" onclick="toggleAccountStatus(this)" title="${isActive ? "Pause this account's login access" : "Resume this account's login access"}">${toggleLabel}</button>
-                    <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>
+                    <div class="row-actions">
+                        <button type="button" class="secondary" data-user-id="${Number(customer.id)}" onclick="toggleAccountStatus(this)" title="${isActive ? "Pause this account's login access" : "Resume this account's login access"}">${toggleLabel}</button>
+                        <button type="button" class="secondary" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="resetAccessCodeFromButton(this)" title="Set a new access code for this dealer -- use this if they've forgotten theirs">Reset</button>
+                        <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>
+                    </div>
                 </td>
             </tr>
         `;
@@ -510,6 +547,43 @@ function deleteAccountFromButton(button) {
     return deleteAccount(userId, username);
 }
 
+async function resetAccessCodeFromButton(button) {
+    const userId = Number(button?.dataset?.userId || 0);
+    const username = String(button?.dataset?.username || "");
+    if (!userId) {
+        return;
+    }
+
+    const newCode = window.prompt(`New access code for "${username}":`);
+    if (newCode === null) {
+        return;
+    }
+    if (!newCode.trim()) {
+        showError("Access code cannot be empty.");
+        return;
+    }
+
+    button.disabled = true;
+    try {
+        const response = await fetch(`/admin/reset_customer_access_code/${encodeURIComponent(userId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ access_code: newCode.trim() }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Reset failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Access code updated. Let the dealer know their new code.");
+        await loadCustomerAccounts();
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function loadCustomerAccounts() {
     try {
         const response = await fetch("/admin/get_all_customers");
@@ -554,6 +628,34 @@ async function deleteAccount(userId, username) {
     }
 }
 
+async function changeAccountsPassword(event) {
+    event.preventDefault();
+    const form = document.getElementById("changeAccountsPasswordForm");
+    const btn = document.getElementById("changeAccountsPasswordBtn");
+    const currentPassword = document.getElementById("current_accounts_password").value;
+    const newPassword = document.getElementById("new_accounts_password").value;
+
+    btn.disabled = true;
+    try {
+        const response = await fetch("/admin/accounts/change_password", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+            throw new Error(result.error || `Update failed (HTTP ${response.status})`);
+        }
+
+        showSuccess(result.message || "Accounts password updated.");
+        form.reset();
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
     const form = document.getElementById("createCustomerForm");
     if (form) {
@@ -561,6 +663,11 @@ window.addEventListener("DOMContentLoaded", () => {
             event.preventDefault();
             createUserAccount();
         });
+    }
+
+    const passwordForm = document.getElementById("changeAccountsPasswordForm");
+    if (passwordForm) {
+        passwordForm.addEventListener("submit", changeAccountsPassword);
     }
 
     if (initialStatus) {

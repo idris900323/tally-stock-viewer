@@ -52,6 +52,12 @@
             <button type="submit">Unlock</button>
             <a class="auth-gate-btn-secondary" href="/">Back to home</a>
         </div>
+
+        {% if error %}
+        <div class="auth-gate-hint">
+            Don't have this password? <a href="https://wa.me/919500048983" target="_blank" rel="noopener noreferrer">Message us on WhatsApp</a> or call <a href="tel:+919500048983">+91 95000 48983</a>.
+        </div>
+        {% endif %}
     </form>
 </div>
 </body>

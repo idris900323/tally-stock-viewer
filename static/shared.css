@@ -162,6 +162,16 @@ input:focus-visible {
     line-height: 1.5;
 }
 
+.auth-gate-hint a {
+    color: var(--accent);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.auth-gate-hint a:hover {
+    text-decoration: underline;
+}
+
 .auth-gate-actions {
     display: flex;
     gap: 10px;
