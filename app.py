@@ -338,11 +338,27 @@ def system_device_required(view_func):
 
 def _accounts_password_configured():
     # DB-backed (app_settings.accounts_password), seeded once from
-    # Config.ACCOUNTS_ACCESS_PASSWORD on first run -- see database.py's
-    # ensure_schema(). Config is no longer read here; db.get_accounts_password()
-    # is now the single source of truth, changeable in-app (see
-    # /admin/accounts/change_password) without an env edit or restart.
-    return bool(db.get_accounts_password().strip())
+    # Config.ACCOUNTS_ACCESS_PASSWORD the first time this table is
+    # created -- see database.py's ensure_schema(). Config is ALSO still
+    # checked here and in _accounts_password_matches() below, permanently,
+    # not just for that one-time seed: ACCOUNTS_ACCESS_PASSWORD in .env
+    # (or the platform's env vars, e.g. Render) is the one credential for
+    # this gate that only whoever controls the deployment can see or
+    # change, so it doubles as a standing recovery key if the in-app
+    # password (changed via /admin/accounts/change_password) is ever lost
+    # or -- as happened once -- the two are set to different values and
+    # it's unclear which one is "real".
+    return bool(db.get_accounts_password().strip()) or bool(str(Config.ACCOUNTS_ACCESS_PASSWORD or "").strip())
+
+
+def _accounts_password_matches(submitted):
+    submitted_value = str(submitted or "").strip()
+    if not submitted_value:
+        return False
+    if submitted_value == db.get_accounts_password():
+        return True
+    env_password = str(Config.ACCOUNTS_ACCESS_PASSWORD or "").strip()
+    return bool(env_password) and submitted_value == env_password
 
 
 def _accounts_unlocked():
@@ -2895,7 +2911,7 @@ def admin_accounts_unlock():
             next_url=next_url,
         ), 429
 
-    if not submitted_password or submitted_password != db.get_accounts_password():
+    if not _accounts_password_matches(submitted_password):
         return render_template(
             "accounts_unlock.html",
             error="Incorrect password.",
@@ -2919,11 +2935,11 @@ def admin_accounts_change_password():
     current_password = (payload.get("current_password") or "").strip()
     new_password = (payload.get("new_password") or "").strip()
 
-    if not current_password or current_password != db.get_accounts_password():
+    if not _accounts_password_matches(current_password):
         return jsonify({"success": False, "error": "Current password is incorrect."}), 401
     if not new_password:
         return jsonify({"success": False, "error": "New password is required."}), 400
-    if new_password == current_password:
+    if new_password == db.get_accounts_password():
         return jsonify({"success": False, "error": "New password must be different from the current one."}), 400
 
     try:
