@@ -3,6 +3,20 @@
 This document describes the current codebase as it exists in this repository.
 It is intended for technical maintenance, not office staff operations.
 
+## 0. Current deployment: two tiers (read this first)
+
+> **WARNING:** if the old spare PC is ever manually switched on as a full-site backup, **stop the feeder machine first** (`schtasks /End /TN TallyFeeder`, and disable the task if it will stay off). Two machines pushing to Render at once overwrite each other with conflicting data.
+
+- **Render is the real production site.** It holds all data (mappings, images, users, categories, notices, reports) and all admin functionality, runs with `DISABLE_TALLY_SCHEDULING=1`, and receives stock through `POST /admin/intake/sync_data` (section 26).
+- **The feeder machine is a lightweight Tally connector only.** It runs `feeder.py` (no Flask/waitress, no `mappings.db`, no image folder, no logins, no tunnel, no tray icon). Windows Task Scheduler starts it at boot and restarts it on failure; setup is `FEEDER_SETUP.md`.
+- **The old spare PC is a dormant, manually-activated backup** running the full legacy stack (`MASTER_SETUP.md`, `GOING_PUBLIC.md`, `first_time_setup.bat`, `launcher.pyw`). Nothing on it runs unless someone turns it on.
+
+### feeder.py
+
+Imports `app.py` as a module and calls its existing, hardened functions unchanged - it only decides when: `fetch_car_master_from_tally()` + `save_car_master_to_file()`, `fetch_main_hierarchy_from_tally()` + `save_main_hierarchy_to_file()`, `fetch_item_stock_flat()`, then `_push_data_to_cloud()`. Importing `app.py` starts no threads (background work only starts from `start_background_startup_tasks()`, which `serve.py`/`__main__` call). The one import side effect that mattered was `db.init_database()` (would create `mappings.db`); it is now skipped when `FEEDER_MODE=1`, which `feeder.py` sets before importing. `feeder.py` also `chdir`s to the project folder (the cache-file paths are relative) and creates `data/` (Tally cache files, not the database).
+
+Schedule: a full refresh on startup, a stock export every `TALLY_EXPORT_INTERVAL` (180s), and a full refresh again every `FEEDER_FULL_REFRESH_HOURS` (6h; the full site only did this on startup or a manual Full Refresh, which nobody can click on a headless feeder). A failed startup full refresh is retried each cycle until it succeeds. Each cycle is wrapped in try/except; logs go to `logs/feeder.log`. It exits with code 2 if `CLOUD_SYNC_URL`/`CLOUD_SYNC_TOKEN` are unset. `scripts/register_feeder_task.ps1` registers the task (boot trigger plus a daily trigger repeating every 5 minutes with `MultipleInstances=IgnoreNew`, so a dead feeder is started again within 5 minutes; no execution time limit; Task Scheduler's own "restart on failure" is also set but was verified NOT to fire when the process is killed, which is why the repeating trigger exists); `update_feeder.bat` is the update script.
+
 ## 1. System purpose
 
 The application is a Windows-hosted Flask system for:
@@ -879,7 +893,8 @@ If you need to change a behavior, start here:
 - Manage Accounts secondary password gate: `app.py` (`accounts_access_required`, `/admin/accounts/unlock`), `templates/accounts_unlock.html`, `config.py` (`ACCOUNTS_ACCESS_PASSWORD`)
 - Tally timing diagnostics: `scripts/measure_tally.ps1`, `/admin/system/tally_perf_test`
 - admin and customer UI: `templates/`
-- install/update scripts: `first_time_setup.bat`, `update_app.bat`
+- install/update scripts (legacy full-site PC): `first_time_setup.bat`, `update_app.bat`
+- Tally feeder (current Tally machine): `feeder.py`, `FEEDER_SETUP.md`, `scripts/register_feeder_task.ps1`, `update_feeder.bat`
 - material-tier category assignment: `app.py` (`/admin/assign_category`, `_build_design_payload`, `_apply_confirm_category_update`), `database.py` (`design_categories`, `upsert_design_category`, `remove_design_category`, `get_categories_for_stock_items`), `templates/index.html` (Manage Categories session, `.category-ribbon`), `templates/train.html` (category picker: `#matchCategorySelect`, `#uploadCategorySelect`)
 - badge cache versioning/tools: `app.py` (`BADGE_FORMAT_VERSION`, `_badged_share_cache_path`, `_cleanup_stale_badge_variants`, `/admin/system/share_cache_files`, `/admin/system/clear_badge_cache`), `templates/system.html` (Badge Cache panel)
 - Needs Category / Needs Image Matching work queue: `app.py` (`_compute_car_completion_stats`, `_compute_category_completion_stats`, `/api/needs_category_queue`, `/api/needs_image_matching_queue`, `_invalidate_queue_stats_cache`), `templates/train.html` (merged queue panel/tabs, `initWorkQueuesFromUrl`, `switchQueueTab`), `templates/index.html` (single "Work Queue" More menu entry, `maybeOpenCategorySessionFromUrl`)

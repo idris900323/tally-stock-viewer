@@ -1,5 +1,10 @@
 # Tally Stock Viewer - Going Public
 
+> **Legacy path.** The public site now runs on Render, fed by the small `feeder.py` on the
+> Tally machine (see `FEEDER_SETUP.md`). This guide (Cloudflare Tunnel from the office PC)
+> is only needed if the old spare PC is switched on as a manual full-site backup. Stop the
+> feeder first if you do that.
+
 This guide covers the public internet setup for the stock viewer.
 It assumes the office PC is already working locally through `MASTER_SETUP.md`.
 
