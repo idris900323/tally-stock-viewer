@@ -178,6 +178,11 @@ PUBLIC_ENDPOINTS = {
     # check inside the view itself (see intake_sync_data()), same "missing
     # = 403" discipline as every other optional secret in this codebase.
     "intake_sync_data",
+    # Called by scripts/push_new_images.py from another machine after it
+    # SCPs new images onto Render's disk -- has its own independent
+    # RESCAN_TRIGGER_TOKEN check inside the view itself (see
+    # trigger_rescan()), same "missing = 403" discipline.
+    "trigger_rescan",
     # Called by an automated, unauthenticated prober (a PaaS host's HTTP
     # health check), not a browser -- was previously gated behind the login
     # wall like every other route, so an anonymous health-check request got
@@ -4614,6 +4619,40 @@ def scan_images():
             }
             for row in missing["rows"]
         ],
+        "stats": db.get_mapping_stats(),
+    })
+
+
+
+# ============================================================
+# REMOTE RESCAN TRIGGER -- lets a machine that just SCP'd new images
+# straight onto Render's disk (scripts/push_new_images.py, run from the
+# office PC's double-click batch file) kick off the exact same rescan the
+# Training Mode "Rescan Images" button runs, without a session cookie or
+# admin login -- the caller is a background script on another machine, not
+# a paired browser. Authenticated by RESCAN_TRIGGER_TOKEN rather than
+# admin_required/system_device_required, same "missing secret = 403,
+# feature cleanly disabled" discipline as INTAKE_SYNC_TOKEN above, and
+# listed in PUBLIC_ENDPOINTS for the same reason.
+# ============================================================
+@app.route("/admin/system/trigger_rescan", methods=["POST"])
+def trigger_rescan():
+    expected_token = Config.RESCAN_TRIGGER_TOKEN
+    if not expected_token:
+        return jsonify({"error": "Rescan trigger is not configured. Set RESCAN_TRIGGER_TOKEN in .env to enable it."}), 403
+
+    provided_token = request.headers.get("X-Rescan-Token", "")
+    if not provided_token or not hmac.compare_digest(provided_token, expected_token):
+        return jsonify({"error": "Invalid or missing rescan token."}), 403
+
+    result = image_scanner.scan_ss_image_folder(IMAGE_SCAN_ROOT)
+    missing = image_scanner.find_missing_image_rows(IMAGE_SCAN_ROOT)
+    return jsonify({
+        "status": "scanned",
+        **result,
+        "missing_count": missing["missing_count"],
+        "missing_mapped_count": missing["missing_mapped_count"],
+        "over_threshold_warning": missing["over_threshold_warning"],
         "stats": db.get_mapping_stats(),
     })
 

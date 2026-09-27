@@ -91,6 +91,16 @@ class Config:
     CLOUD_SYNC_URL = os.environ.get("CLOUD_SYNC_URL", "").strip()
     CLOUD_SYNC_TOKEN = os.environ.get("CLOUD_SYNC_TOKEN", "").strip()
 
+    # Rescan trigger -- lets a machine pushing new images straight onto
+    # Render's disk over SCP (scripts/push_new_images.py) kick off the same
+    # rescan the Training Mode "Rescan Images" button runs, without a
+    # session or admin login. Deliberately separate from SYSTEM_ACCESS_TOKEN
+    # (that one pairs a browser; this one authenticates a background script
+    # on another machine) and from INTAKE_SYNC_TOKEN (different caller,
+    # different endpoint). Same "missing = 403, feature cleanly disabled"
+    # pattern as every other optional secret above.
+    RESCAN_TRIGGER_TOKEN = os.environ.get("RESCAN_TRIGGER_TOKEN", "").strip()
+
     # Logging
     LOG_DIR = os.environ.get("LOG_DIR", "logs")
     LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")
