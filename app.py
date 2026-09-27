@@ -1232,6 +1232,25 @@ CLOUD_MODE_REFRESH_MESSAGE = (
     "manual Tally refresh isn't available here."
 )
 
+# Every "formatted" timestamp string below is built from datetime.now(),
+# which is naive (no tzinfo) and simply reads whatever clock the OS the
+# process is running on is set to. That used to be the office Windows PC,
+# whose clock was set to IST, so the displayed dd/mm/yyyy HH:MM:SS text
+# happened to already be IST. Since moving to Render, this same call reads
+# the container's clock instead, which runs in UTC -- so the exact same
+# code started silently displaying UTC time to users who all expect IST.
+# _format_ist() converts only for display; every "timestamp"/isoformat()
+# value used for storage or for freshness comparisons is left untouched,
+# and is still the naive UTC-in-production value it always was.
+IST_OFFSET = timedelta(hours=5, minutes=30)
+
+
+def _format_ist(dt):
+    """Render a naive, UTC-valued datetime as an explicit IST display string."""
+    if dt is None:
+        return None
+    return (dt + IST_OFFSET).strftime("%d/%m/%Y %H:%M:%S") + " IST"
+
 
 def _refresh_stock_data():
     global last_refresh_status
@@ -1244,7 +1263,7 @@ def _refresh_stock_data():
             "status": "cloud_mode_disabled",
             "message": CLOUD_MODE_REFRESH_MESSAGE,
             "timestamp": now.isoformat(),
-            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+            "formatted": _format_ist(now),
         }
     if FULL_REFRESH_LOCK.locked():
         now = datetime.now()
@@ -1255,7 +1274,7 @@ def _refresh_stock_data():
             "status": "full_refresh_in_progress",
             "message": "Full refresh is in progress. Please wait.",
             "timestamp": now.isoformat(),
-            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+            "formatted": _format_ist(now),
         }
     try:
         export_result = fetch_item_stock_flat()
@@ -1278,7 +1297,7 @@ def _refresh_stock_data():
             "file": export_result.get("file") if export_result else None,
             "warning": export_result.get("warning") if export_result else None,
             "timestamp": timestamp_iso,
-            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+            "formatted": _format_ist(now),
         }
     except Exception as exc:
         raw_error = str(exc)
@@ -1311,7 +1330,7 @@ def _refresh_stock_data():
             "file": get_latest_stock_file_path(),
             "warning": fallback_message,
             "timestamp": timestamp_iso,
-            "formatted": now.strftime("%d/%m/%Y %H:%M:%S"),
+            "formatted": _format_ist(now),
                 }
 
 # ---------- Tally export logic ----------
@@ -4634,17 +4653,18 @@ def last_update():
             dt = datetime.fromtimestamp(mtime)
             iso_ts = dt.isoformat()
             return jsonify({
-                "last_update": dt.strftime("%d/%m/%Y %H:%M:%S"),
+                "last_update": _format_ist(dt),
                 "timestamp": iso_ts,
-                "formatted": dt.strftime("%d/%m/%Y %H:%M:%S"),
+                "formatted": _format_ist(dt),
                 "file": update_file,
             })
         else:
-            now_iso = datetime.now().isoformat()
+            now = datetime.now()
+            now_iso = now.isoformat()
             return jsonify({
                 "last_update": "File not found",
                 "timestamp": now_iso,
-                "formatted": datetime.fromisoformat(now_iso).strftime("%d/%m/%Y %H:%M:%S"),
+                "formatted": _format_ist(now),
             })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500

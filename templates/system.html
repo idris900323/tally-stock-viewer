@@ -722,7 +722,10 @@ async function clearBadgeCache() {
 function formatCloudBackupTimestamp(isoString) {
     if (!isoString) return "-";
     try {
-        return new Date(isoString).toLocaleString();
+        // formatIST() (static/shared.js) reads this naive ISO timestamp as
+        // UTC and renders it in Asia/Kolkata -- see the comment there for
+        // why the plain new Date(isoString) this used to call is wrong.
+        return formatIST(isoString);
     } catch (error) {
         return isoString;
     }
