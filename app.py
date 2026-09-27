@@ -281,14 +281,34 @@ def _is_system_device_authorized():
 
 
 def system_device_required(view_func):
-    """Stack alongside @admin_required on every /admin/system* route."""
+    """Stack alongside @admin_required on every /admin/system* route.
+
+    The bare page route (/admin/system) gets a styled HTML "not paired yet"
+    page instead of raw JSON when blocked -- that's the one path a human
+    ever actually sees this response in a browser tab. Every other
+    /admin/system/* route (the page's own AJAX calls once it has loaded --
+    /admin/system/status, /admin/system/logs, etc.) keeps returning JSON
+    completely unchanged: those can only ever be called by this page's own
+    already-authorized JS in practice, but branching on request.path here
+    (rather than changing the decorator's behavior globally) means nothing
+    that might call one of those sub-routes directly -- a script, a health
+    check, anyone's future tooling -- ever sees anything but the JSON it
+    already expected. Checked repo-wide for such a caller of the bare page
+    route itself: only a real browser navigation (index.html's More menu,
+    `window.location.href = '/admin/system'`) and documentation reference
+    it; nothing programmatic does."""
     @wraps(view_func)
     def wrapper(*args, **kwargs):
+        is_page_route = request.path == "/admin/system"
         if not _system_panel_configured():
+            if is_page_route:
+                return render_template("system.html", not_authorized=True, not_configured=True), 403
             return jsonify({
                 "error": "System panel is not configured. Set SYSTEM_ACCESS_TOKEN in .env to enable it."
             }), 403
         if not _is_system_device_authorized():
+            if is_page_route:
+                return render_template("system.html", not_authorized=True, not_configured=False), 403
             return jsonify({
                 "error": "This device is not authorized for System Panel access. "
                          "Visit /admin/system/authorize-device?token=YOUR_TOKEN once from this browser to pair it."

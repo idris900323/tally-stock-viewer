@@ -689,7 +689,7 @@
             }
         }
 
-        /* "Needs link"/"Photo coming soon" cards: a muted, dashed border and
+        /* "Needs link"/"Photo not available" cards: a muted, dashed border and
            a small faded placeholder icon (never a real photo -- see
            renderDesignItem()'s imageId logic) make gaps in the catalog
            visible while scanning a whole grid, without needing to read each
@@ -2197,7 +2197,7 @@
 <div class="page">
     <div class="hero">
         <div class="topbar">
-            <div class="role-badge">{{ current_role|default('customer')|title }} mode</div>
+            <div class="role-badge">{{ 'Dealer' if current_role in ('customer', none) else current_role|title }} mode</div>
             <div class="topbar-right">
                 {% if is_admin %}
                 <div class="report-bell-wrap" id="reportBellWrap">
@@ -5318,7 +5318,7 @@ function renderDesignItem(item, index) {
                 </button>
                 <div class="design-text">
                     <div class="badge-row">
-                        <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : (isCustomer ? 'Photo coming soon' : 'Needs link')}</div>
+                        <div class="badge ${mapped ? 'mapped' : 'unmapped'}">${mapped ? BADGE_ICON_LINKED : BADGE_ICON_UNMAPPED}${mapped ? 'Linked' : (isCustomer ? 'Photo not available' : 'Needs link')}</div>
                     </div>
                     <div class="design-title">${escapeHtml(stockItem)}</div>
                     ${detailText}
