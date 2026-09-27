@@ -2201,12 +2201,12 @@
             <div class="topbar-right">
                 {% if is_admin %}
                 <div class="report-bell-wrap" id="reportBellWrap">
-                    <button type="button" id="reportBellBtn" class="report-bell-btn" onclick="toggleReportPanel()" aria-haspopup="true" aria-expanded="false" aria-label="Customer reports (none open)" title="Customer reports">
+                    <button type="button" id="reportBellBtn" class="report-bell-btn" onclick="toggleReportPanel()" aria-haspopup="true" aria-expanded="false" aria-label="Dealer reports (none open)" title="Dealer reports">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
                         <span id="reportBellBadge" class="report-bell-badge" style="display:none;">0</span>
                     </button>
-                    <div id="reportPanel" class="report-panel" style="display:none;" role="dialog" aria-label="Customer reports">
-                        <h3>Customer reports</h3>
+                    <div id="reportPanel" class="report-panel" style="display:none;" role="dialog" aria-label="Dealer reports">
+                        <h3>Dealer reports</h3>
                         <div id="reportPanelList"></div>
                     </div>
                 </div>
@@ -2219,7 +2219,7 @@
             <h1>Super Seatings</h1>
         </div>
         {% if is_admin %}
-        <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and control customer accounts.</p>
+        <p>Browse stock designs and linked images. Admin can scan, update stock, train matches, and control dealer accounts.</p>
         {% else %}
         <p>Select your car below to see available seat cover designs and photos.</p>
         {% endif %}
@@ -2266,11 +2266,11 @@
                     </button>
                     <div id="moreMenu" class="more-menu" role="menu" aria-label="More actions" style="display:none;">
                         <button type="button" role="menuitem" id="fullRefreshBtn" class="more-menu-item" onclick="handleMoreMenuAction(startFullRefresh)" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">Full Refresh</button>
-                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/accounts')" title="Manage customer login accounts">Manage Accounts</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/accounts')" title="Manage dealer login accounts">Manage Accounts</button>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
                         <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openCategorySettingsModal)" title="Add, rename, or delete material-tier categories (Pearl, Ruby, Saka, etc.) -- not to be confused with Assign Category, which tags individual items">Category Settings</button>
-                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openNoticeModal)" title="Publish or clear the popup and the important banner customers see">Popup &amp; Banner</button>
+                        <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(openNoticeModal)" title="Publish or clear the popup and the important banner dealers see">Popup &amp; Banner</button>
                         <div class="more-menu-divider" role="separator"></div>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/train?open_queue=work')" title="Open Train Matches with the prioritized work queue already visible -- toggle between Needs Category and Needs Image Matching from there">Work Queue</button>
                     </div>
@@ -2451,7 +2451,7 @@
         <div class="notice-admin-body">
             <section class="notice-slot">
                 <h3>Popup</h3>
-                <p class="category-settings-hint" style="margin:0 0 8px;">Shown to customers once, until you publish a new one. Text, an image, or both. Publishing replaces the whole popup.</p>
+                <p class="category-settings-hint" style="margin:0 0 8px;">Shown to dealers once, until you publish a new one. Text, an image, or both. Publishing replaces the whole popup.</p>
                 <div id="popupStatus" class="category-settings-notice" style="display:none; margin:0 0 8px;"></div>
                 <div id="popupCurrent" class="notice-admin-preview">Loading...</div>
                 <form class="notice-admin-form" onsubmit="return handlePublishPopup(event)">
@@ -2466,7 +2466,7 @@
 
             <section class="notice-slot">
                 <h3>Important banner</h3>
-                <p class="category-settings-hint" style="margin:0 0 8px;">A scrolling message at the top of the customer page. Customers cannot close it; it stays until you change or clear it. Text only.</p>
+                <p class="category-settings-hint" style="margin:0 0 8px;">A scrolling message at the top of the dealer page. Dealers cannot close it; it stays until you change or clear it. Text only.</p>
                 <div id="bannerStatus" class="category-settings-notice" style="display:none; margin:0 0 8px;"></div>
                 <div id="bannerCurrent" class="notice-admin-preview">Loading...</div>
                 <form class="notice-admin-form" onsubmit="return handlePublishBanner(event)">
