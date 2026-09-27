@@ -437,7 +437,7 @@
     </div>
 
     <div class="panel">
-        <h2>Cloud Backup <span class="badge muted" id="cloudBackupBadge">Checking...</span></h2>
+        <h2>Cloud backup <span class="badge muted" id="cloudBackupBadge">Checking...</span></h2>
         <p class="muted">Incrementally mirrors mappings.db, the S.S IMAGE folder, and the small JSON caches to Google Drive -- only new/changed files are uploaded, local deletions are mirrored, and every run verifies its own work against what Drive actually has rather than assuming success.</p>
         <table class="kv-table">
             <tr><td>Authorization</td><td id="cloudBackupAuthStatus">Checking...</td></tr>
@@ -461,7 +461,7 @@
     </div>
 
     <div class="panel">
-        <h2>Duplicate Images <span class="badge muted" id="dupBadge"></span></h2>
+        <h2>Duplicate images <span class="badge muted" id="dupBadge"></span></h2>
         <p class="muted">Finds image rows that look like duplicates (same folder, same base filename) and confirms with a content hash so two different photos that merely share a generic filename aren't flagged. This is list-only — nothing is deleted.</p>
         <div class="actions">
             <button class="secondary" onclick="checkDuplicateImages()" title="Scan the database for likely duplicate image rows (read-only)">Check for Duplicate Images</button>
@@ -470,7 +470,7 @@
     </div>
 
     <div class="panel">
-        <h2>Badge Cache <span class="badge muted" id="badgeCacheBadge"></span></h2>
+        <h2>Badge cache <span class="badge muted" id="badgeCacheBadge"></span></h2>
         <p class="muted">Lists every file in the real share_cache/ folder on this machine (filename, size, real modified time) so a stale cached badge can be confirmed by mtime instead of guesswork. Badged files (<code>*_badge_*.jpg</code>) carry the badge-drawing code's own version number in their filename (see BADGE_FORMAT_VERSION in app.py) -- any future change to how badges are drawn bumps that constant, which makes every existing badge file miss its cache key and regenerate fresh automatically, with no manual clearing needed. "Clear Badge Cache" below is the on-demand manual option for right now.</p>
         <div class="actions">
             <button class="secondary" onclick="checkBadgeCache()" title="List every file currently in the real share_cache/ folder (read-only)">Check Badge Cache Files</button>
@@ -480,7 +480,7 @@
     </div>
 
     <div class="panel">
-        <h2>Tally &amp; Environment <span class="badge muted" id="tallyBadge"></span></h2>
+        <h2>Tally &amp; environment <span class="badge muted" id="tallyBadge"></span></h2>
         <div class="actions" style="margin-bottom:12px;">
             <button class="secondary" onclick="refreshEnvironment()" title="Re-check Tally reachability, config, disk usage, and uptime">Refresh</button>
         </div>
@@ -507,7 +507,7 @@
 
     {% if not cloud_mode %}
     <div class="panel">
-        <h2>Tally Performance Test <span class="badge muted" id="perfTestBadge"></span></h2>
+        <h2>Tally performance test <span class="badge muted" id="perfTestBadge"></span></h2>
         <p class="muted">Times the exact Tally requests the stock export sends every cycle, plus a proposed lighter replacement, so slow ones can be identified with real numbers.</p>
         <div class="actions">
             <button class="secondary" id="perfTestBtn" onclick="runTallyPerfTest()" title="Sends 4 real test requests to Tally and times each one, to help diagnose why Tally slows down during stock refresh. Safe to run anytime — read-only, changes nothing.">Run Test</button>
@@ -532,7 +532,7 @@
     </div>
 
     <div class="panel">
-        <h2>Recent Logs</h2>
+        <h2>Recent logs</h2>
         <div class="actions" style="margin-bottom:6px;">
             <button class="secondary" onclick="loadLogs()" title="Reload the last 200 lines of the application log">Refresh Logs</button>
         </div>

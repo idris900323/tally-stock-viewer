@@ -297,8 +297,8 @@
     </div>
 
     <div class="panel">
-        <h1 style="margin:0 0 10px;">Account Management</h1>
-        <p class="muted" style="margin:0;">Create and delete customer accounts from this page.</p>
+        <h1 style="margin:0 0 10px;">Account management</h1>
+        <p class="muted" style="margin:0;">Create and delete dealer accounts from this page.</p>
     </div>
 
     <div id="successMsg" class="notice success"></div>
@@ -306,7 +306,7 @@
 
     <div class="grid">
         <div class="panel">
-            <h2 style="margin:0 0 12px;">Create New Customer Account</h2>
+            <h2 style="margin:0 0 12px;">Create new dealer account</h2>
             <form id="createCustomerForm">
                 <div class="field-row">
                     <label for="new_username">Username</label>
@@ -321,19 +321,19 @@
         </div>
 
         <div class="panel">
-            <h2 style="margin:0 0 10px;">Manage Customer Accounts</h2>
+            <h2 style="margin:0 0 10px;">Manage dealer accounts</h2>
             <div class="bulk-actions toolbar">
-                <button type="button" class="secondary" onclick="setAllCustomerStatus(true)" title="Resume login access for every customer account">Resume All</button>
-                <button type="button" class="secondary" onclick="setAllCustomerStatus(false)" title="Pause login access for every customer account">Pause All</button>
+                <button type="button" class="secondary" onclick="setAllCustomerStatus(true)" title="Resume login access for every dealer account">Resume All</button>
+                <button type="button" class="secondary" onclick="setAllCustomerStatus(false)" title="Pause login access for every dealer account">Pause All</button>
             </div>
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
                             <th style="width:200px;">Username</th>
-                            <th style="width:160px;" title="This code is used by the customer to log in">Access Code</th>
+                            <th style="width:160px;" title="This code is used by the dealer to log in">Access Code</th>
                             <th style="width:110px;">Status</th>
-                            <th style="width:200px;">Last Login</th>
+                            <th style="width:200px;">Last login</th>
                             <th style="width:180px;">Created</th>
                             <th style="width:220px;">Actions</th>
                         </tr>
@@ -341,7 +341,7 @@
                     <tbody id="accountsTableBody"></tbody>
                 </table>
             </div>
-            <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No customer accounts found.</div>
+            <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No dealer accounts found.</div>
         </div>
     </div>
 </div>
@@ -481,7 +481,7 @@ async function toggleAccountStatus(button) {
 
 async function setAllCustomerStatus(isActive) {
     const label = isActive ? "resume" : "pause";
-    const confirmed = window.confirm(`Are you sure you want to ${label} ALL customer accounts?`);
+    const confirmed = window.confirm(`Are you sure you want to ${label} ALL dealer accounts?`);
     if (!confirmed) {
         return;
     }
