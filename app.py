@@ -188,7 +188,11 @@ PUBLIC_ENDPOINTS = {
     "health",
 }
 
-db.init_database()
+# feeder.py (Tally-to-cloud feeder, no site/database) imports this module for
+# its Tally fetch + cloud push functions only and sets FEEDER_MODE=1 first, so
+# it never creates or opens mappings.db.
+if os.environ.get("FEEDER_MODE") != "1":
+    db.init_database()
 
 
 def _current_role():

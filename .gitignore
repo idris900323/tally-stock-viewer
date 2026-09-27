@@ -79,3 +79,6 @@ archived_unneeded/
 # AI try-on experimentation (isolated, not part of the app)
 # =========================
 ai_tryon_test/
+
+# brag skill output (generated launch video, not part of the app)
+brag-output/

@@ -1,5 +1,16 @@
 # Tally Stock Viewer - Office PC Master Guide
 
+> ## Current setup: use `FEEDER_SETUP.md` for the Tally machine
+> The real site now runs on **Render**. The machine that talks to Tally only needs the
+> small feeder (`feeder.py`), which sends stock to Render. **Follow `FEEDER_SETUP.md`
+> for any new or replacement Tally machine.**
+>
+> **Everything below in this guide, plus `GOING_PUBLIC.md`, `first_time_setup.bat`,
+> `update_app.bat` and `launcher.pyw`, is the LEGACY full-site setup.** It is kept for
+> occasional manual use - e.g. switching on the old spare PC as a full-site backup.
+> **If you do that, stop the feeder on the feeder machine first** (see the warning in
+> `FEEDER_SETUP.md`) so the two machines don't push conflicting data to Render.
+
 This is the main setup and day-to-day guide for the office PC.
 It replaces the older split between `MASTER_SETUP.md` and `MASTER_SETUP_Claude.md`.
 
