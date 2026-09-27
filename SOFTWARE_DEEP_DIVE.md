@@ -120,6 +120,7 @@ Important configuration groups:
 - `DISABLE_TALLY_SCHEDULING` — set on a cloud instance that can never reach Tally; `"1"`/`"true"`/`"yes"`, default off
 - `INTAKE_SYNC_TOKEN` — the secret a cloud instance's `/admin/intake/sync_data` checks against; unset keeps that route `403` for everyone
 - `CLOUD_SYNC_URL`, `CLOUD_SYNC_TOKEN` — set on the OFFICE PC to push to a cloud instance's intake endpoint after each local export; either missing keeps the push a clean no-op
+- `RESCAN_TRIGGER_TOKEN` — the secret a cloud instance's `/admin/system/trigger_rescan` checks against (see section 26); unset keeps that route `403` for everyone. Set the same value on the cloud instance and read it, alongside `RENDER_SSH_ADDRESS`/`RENDER_DATA_DIR`/`RESCAN_TRIGGER_URL`, from `.env` on whichever machine runs `scripts/push_new_images.py` — those three are read directly by that standalone script, not through `Config`
 
 ### Server binding (`serve.py`)
 - `PORT` — read directly via `os.environ`, not through `Config`. If set (Render and most PaaS hosts always set this for web services), `serve.py` binds waitress to that port instead of the hardcoded `5000`. Always binds host `0.0.0.0` regardless — safe in both environments since actual public exposure is controlled by Cloudflare Tunnel (office PC) or the platform's own network layer (Render), never by this bind address directly.
@@ -490,10 +491,32 @@ Important routes:
 - `POST /admin/delete_user/<user_id>`
 - `POST /admin/toggle_user_status/<user_id>` — flips a single customer's `is_active` flag (admin-only accounts can't be toggled; `db.toggle_customer_active_status()` raises `ValueError` if the target isn't a customer)
 - `POST /admin/set_all_customer_status` — bulk-sets `is_active` for every customer account in one call (`db.set_all_customer_active_status()`), used by the `Resume All` / `Pause All` buttons on `templates/accounts.html`
+- `POST /admin/reset_customer_access_code/<user_id>` — admin-only (behind both `@admin_required` and `@accounts_access_required`); sets a new access code for a dealer who's forgotten theirs, the practical "forgot password" path since the app has no email/SMS to send a real reset link to. Refuses with `400` if the target isn't `role == "customer"` (verified directly — it correctly won't touch the admin account), logs an `access_code_reset` row via `db.log_account_action()`, and the admin passes the new code to the dealer out of band
+
+`admin_delete_user()` deletes the row and then logs the deletion via `account_logs`, which carries a real foreign key into `users(id)`. That log call now passes `user_id=None` and is wrapped in try/except: `ON DELETE SET NULL` only rewrites *existing* log rows when their subject is deleted, it doesn't let a brand-new `INSERT` reference an id that's already gone, so the log write used to raise an unhandled `IntegrityError` after the delete had already committed — the account was actually gone, but the request 500'd with Flask's default HTML error page instead of the JSON the frontend expected, which is what caused the "Unexpected token '<' ... not valid JSON" crash and the account only disappearing after a manual refresh.
 
 The `users` table has `is_active` (default `1`) and `last_login` columns, added via `_ensure_users_schema()` so existing databases are migrated in place. `login()` rejects a customer login with HTTP `403` if `is_active` is `0`, and records `last_login` on every successful login through `db.update_last_login()`.
 
 Each major account action is logged through `account_logs`, including bulk pause/resume (`bulk_paused` / `bulk_resumed` action labels).
+
+### Self-service password change and the accounts-password gate's own change path
+
+- `GET/POST /change_password` — self-service change for whoever is currently logged in, admin or dealer (same route/template either way, since both authenticate with the same username + access-code shape). Requires the current password (`db.authenticate_user()`), rate-limited via `_check_login_rate_limit(f"change_password:{username}")`, and logs a `self_password_change` row. This is "change my password while logged in," not "I forgot it" — a forgotten dealer code goes through the admin-side reset route above instead, since there's no email/SMS to send a real reset link through. The link to this route lives only in `templates/system.html`'s topbar (admin-only, behind device pairing) — it was originally also on `templates/index.html`, but that link was removed since dealers don't need it there; the route itself is unchanged and still reachable directly by anyone logged in.
+- `POST /admin/accounts/change_password` — changes the Manage Accounts gate password itself (`app_settings.accounts_password` via `db.set_accounts_password()`). Requires the *current* accounts password even though the route already sits behind `@accounts_access_required`, so an unlocked session left open on a shared machine can't be used to silently change the password without whoever set it noticing.
+
+### Accounts password: DB-backed with a permanent env-var recovery key
+
+`ACCOUNTS_ACCESS_PASSWORD` used to be the only source of truth, checked directly against `Config` on every unlock. It is now DB-backed (`app_settings.accounts_password`), seeded once from `Config.ACCOUNTS_ACCESS_PASSWORD` the first time that table is created (`database.py`'s `ensure_schema()`) so nothing breaks for an existing deployment. From then on, `_accounts_password_matches(submitted)` (`app.py`) accepts **either** the current DB value **or** the live `Config.ACCOUNTS_ACCESS_PASSWORD` — permanently, not just at the one-time seed. This exists because a DB-only design has no way back in if the seed ran with a value that didn't match (or wasn't set in) the live deployment's actual env var — e.g. Render's environment drifting from a local `.env` — since the only recovery route (`change_password` above) itself required already knowing the current DB value. The env var is now a standing recovery key: whoever controls the deployment's environment variables can always get back in with it, verified live (seeded the DB with one password via the API, confirmed a *different* env-var value still unlocked the page, the DB value still worked too, and a genuinely wrong password still correctly `401`s).
+
+`_accounts_unlocked()` also compares a version stamp (the accounts password's `updated_at`) stored in the session at unlock time against the current one — changing the password (either the DB value via the route above, or the env var) re-locks every session that had already unlocked Manage Accounts, including the current one making the change, not just future logins. No server-side session registry is needed: the version lives in `app_settings` and is checked fresh on every `@accounts_access_required` request.
+
+### Contact-us hints
+
+A WhatsApp link and phone number (the same numbers used elsewhere in the app) render immediately next to the error on a failed `/login`, a failed Manage Accounts unlock (`accounts_unlock.html`), and a failed self-service `/change_password` — via the shared `.auth-gate-hint` CSS class (also used for its link styling) rather than only the existing generic footer.
+
+### JSON responses and caching
+
+`add_security_headers()` (the same `@app.after_request` hook as the security headers in the next section) now also stamps `Cache-Control: no-store` on any response with `mimetype == "application/json"`. Previously only two endpoints (`/api/popup`, `/api/banner`) explicitly set this; every other dynamic JSON endpoint (account lists, image queues, design/category lists, System panel status, ...) had no explicit cache policy at all, left to browser/CDN default heuristics — the same class of problem already seen once for real with badge images (see `BADGE_FORMAT_VERSION`'s cache-busting comment in the category section below). A POST that changes something, immediately followed by the GET meant to show the new state, could otherwise be served a stale cached copy of the old response. HTML pages and image routes (which already carry their own deliberate caching, e.g. the badge cache's `no-cache`/`must-revalidate` policy) are untouched by this change.
 
 ### Secondary password gate
 
@@ -523,6 +546,7 @@ The templates map cleanly to the major workflows:
 
 - `templates/login.html`
   - sign-in screen
+  - a `.auth-gate-hint` WhatsApp/phone contact line appears next to a failed login attempt (section 16)
 - `templates/index.html`
   - main stock viewer
   - admin-only update, training, share-images, and account links
@@ -546,9 +570,13 @@ The templates map cleanly to the major workflows:
   - remote System panel (see section 21)
 - `templates/accounts.html`
   - customer account management
-  - accounts table adds Access Code, Status (Active/Paused), and Last Login columns, plus per-row Pause/Resume and bulk `Resume All`/`Pause All` controls
+  - accounts table adds Access Code, Status (Active/Paused), and Last Login columns, plus per-row Pause/Resume/`Reset` (access code, section 16) and bulk `Resume All`/`Pause All` controls; the Actions cell wraps explicitly (`.row-actions`) with a consistent gap so the third (`Reset`) button fits two-per-line instead of crowding
+  - a "Change accounts password" panel (section 16) lets an admin set a new value for `app_settings.accounts_password` in-app, requiring the current password
 - `templates/accounts_unlock.html`
   - password interstitial rendered in place of `/admin/accounts` when the current session hasn't passed the accounts password gate (see section 16); styled consistently with `templates/login.html`
+  - a `.auth-gate-hint` WhatsApp/phone contact line appears next to a failed unlock attempt
+- `templates/change_password.html`
+  - self-service password change for whoever is logged in (`/change_password`, section 16); same `.auth-gate-hint` contact line on failure
 
 `templates/train.html`, `templates/accounts.html`, and `templates/bulk_match.html` share the same sticky topbar pattern (`.topbar` > `.topbar-left` / `.topbar-right`, `.link-button` for navigation, `.role-indicator` for the current role label) for visual consistency across admin screens; `templates/index.html` still uses the older `.role-badge` topbar style.
 
@@ -591,6 +619,10 @@ Detached helper spawned by the System panel restart routes right before `app.py`
 ### `scripts/measure_tally.ps1`
 
 Read-only diagnostic that times the Tally stock-export requests (the old three-request cycle plus the current single-collection replacement) against a live Tally, for before/after numbers from real data. The same measurement is available remotely as the System panel's Tally Performance Test (section 21); the script remains for local PowerShell use.
+
+### `scripts/push_new_images.py` / `push_new_images.bat`
+
+SCPs newly-added/changed images to a cloud instance's disk and triggers a remote rescan there via `/admin/system/trigger_rescan` — see section 26 for the full mechanics (manifest-based diffing, first-run seeding, env vars). Run by double-clicking `push_new_images.bat` in the project root; no manual PowerShell needed.
 
 ## 20. Logging and health
 
@@ -642,6 +674,10 @@ Every panel route requires BOTH the admin session (`@admin_required`) AND a pair
 - `POST /admin/system/cloud_backup/authorize` — the one-time OAuth consent flow; `GET .../auth_status` polls it
 - `POST /admin/system/cloud_backup/sync_now` — manual trigger; `400` if not yet authorized
 - `POST /admin/system/cloud_backup/stop` — cooperative cancel of an in-progress sync
+
+One exception to the "every panel route requires both" rule above: `POST /admin/system/trigger_rescan` (section 26) is deliberately NOT behind `@admin_required`/`@system_device_required` — its caller is a background script on another machine (`scripts/push_new_images.py`), not a paired admin browser, so it authenticates independently via `X-Rescan-Token` against `Config.RESCAN_TRIGGER_TOKEN` instead.
+
+The panel's topbar also carries the `Change password` link (self-service `/change_password`, section 16) — it used to live on `templates/index.html` too, but was moved here-only since dealers don't need it and this page is already admin-gated.
 
 All git subprocess calls go through `_run_git_command()`, which passes `creationflags=subprocess.CREATE_NO_WINDOW` — the server runs under `pythonw.exe` (no console), so without this every git spawn flashed a visible terminal window on the office PC screen.
 
@@ -840,6 +876,14 @@ A cloud-hosted instance can never reach Tally directly. Rather than have it atte
 ### On the office PC
 
 `_push_data_to_cloud()` no-ops unless both `Config.CLOUD_SYNC_URL` and `Config.CLOUD_SYNC_TOKEN` are set. When configured, it reads the same local files a full refresh / item export just wrote (never re-derives anything) and `POST`s them to `CLOUD_SYNC_URL` with the token in `X-Intake-Token`, on a background thread so a slow/failed push never delays the local job that triggered it. Called from both `run_full_refresh_job()` and `schedule_item_export()`'s export job, after each succeeds. Wrapped in a broad try/except that only logs — a push failure is completely invisible to the local operator-facing flow.
+
+### Pushing new images to a cloud instance (`push_new_images.py` / `trigger_rescan`)
+
+`sync_data` above only ever carries car/hierarchy/stock JSON — photos never travel through it. `POST /admin/system/trigger_rescan` closes that gap for images: like `intake_sync_data`, it's in `PUBLIC_ENDPOINTS` (no session cookie or admin login — the caller is a background script on another machine, not a paired browser) with its own independent check, `X-Rescan-Token` compared via `hmac.compare_digest()` against `Config.RESCAN_TRIGGER_TOKEN` (unset = `403`, same discipline as every other optional secret). On a valid token it just calls the same two functions the Training Mode `Rescan Images` button runs — `image_scanner.scan_ss_image_folder(IMAGE_SCAN_ROOT)` then `image_scanner.find_missing_image_rows(IMAGE_SCAN_ROOT)` — and returns their combined result as JSON.
+
+`scripts/push_new_images.py` (run via double-clicking `push_new_images.bat`) is the other half: it walks the local image folder (`Config.IMAGE_SCAN_ROOT`, or `data/S.S IMAGE` under the project root if unset), diffs it against a local manifest (`data/.image_push_manifest.json`, git-ignored) keyed by relative path + size + mtime, `scp`s anything new or changed to `RENDER_SSH_ADDRESS:RENDER_DATA_DIR/S.S IMAGE/<rel_path>` (creating remote directories with `ssh ... mkdir -p` as needed), and — if anything was actually pushed — `POST`s `RESCAN_TRIGGER_URL` with `X-Rescan-Token: RESCAN_TRIGGER_TOKEN` to trigger the route above. The manifest is saved incrementally (every 20 pushed files) and pruned of entries for files no longer present locally.
+
+First run is deliberately inert: if no manifest file exists yet, the script seeds one from every file currently in the local folder — marking all of it "already pushed" without touching the network — instead of re-pushing an entire already-migrated catalog (see `MIGRATION_DAY_INSTRUCTIONS.md`, which SCPs the initial catalog directly). Only a second run, after new files are added, actually pushes and triggers a rescan. `RENDER_SSH_ADDRESS`/`RENDER_DATA_DIR` are read from `.env` (not `Config` — this script runs standalone, not as part of the Flask app), defaulting `RENDER_DATA_DIR` to `/opt/render/project/src/data` if unset.
 
 ## 27. Installable PWA (customer sessions only)
 

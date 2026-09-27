@@ -42,6 +42,8 @@ python scripts\verify_render_migration.py
 
 This checks real row counts and file counts match between your local copy and what's now on Render. **Do not proceed until this reports a full pass.** If it reports any mismatch, stop and figure out what's missing before continuing.
 
+(This one-time bulk copy is separate from `scripts/push_new_images.py`, which is for pushing individual new photos to Render on an ongoing basis *after* migration is done — see `GOING_PUBLIC.md` section 13. Don't use it for this initial migration; its first run only seeds a manifest and pushes nothing.)
+
 ---
 
 ## Step 2 — Move Google Drive backup authorization to Render

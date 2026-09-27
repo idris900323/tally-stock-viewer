@@ -63,7 +63,7 @@ Also make sure:
 - customer access codes are no longer the seeded defaults if those accounts are still active
 - the Flask secret key is unique for this install
 - `SYSTEM_ACCESS_TOKEN` is set to a long random value if you want the remote System panel (see section 10); leave it unset to keep the panel disabled
-- `ACCOUNTS_ACCESS_PASSWORD` is set to a value only trusted admins know, if you want `Manage Accounts` protected by a second password on top of the admin login; leave it unset and that page stays fully locked, even to a valid admin session
+- `ACCOUNTS_ACCESS_PASSWORD` is set to a value only trusted admins know, if you want `Manage Accounts` protected by a second password on top of the admin login; leave it unset and that page stays fully locked, even to a valid admin session. This value keeps working forever as a recovery key even after an admin sets a separate in-app password from the Manage Accounts page itself — useful if the two ever drift apart across machines/deployments, or the in-app one is forgotten
 
 To generate a secret key (the same command works for `SYSTEM_ACCESS_TOKEN`):
 
@@ -301,7 +301,30 @@ After this, every full refresh and every scheduled item-stock export also pushes
 
 A free-tier (or otherwise suspended) Render service returns Render's own `503 "This service has been suspended by its owner"` page for every request, including the health check and the intake endpoint — this is Render's platform blocking the request before it ever reaches this app, not a bug here. If pushes are failing, check the service's own status in the Render dashboard first.
 
-## 13. If the public site goes down
+## 13. Pushing new images to a cloud deployment
+
+`sync_data` (section 12) pushes stock/car/hierarchy data automatically, but it never touches photos. When new product photos are added on a machine that isn't the cloud deployment itself, `scripts/push_new_images.py` (run via double-clicking `push_new_images.bat` in the project root — no manual PowerShell needed) copies them over SCP and tells the cloud instance to rescan, without anyone opening Training Mode.
+
+### One-time setup
+
+Add to that machine's `.env`:
+
+```env
+RENDER_SSH_ADDRESS=srv-xxxxx@ssh.<region>.render.com
+RENDER_DATA_DIR=/opt/render/project/src/data
+RESCAN_TRIGGER_URL=https://<your-render-app>.onrender.com/admin/system/trigger_rescan
+RESCAN_TRIGGER_TOKEN=<a long random secret you generate>
+```
+
+`RENDER_SSH_ADDRESS` comes from the Render service's **Connect** tab; `RENDER_DATA_DIR` defaults to the value above if left out. Set the matching `RESCAN_TRIGGER_TOKEN` in the Render service's own environment variables too — same "missing token = feature stays off, `403`" pattern as `INTAKE_SYNC_TOKEN` and `SYSTEM_ACCESS_TOKEN`.
+
+### Running it
+
+Double-click `push_new_images.bat`. The **first run is special**: if no local manifest exists yet (`data/.image_push_manifest.json`), it seeds one from whatever is already in the local image folder and pushes nothing — this matters because that folder typically already holds the full catalog from an earlier migration (see `MIGRATION_DAY_INSTRUCTIONS.md`), and a naive first run would otherwise try to re-push all of it. Only a second run, after new or changed files have been added, actually pushes anything and triggers the rescan.
+
+Safe to re-run any time: the manifest tracks files by relative path, size, and modified time, so an unchanged file is skipped and only genuinely new/changed ones are sent.
+
+## 14. If the public site goes down
 
 Check these in order:
 
