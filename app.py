@@ -21,6 +21,7 @@ from functools import wraps
 from logging.handlers import RotatingFileHandler
 import zipfile
 from urllib.parse import quote
+from contextlib import contextmanager
 
 from flask.sessions import SecureCookieSessionInterface
 from itsdangerous import TimestampSigner, BadSignature, SignatureExpired
@@ -156,6 +157,48 @@ SHARE_IMAGE_CACHE_DIR = os.path.join(BASE_DIR, "data", "share_cache")
 # other request on the same small instance, not something to parallelize
 # for throughput.
 _SHARE_IMAGE_BUILD_SEMAPHORE = threading.Semaphore(2)
+
+# An unbounded semaphore wait here would let enough concurrent share
+# requests eventually occupy EVERY waitress worker thread at once (some
+# actively decoding under the semaphore, the rest simply blocked waiting
+# for it) -- at that point the whole app stops responding to anything,
+# including completely unrelated requests like a static CSS file, since
+# there's no free thread left to run them on. Bounding the wait means a
+# thread that can't get a build slot within this window gives up and
+# returns 503/Retry-After instead of blocking forever, so it's freed back
+# to waitress's pool for other work. See serve.py's thread count comment --
+# threads is kept comfortably above this semaphore's permit count so a
+# realistic burst still leaves threads free for everything else even while
+# some share requests are genuinely waiting.
+SHARE_IMAGE_BUILD_TIMEOUT_SECONDS = 12
+
+
+class ShareImageBusyError(Exception):
+    """Raised by _share_image_build_slot() when SHARE_IMAGE_BUILD_TIMEOUT_
+    SECONDS elapses without acquiring a build slot. Caught by the share-
+    image routes to return 503/Retry-After instead of either blocking the
+    request thread indefinitely or (worse) falling back to serving the
+    full-size original, which would bypass the very memory protection this
+    is guarding."""
+
+
+@contextmanager
+def _share_image_build_slot():
+    if not _SHARE_IMAGE_BUILD_SEMAPHORE.acquire(timeout=SHARE_IMAGE_BUILD_TIMEOUT_SECONDS):
+        raise ShareImageBusyError()
+    try:
+        yield
+    finally:
+        _SHARE_IMAGE_BUILD_SEMAPHORE.release()
+
+
+def _share_image_busy_response():
+    response = jsonify({
+        "error": "Server is busy processing other image shares right now -- please try again in a few seconds.",
+    })
+    response.status_code = 503
+    response.headers["Retry-After"] = str(SHARE_IMAGE_BUILD_TIMEOUT_SECONDS)
+    return response
 PLACEHOLDER_SVG = b"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320' role='img' aria-label='No image available'>
 <rect width='320' height='320' rx='24' fill='#eef2f7'/>
 <rect x='54' y='54' width='212' height='212' rx='18' fill='#d9e2ec'/>
@@ -501,6 +544,29 @@ def add_security_headers(response):
 # is meant to stay readable in app.log, not become a full request log.
 _SLOW_REQUEST_LOG_THRESHOLD_SECONDS = 2.0
 
+# Matches a run of 20+ hex-only characters -- long enough, and narrow
+# enough in alphabet, to catch a real secret (SYSTEM_ACCESS_TOKEN,
+# INTAKE_SYNC_TOKEN, and RESCAN_TRIGGER_TOKEN are all real 64-character hex
+# strings) if one ever ends up embedded in a path segment on some future
+# route, WITHOUT having to trust that every future route author remembers
+# this log exists. Hex-only (not the broader [A-Za-z0-9_-]) is deliberate:
+# a wider class also matches ordinary route names like
+# "get_share_image_badged" (22 characters, well past 16) and would redact
+# them right along with the path they're supposed to identify -- confirmed
+# for real, an earlier [A-Za-z0-9_-]{16,} version of this pattern mangled
+# "/get_share_image_badged/2" into "/<redacted>/2" in testing. Applied only
+# to request.path below, never request.full_path/request.url -- those
+# include the query string, which is exactly where the real device-pairing/
+# intake/rescan tokens actually travel today (e.g. /admin/system/authorize-
+# device?token=...), so simply never logging the query string at all is the
+# primary protection; this redaction is a second, independent layer on top
+# of that, not a substitute for it.
+_TOKEN_LIKE_PATH_SEGMENT = re.compile(r"[A-Fa-f0-9]{20,}")
+
+
+def _redact_path_for_log(path):
+    return _TOKEN_LIKE_PATH_SEGMENT.sub("<redacted>", path)
+
 
 @app.after_request
 def _log_notable_requests(response):
@@ -512,7 +578,7 @@ def _log_notable_requests(response):
     if status == 404 or status >= 500 or duration > _SLOW_REQUEST_LOG_THRESHOLD_SECONDS:
         logger.warning(
             "access: %s %s -> %d in %.2fs",
-            request.method, request.path, status, duration,
+            request.method, _redact_path_for_log(request.path), status, duration,
         )
     return response
 
@@ -4341,7 +4407,7 @@ def _build_share_image(source_path, cache_path):
     handful of already-small, already-compressed originals re-encode
     slightly larger), the original bytes are cached under the same name
     unchanged instead -- callers never need to know which happened."""
-    with _SHARE_IMAGE_BUILD_SEMAPHORE:
+    with _share_image_build_slot():
         image = _prepare_share_image(source_path)
         buffer = BytesIO()
         image.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
@@ -4489,7 +4555,7 @@ def _build_badged_share_image(source_path, cache_path, category):
     encoding. Unlike _build_share_image(), there's no "keep the original
     bytes if smaller" fallback -- the pixels are always modified, so the
     original file is never a valid substitute."""
-    with _SHARE_IMAGE_BUILD_SEMAPHORE:
+    with _share_image_build_slot():
         image = _prepare_share_image(source_path)
         badged = _draw_category_badge(image, category)
         buffer = BytesIO()
@@ -4708,6 +4774,17 @@ def get_share_image(image_id):
         try:
             _build_share_image(source_path, tmp_path)
             os.replace(tmp_path, cache_path)
+        except ShareImageBusyError:
+            # Deliberately NOT falling back to send_file(source_path, ...)
+            # here -- that would serve the full-size original under exactly
+            # the high-concurrency conditions that made the build slot
+            # unavailable in the first place, bypassing the memory
+            # protection this is guarding instead of respecting it.
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            return _share_image_busy_response()
         except Exception:
             logger.exception("Failed to build share-optimized image for id %s; serving original", image_id)
             try:
@@ -4734,6 +4811,12 @@ def get_share_image_badged(image_id):
     for uncategorized items, and its own route is left in place."""
     try:
         cache_path = _ensure_badged_share_cached(image_id)
+    except ShareImageBusyError:
+        # Deliberately NOT falling back to get_share_image(image_id) here --
+        # that would immediately try to acquire the same build slot again
+        # for the plain variant, under the exact same contention that just
+        # failed, wasting another SHARE_IMAGE_BUILD_TIMEOUT_SECONDS wait.
+        return _share_image_busy_response()
     except Exception:
         logger.exception("Failed to build badged share image for id %s; falling back to plain share image", image_id)
         cache_path = None

@@ -556,15 +556,15 @@
         }
 
         /* The 180s threshold that triggers this (checkTimestampFreshness())
-           is untouched and correct -- see the comment there. This is a
-           color choice only: #dc2626 is a hard alarm red, but a timestamp
-           reading >180s old is routine and expected for a good chunk of
-           every 180-second auto-export cycle, not a fault. Switched to the
-           same muted amber already used for .warning/.selection-warning/
-           .badge.unmapped elsewhere on this page, so it reads as "a little
-           behind" rather than "something is broken". */
+           is untouched and correct -- see the comment there. A prior pass
+           switched this to the muted amber used for .warning/.badge.unmapped
+           elsewhere, reasoning that >180s old is routine mid-cycle and
+           shouldn't read as a hard alarm -- reverted back to a hot red
+           (same #dc2626 already used for the unread-count badge dot
+           elsewhere on this page) since a genuinely stale timestamp should
+           actually catch the eye, not blend in as routine. */
         .stale-timestamp {
-            color: #92400e !important;
+            color: #dc2626 !important;
             font-weight: 600;
         }
 
