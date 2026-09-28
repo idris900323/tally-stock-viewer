@@ -2919,6 +2919,22 @@ def get_all_items_for_car():
     if load_error:
         return jsonify({"error": load_error}), 500
 
+    if not os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+        # get_stock_items_for_training_from_hierarchy() below has no Excel
+        # fallback of its own -- on a fresh cloud deploy, before the
+        # feeder's first successful push, this returns None for every car
+        # (see the cloud-mode row-1/JSON-parity verification this note
+        # comes from). Distinguishable from "this car genuinely has zero
+        # items" (still a bare []) so the client can show an honest
+        # "still loading" message instead of a silent empty list.
+        return jsonify({
+            "not_loaded_yet": True,
+            "message": (
+                "No car data loaded yet -- waiting for the next feeder push, "
+                f"expected within {max(1, ITEM_EXPORT_INTERVAL // 60)} minutes."
+            ),
+        })
+
     items = get_stock_items_for_training_from_hierarchy(car)
     if not items:
         return jsonify([])
