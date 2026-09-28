@@ -53,17 +53,21 @@ print(f"[DIAGNOSTIC] About to bind waitress to host={host!r} port={port!r}", flu
 # fix whatever is actually accumulating open files/sockets in the first
 # place -- see get_resource_usage()/start_resource_monitor() in app.py for
 # the actual leak-finding instrumentation.
-# threads: lowered from 8 to 4 as part of the memory-leak follow-up
-# investigation -- each waitress worker thread can independently be
-# running a full-size (~3000x4000) share-image decode at once (see
-# _SHARE_IMAGE_BUILD_SEMAPHORE in app.py, which now caps that specific
-# work at 2 concurrent builds regardless of thread count), but every other
-# request type still gets a thread of its own to run in, and this container
-# only has 512MB to share across however many are live simultaneously.
-# Fewer threads means a smaller worst case across the OTHER (non-share-
-# image) endpoints too, at the cost of a slightly smaller ceiling on truly
-# concurrent unrelated requests -- a reasonable trade on a single small
-# instance that was getting OOM-killed under real daytime traffic.
-serve(app, host=host, port=port, threads=4, asyncore_use_poll=True)
+# threads: briefly lowered from 8 to 4 during the memory-leak follow-up
+# investigation, then raised back to 8 once _SHARE_IMAGE_BUILD_SEMAPHORE
+# gained a bounded wait (SHARE_IMAGE_BUILD_TIMEOUT_SECONDS in app.py) --
+# with an UNBOUNDED semaphore wait, 4 threads was actively dangerous: a
+# burst of concurrent share requests could occupy every single worker
+# thread (some actively decoding under the semaphore, the rest just
+# blocked waiting for it), leaving zero threads free to answer ANYTHING
+# else -- confirmed for real, a 10-request cold-share burst against 4
+# threads made even a static CSS file hang until a decode finished. The
+# semaphore itself still caps actual concurrent decode work at 2 regardless
+# of thread count (that's what bounds memory), so extra threads beyond
+# that mostly sit idle or serve cheap requests (JSON APIs, cached files,
+# static assets) -- keeping threads comfortably above the semaphore's
+# permit count is what guarantees those cheap requests always have a
+# thread free even while share-image work is genuinely busy.
+serve(app, host=host, port=port, threads=8, asyncore_use_poll=True)
 
 print("[DIAGNOSTIC] serve() returned -- this should only happen if the server stopped", flush=True)
