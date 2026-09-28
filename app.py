@@ -14,10 +14,8 @@ import time
 import glob
 import logging
 import psutil
-import pandas as pd
 from collections import defaultdict
 from io import BytesIO
-import openpyxl
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from logging.handlers import RotatingFileHandler
@@ -35,7 +33,16 @@ import image_scanner
 from api.search import search_bp, set_search_dependencies
 from config import Config
 from tally.sync import fetch_from_tally_with_retry
-from utils.excel_helpers import load_excel_column, load_excel_rows
+# load_excel_column/load_excel_rows (utils/excel_helpers.py) are imported
+# lazily at each call site instead -- see the memory-diet investigation
+# this was added for. That module's own top-level `import pandas as pd` /
+# `import openpyxl` pull in real memory at process start (pandas
+# especially); cloud mode never actually needs either function (every
+# reader tries the JSON cache -- kept up to date by the feeder push --
+# first, and only falls back to reading the local .xls/.xlsx Tally export
+# if that's missing/empty, which it never is in cloud mode), so importing
+# them eagerly here meant cloud mode paid that cost on every single
+# startup for functionality it structurally never uses.
 from utils.normalize import extract_car_base_name, normalize_text, normalize_lookup_key
 from utils.product_normalize import extract_type_and_color
 
@@ -1040,6 +1047,7 @@ def _load_training_stock_qty_map():
 
     qty_map = {}
     try:
+        from utils.excel_helpers import load_excel_rows  # lazy -- see the import site's comment
         rows = load_excel_rows(stock_file, usecols=[0, 1], min_row=2)
         for row in rows:
             item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
@@ -1101,6 +1109,7 @@ def _load_training_hierarchy_items():
     current_parent = None
 
     try:
+        from utils.excel_helpers import load_excel_rows  # lazy -- see the import site's comment
         rows = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
     except Exception:
         return []
@@ -1459,11 +1468,15 @@ def start_background_startup_tasks():
         if item_export_enabled and not Config.DISABLE_TALLY_SCHEDULING:
             schedule_item_export(initial_delay=10)
 
-        # 120s: after the item export (10s) and startup full refresh (45s)
-        # so cloud backup doesn't compete with them for Tally/disk I/O.
-        # No-ops cleanly if GDRIVE_* env vars aren't set (see cloud_backup.is_configured()).
-        # Unaffected by DISABLE_TALLY_SCHEDULING -- this backs up local
-        # files to Drive, it never touches Tally.
+        # initial_delay=120 only matters for the legacy CLOUD_BACKUP_INTERVAL
+        # fallback path (used if CLOUD_BACKUP_DAILY_TIME is unset/invalid) --
+        # the normal fixed-daily-IST-slot path (see cloud_backup.schedule())
+        # ignores it entirely and never runs at startup, only ever schedules
+        # the next slot (or, rarely, a one-time catch-up run). No-ops
+        # cleanly if GDRIVE_* env vars aren't set (see
+        # cloud_backup.is_configured()). Unaffected by
+        # DISABLE_TALLY_SCHEDULING -- this backs up local files to Drive, it
+        # never touches Tally.
         cloud_backup.schedule(initial_delay=120)
 
         # Unconditional, same as cloud_backup.schedule() above -- RSS/fd
@@ -1616,7 +1629,16 @@ def _save_item_stock_data(deduped):
     except Exception:
         pass
 
-    threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
+    # Cloud mode is JSON-only (see the module docstring / the memory-diet
+    # investigation this was added for): nothing on a cloud instance ever
+    # reads this .xlsx back (get_stock_items_for_training_from_hierarchy()
+    # and friends all try the JSON cache first and only fall back to
+    # load_excel_rows() if that's missing/empty -- which it never is once
+    # the feeder has pushed data), so writing it is pure waste, and this is
+    # also what makes it safe to lazy-import openpyxl (see its import
+    # site) -- if this thread never starts, that import never fires.
+    if not Config.DISABLE_TALLY_SCHEDULING:
+        threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
 
 
 def fetch_item_stock_flat():
@@ -1685,6 +1707,7 @@ def fetch_item_stock_flat():
             return set()
 
         try:
+            from utils.excel_helpers import load_excel_column  # lazy -- see the import site's comment
             values = load_excel_column(main_file, col_index=0, min_row=1)
         except Exception:
             return set()
@@ -1818,6 +1841,7 @@ def _load_car_groups_from_cache_or_excel():
 
     if not car_groups:
         try:
+            from utils.excel_helpers import load_excel_column  # lazy -- see the import site's comment
             values = load_excel_column(CAR_FILE, col_index=0, min_row=1)
             car_groups = [str(value).strip() for value in values if str(value).strip()]
         except Exception as exc:
@@ -1883,15 +1907,22 @@ def _atomic_json_write(path, data, retries=10, retry_delay=0.05):
 
 
 def save_car_master_to_file(car_names):
-    temp_file = CAR_FILE + ".tmp.xlsx"
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    for car_name in car_names:
-        ws.append([car_name])
-    wb.save(temp_file)
-    os.replace(temp_file, CAR_FILE)
+    # Cloud mode is JSON-only -- see save_main_hierarchy_to_file()'s comment
+    # for why skipping this write is safe (_load_car_groups_from_cache_or_
+    # excel() is JSON-first, so nothing in cloud mode ever needs CAR_FILE).
+    if not Config.DISABLE_TALLY_SCHEDULING:
+        import openpyxl  # lazy -- this branch never runs in cloud mode, so cloud mode never pays openpyxl's import cost
+        temp_file = CAR_FILE + ".tmp.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        for car_name in car_names:
+            ws.append([car_name])
+        wb.save(temp_file)
+        os.replace(temp_file, CAR_FILE)
+        print(f"wrote {len(car_names)} car names to {CAR_FILE}")
+    else:
+        print(f"wrote {len(car_names)} car names to {CAR_MASTER_CACHE_JSON} (cloud mode: JSON only)")
     _atomic_json_write(CAR_MASTER_CACHE_JSON, car_names)
-    print(f"wrote {len(car_names)} car names to {CAR_FILE}")
 
 
 def _read_main_hierarchy_flat_rows():
@@ -1905,6 +1936,7 @@ def _read_main_hierarchy_flat_rows():
         return None
 
     try:
+        from utils.excel_helpers import load_excel_rows  # lazy -- see the import site's comment
         rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
     except Exception:
         logger.exception("Failed to read existing main hierarchy")
@@ -2109,21 +2141,34 @@ def _build_main_hierarchy_structure(flat_rows):
 
 
 def save_main_hierarchy_to_file(flat_rows):
-    main_file = get_main_file_path()
-    temp_file = main_file + ".tmp.xlsx"
+    # Cloud mode is JSON-only (see the memory-diet investigation this was
+    # added for): _build_main_hierarchy_structure() below only ever reads
+    # from _load_car_groups_from_cache_or_excel(), which is itself
+    # JSON-first -- so the structured JSON cache below is fully derivable
+    # without main.xlsx ever existing, and nothing in cloud mode reads it
+    # back (every reader tries the JSON cache first and only falls back to
+    # load_excel_rows() if that's missing/empty, which it never is once the
+    # feeder has pushed data). Skipping this write is also what makes it
+    # safe to lazy-import openpyxl -- if this branch never runs, that
+    # import never fires.
+    if not Config.DISABLE_TALLY_SCHEDULING:
+        import openpyxl  # lazy -- this branch never runs in cloud mode, so cloud mode never pays openpyxl's import cost
+        main_file = get_main_file_path()
+        temp_file = main_file + ".tmp.xlsx"
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(["PARTICULARS", "QUANTITY"])
-    for row in flat_rows:
-        ws.append([row.get("item_name", ""), row.get("qty", 0)])
-    wb.save(temp_file)
-    os.replace(temp_file, main_file)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["PARTICULARS", "QUANTITY"])
+        for row in flat_rows:
+            ws.append([row.get("item_name", ""), row.get("qty", 0)])
+        wb.save(temp_file)
+        os.replace(temp_file, main_file)
+        print(f"wrote {len(flat_rows)} hierarchy rows to {main_file}")
+    else:
+        print(f"wrote {len(flat_rows)} hierarchy rows to {MAIN_HIERARCHY_CACHE_JSON} (cloud mode: JSON only)")
 
     structured_rows = _build_main_hierarchy_structure(flat_rows)
     _atomic_json_write(MAIN_HIERARCHY_CACHE_JSON, structured_rows)
-
-    print(f"wrote {len(flat_rows)} hierarchy rows to {main_file}")
 
 
 def _push_data_to_cloud():
@@ -2184,6 +2229,11 @@ def _push_data_to_cloud():
 
 
 def _write_stock_excel(deduped):
+    # Lazy -- this function's only call site (_save_item_stock_data) is
+    # already gated behind `if not Config.DISABLE_TALLY_SCHEDULING`, so this
+    # import never fires in cloud mode; covers all three openpyxl.Workbook()
+    # uses below (primary path + the two fallback-on-locked-file paths).
+    import openpyxl
     EXPORT_LOCK.acquire()
     try:
         temp_file = ITEM_STOCK_FILE_AUTO + ".tmp.xlsx"
@@ -2332,6 +2382,7 @@ def parse_flat_tally(file_path):
     ignored_labels = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
 
     print(f"Reading Tally rows from {file_path}")
+    from utils.excel_helpers import load_excel_rows  # lazy -- see the import site's comment
     rows = load_excel_rows(file_path, usecols=[0, 1], min_row=2)
     for raw0, col1_val in rows:
         col0 = str(raw0).strip() if raw0 not in (None, "") else ""
@@ -2657,6 +2708,7 @@ def _find_children_by_qty(car_name: str):
 
         qty_map = {}
         try:
+            from utils.excel_helpers import load_excel_rows  # lazy -- see the import site's comment
             rows = load_excel_rows(stock_file, usecols=[0, 1], min_row=2)
             for row in rows:
                 item_name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
@@ -2730,6 +2782,7 @@ def _find_children_by_qty(car_name: str):
         ignore = {"PARTICULARS", "STOCK SUMMARY", "CLOSING BALANCE", "QUANTITY", ""}
         
         try:
+            from utils.excel_helpers import load_excel_rows  # lazy -- see the import site's comment
             rows_data = load_excel_rows(main_file, usecols=[0, 1], min_row=1)
             for row in rows_data:
                 name = str(row[0]).strip() if row and row[0] not in (None, "") else ""
@@ -2865,6 +2918,22 @@ def get_all_items_for_car():
     load_error = ensure_data_loaded()
     if load_error:
         return jsonify({"error": load_error}), 500
+
+    if not os.path.exists(MAIN_HIERARCHY_CACHE_JSON):
+        # get_stock_items_for_training_from_hierarchy() below has no Excel
+        # fallback of its own -- on a fresh cloud deploy, before the
+        # feeder's first successful push, this returns None for every car
+        # (see the cloud-mode row-1/JSON-parity verification this note
+        # comes from). Distinguishable from "this car genuinely has zero
+        # items" (still a bare []) so the client can show an honest
+        # "still loading" message instead of a silent empty list.
+        return jsonify({
+            "not_loaded_yet": True,
+            "message": (
+                "No car data loaded yet -- waiting for the next feeder push, "
+                f"expected within {max(1, ITEM_EXPORT_INTERVAL // 60)} minutes."
+            ),
+        })
 
     items = get_stock_items_for_training_from_hierarchy(car)
     if not items:
@@ -5463,6 +5532,22 @@ def system_cloud_backup_sync_now():
 @system_device_required
 def system_cloud_backup_stop():
     return jsonify(cloud_backup.request_stop())
+
+
+@app.route("/admin/system/cloud_backup/reset_manifest", methods=["POST"])
+@admin_required
+@system_device_required
+def system_cloud_backup_reset_manifest():
+    """Clears local backup tracking (cloud_backup.reset_manifest()) so the
+    next sync reconciles fresh against whatever Drive actually has --
+    adopting real existing files instead of blindly re-uploading the whole
+    catalog. The manual escape hatch for when an admin already suspects
+    local tracking has drifted from Drive's real state and doesn't want to
+    wait for a scheduled run to discover and fix it on its own."""
+    result = cloud_backup.reset_manifest()
+    if not result.get("ok"):
+        return jsonify(result), 409
+    return jsonify(result)
 
 
 @app.route("/admin/system/cloud_backup/auth_status")

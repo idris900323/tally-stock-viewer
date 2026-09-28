@@ -4088,6 +4088,12 @@ async function loadAllItemsForCategoryAssign(car) {
             document.getElementById("selectedCarName").textContent = stripShelfCodeForDisplay(car);
             list.innerHTML = items.map((item, index) => renderDesignItem(item, index)).join("");
             document.getElementById("designCount").textContent = `Total: ${items.length} items (all stock, including zero-qty and unmapped)`;
+        } else if (!Array.isArray(items) && items && items.not_loaded_yet) {
+            // Distinct from "this car genuinely has zero items" (still the
+            // plain empty-state below) -- no car data has been pushed by
+            // the feeder yet at all, so say that plainly instead of
+            // looking like every car is just empty.
+            list.innerHTML = `<li><div class="empty-state">${escapeHtml(items.message || "No car data loaded yet.")}</div></li>`;
         } else {
             list.innerHTML = '<li><div class="empty-state">No items found for this car.</div></li>';
         }

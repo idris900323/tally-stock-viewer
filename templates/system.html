@@ -443,19 +443,23 @@
         <table class="kv-table">
             <tr><td>Authorization</td><td id="cloudBackupAuthStatus">Checking...</td></tr>
             <tr><td>Last sync</td><td id="cloudBackupLastSync">-</td></tr>
+            <tr><td>Next scheduled backup</td><td id="cloudBackupNextScheduled">-</td></tr>
             <tr><td>Last run result</td><td id="cloudBackupLastResult">-</td></tr>
             <tr><td>Added / Updated / Deleted / Skipped</td><td id="cloudBackupCounts">-</td></tr>
             <tr><td>Currently backed up</td><td id="cloudBackupTotals">-</td></tr>
+            <tr><td>Last reconciliation</td><td id="cloudBackupReconciliation">-</td></tr>
         </table>
         <div class="actions" style="margin-top:12px;">
             <button class="secondary" id="cloudBackupAuthBtn" onclick="authorizeCloudBackup()" title="One-time browser consent step authorizing this app against the dedicated Google account's own Drive. Opens a browser -- only needs to be done once (or again if access is later revoked).">Authorize Google Drive</button>
             <button class="primary" id="cloudBackupSyncBtn" onclick="cloudBackupSyncNow()" title="Runs an out-of-schedule incremental sync right now.">Sync Now</button>
             <button class="danger-outline" id="cloudBackupStopBtn" onclick="stopCloudBackupSync()" style="display:none;" title="Stops the running sync cleanly at its next safe checkpoint. Already-completed items stay backed up; the rest resumes on the next sync.">Stop Sync</button>
             <button class="secondary" onclick="loadCloudBackupStatus(); loadCloudBackupAuthStatus();" title="Reload the current status without triggering a sync">Refresh Status</button>
+            <button class="danger-outline" onclick="resetCloudBackupManifest()" title="Clears local backup tracking only -- nothing on Drive is touched or deleted. The next sync reconciles fresh against what Drive actually has, adopting real existing files instead of re-uploading them.">Reset Backup Tracking</button>
         </div>
         <p class="muted" id="cloudBackupProgressSummary" style="display:none; margin-top:8px;" role="status" aria-live="polite"></p>
         <div class="output-box" id="cloudBackupLog" style="display:none;"></div>
         <div class="notice warn" id="cloudBackupSkipped" style="display:none;"></div>
+        <div class="notice warn" id="cloudBackupDuplicates" style="display:none;"></div>
         <div class="notice error" id="cloudBackupAuthError" style="display:none;"></div>
         <div class="notice error" id="cloudBackupDiscrepancy" style="display:none;"></div>
         <div class="notice error" id="cloudBackupError" style="display:none;"></div>
@@ -819,6 +823,31 @@ async function clearBadgeCache() {
     }
 }
 
+async function resetCloudBackupManifest() {
+    if (!confirm(
+        "Clear local backup tracking? This only affects what THIS app believes is already on Drive -- " +
+        "nothing on Drive itself is touched or deleted. The next sync will re-check every file against " +
+        "Drive's real contents, adopting existing files it finds instead of re-uploading them, which can " +
+        "take longer than a normal incremental sync. Use this if you suspect local tracking and Drive " +
+        "have drifted apart (e.g. after restoring an old manifest, or someone changing files on Drive by hand)."
+    )) {
+        return;
+    }
+
+    const errorEl = document.getElementById("cloudBackupError");
+    errorEl.style.display = "none";
+    try {
+        const data = await fetchJson("/admin/system/cloud_backup/reset_manifest", { method: "POST" });
+        if (data.ok) {
+            alert("Backup tracking cleared. The next sync will reconcile fresh against Drive.");
+            loadCloudBackupStatus();
+        }
+    } catch (error) {
+        errorEl.textContent = error.message;
+        errorEl.style.display = "block";
+    }
+}
+
 function formatCloudBackupTimestamp(isoString) {
     if (!isoString) return "-";
     try {
@@ -848,12 +877,14 @@ function renderCloudBackupSkipped(skippedRuns) {
 async function loadCloudBackupStatus() {
     const badge = document.getElementById("cloudBackupBadge");
     const discrepancyEl = document.getElementById("cloudBackupDiscrepancy");
+    const duplicatesEl = document.getElementById("cloudBackupDuplicates");
     const errorEl = document.getElementById("cloudBackupError");
     const syncBtn = document.getElementById("cloudBackupSyncBtn");
     const stopBtn = document.getElementById("cloudBackupStopBtn");
     const summaryEl = document.getElementById("cloudBackupProgressSummary");
     const logEl = document.getElementById("cloudBackupLog");
     discrepancyEl.style.display = "none";
+    duplicatesEl.style.display = "none";
     errorEl.style.display = "none";
 
     try {
@@ -862,6 +893,7 @@ async function loadCloudBackupStatus() {
         if (!data.configured) {
             setBadge(badge, "Not configured", "muted");
             document.getElementById("cloudBackupLastSync").textContent = "-";
+            document.getElementById("cloudBackupNextScheduled").textContent = "-";
             document.getElementById("cloudBackupLastResult").textContent = "Set GDRIVE_OAUTH_CLIENT_SECRETS_PATH, GDRIVE_OAUTH_TOKEN_PATH, and GDRIVE_BACKUP_FOLDER_ID in .env to enable.";
             document.getElementById("cloudBackupCounts").textContent = "-";
             document.getElementById("cloudBackupTotals").textContent = "-";
@@ -881,6 +913,15 @@ async function loadCloudBackupStatus() {
         // here, before the last_run branching below, so it shows even
         // when there's no last_run at all yet.
         renderCloudBackupSkipped(data.skipped_runs || []);
+
+        // Independent of whether a run has ever completed -- the fixed
+        // daily IST slot (or, rarely, a one-time catch-up run) is scheduled
+        // from process startup regardless (see cloud_backup.schedule()).
+        // The timestamp is a naive UTC-convention ISO string, same as every
+        // other timestamp this panel renders -- formatCloudBackupTimestamp()
+        // (-> formatIST() in shared.js) converts it to IST for display.
+        document.getElementById("cloudBackupNextScheduled").textContent =
+            data.next_scheduled_backup ? `${formatCloudBackupTimestamp(data.next_scheduled_backup)} IST` : "Not scheduled";
 
         // Disabled state always follows the server's "running" flag (not
         // just the click handler) so a page refresh mid-sync still shows
@@ -920,6 +961,7 @@ async function loadCloudBackupStatus() {
             document.getElementById("cloudBackupLastResult").textContent = "-";
             document.getElementById("cloudBackupCounts").textContent = "-";
             document.getElementById("cloudBackupTotals").textContent = "-";
+            document.getElementById("cloudBackupReconciliation").textContent = "-";
             return data;
         }
 
@@ -949,6 +991,32 @@ async function loadCloudBackupStatus() {
             if (!verification.ok) {
                 discrepancyEl.textContent = `Verification mismatch: ${verification.discrepancy}`;
                 discrepancyEl.style.display = "block";
+            }
+        } else {
+            document.getElementById("cloudBackupTotals").textContent = "Not verified this run -- see Last run result";
+        }
+
+        // Reconciliation (Part 1-4): what this run's one Drive listing found
+        // and fixed BEFORE uploading anything -- dropped stale manifest
+        // entries (Drive-side file gone), adopted existing Drive files
+        // instead of re-uploading duplicates, and any same-path duplicates
+        // already on Drive (reported only, never deleted automatically).
+        const reconciliation = run.reconciliation;
+        const reconEl = document.getElementById("cloudBackupReconciliation");
+        if (!reconciliation) {
+            reconEl.textContent = "Skipped this run (Drive listing failed -- see Last run result)";
+        } else {
+            reconEl.textContent =
+                `${reconciliation.dropped} stale entr${reconciliation.dropped === 1 ? "y" : "ies"} dropped, ` +
+                `${reconciliation.adopted} existing Drive file${reconciliation.adopted === 1 ? "" : "s"} adopted, ` +
+                `${reconciliation.duplicates.length} duplicate path${reconciliation.duplicates.length === 1 ? "" : "s"} found`;
+            if (reconciliation.duplicates.length) {
+                const rows = reconciliation.duplicates.slice(0, 20).map(dup =>
+                    `<div class="dup-row">${escapeHtml(dup.relative_path)} -- kept 1, ${dup.duplicate_drive_file_ids.length} extra cop${dup.duplicate_drive_file_ids.length === 1 ? "y" : "ies"} on Drive (not deleted)</div>`
+                ).join("");
+                const more = reconciliation.duplicates.length > 20 ? `<p class="muted">...and ${reconciliation.duplicates.length - 20} more.</p>` : "";
+                duplicatesEl.innerHTML = `<strong>${reconciliation.duplicates.length} duplicate path${reconciliation.duplicates.length === 1 ? "" : "s"} on Drive</strong> (reported only -- nothing was deleted; clean these up by hand on Drive if you want to):<br>` + rows + more;
+                duplicatesEl.style.display = "block";
             }
         }
         return data;

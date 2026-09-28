@@ -33,7 +33,7 @@ import os
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, time as dt_time
 
 from config import Config
 
@@ -74,6 +74,7 @@ _last_call_lock = threading.Lock()
 _status = {
     "running": False,
     "last_run": None,  # filled after first run: dict, see _build_run_summary()
+    "last_success_at": None,  # ISO timestamp of the last run whose status was "success" -- distinct from last_run, which can be a more recent failed/partial attempt. Drives the nightly scheduler's catch-up rule (see schedule()).
 }
 _status_lock = threading.Lock()
 
@@ -106,7 +107,13 @@ def _save_persisted_status():
         last_run_snapshot = dict(_status["last_run"]) if _status["last_run"] else None
     with _skipped_runs_lock:
         skipped_runs_snapshot = list(_skipped_runs)
-    payload = {"last_run": last_run_snapshot, "skipped_runs": skipped_runs_snapshot}
+    with _status_lock:
+        last_success_at_snapshot = _status.get("last_success_at")
+    payload = {
+        "last_run": last_run_snapshot,
+        "skipped_runs": skipped_runs_snapshot,
+        "last_success_at": last_success_at_snapshot,
+    }
     try:
         with _persisted_status_lock:
             os.makedirs(DATA_DIR, exist_ok=True)
@@ -134,6 +141,7 @@ def _load_persisted_status():
         return
     with _status_lock:
         _status["last_run"] = data.get("last_run")
+        _status["last_success_at"] = data.get("last_success_at")
     with _skipped_runs_lock:
         skipped = data.get("skipped_runs")
         if isinstance(skipped, list):
@@ -297,6 +305,7 @@ def get_status():
     snapshot["configured"] = is_configured()
     snapshot["progress"] = get_progress()
     snapshot["skipped_runs"] = get_skipped_runs()
+    snapshot["next_scheduled_backup"] = get_next_scheduled_backup_iso()
     return snapshot
 
 
@@ -856,90 +865,241 @@ def _get_thread_local_drive_service():
     return service
 
 
-def _list_one_folder(folder_id):
-    """Lists every direct child of one folder (all pages). Returns
-    (file_count, total_size, subfolder_ids) for just this folder's
-    immediate children -- recursion is orchestrated by the caller so
-    sibling folders can be dispatched concurrently instead of one at a
-    time. Uses a thread-local service (see above), still through
-    call_with_backoff for the same per-call retry/backoff behavior as
-    every other Drive API call in this module."""
+def _list_one_folder_entries(folder_id, relative_dir):
+    """Lists every direct child of one folder (all pages) -- both the file
+    entries at this level (each tagged with its full relative path, so the
+    caller never needs a second pass to reconstruct it) and the immediate
+    subfolders to recurse into. Uses a thread-local service (see above),
+    still through call_with_backoff for the same per-call retry/backoff
+    behavior as every other Drive API call in this module.
+
+    Requests id/size/md5Checksum/createdTime (not just id/mimeType/size
+    like the old count-only listing) -- md5Checksum and createdTime are
+    what let reconciliation (below) tell a genuine content match from a
+    coincidence, and pick which of several same-path duplicates is the
+    original."""
     service = _get_thread_local_drive_service()
-    file_count = 0
-    total_size = 0
-    subfolder_ids = []
+    file_entries = []   # (relative_path, {id, size, md5, created_time})
+    subfolders = []     # (folder_id, relative_dir)
     page_token = None
     while True:
         response = call_with_backoff(
             lambda: service.files().list(
                 q=f"'{folder_id}' in parents and trashed = false",
-                fields="nextPageToken, files(id, mimeType, size)",
+                fields="nextPageToken, files(id, name, mimeType, size, md5Checksum, createdTime)",
                 pageSize=1000,
                 pageToken=page_token,
                 spaces="drive",
             )
         )
         for item in response.get("files", []):
+            name = item.get("name") or ""
+            child_path = f"{relative_dir}/{name}" if relative_dir else name
             if item.get("mimeType") == DRIVE_FOLDER_MIME_TYPE:
-                subfolder_ids.append(item["id"])
+                subfolders.append((item["id"], child_path))
             else:
-                file_count += 1
-                total_size += int(item.get("size") or 0)
+                file_entries.append((child_path, {
+                    "id": item["id"],
+                    "size": int(item.get("size") or 0),
+                    "md5": item.get("md5Checksum"),
+                    "created_time": item.get("createdTime") or "",
+                }))
         page_token = response.get("nextPageToken")
         if not page_token:
             break
-    return file_count, total_size, subfolder_ids
+    return file_entries, subfolders
 
 
-def _list_drive_files_recursive(service, root_folder_id):
-    """Real files.list against the target folder, walked recursively and
-    CONCURRENTLY (bounded to LIST_CONCURRENCY folders in flight at once).
-    Every folder is still listed exactly once and every file still counted
-    exactly once -- same guarantee as a sequential walk, only the dispatch
-    is concurrent, not what gets checked. Returns (file_count,
-    total_size_bytes). This is the ground truth Part 5 compares the
-    manifest's claims against.
+def _list_drive_tree(root_folder_id):
+    """ONE full recursive listing of the backup folder (Part 1), walked
+    concurrently (bounded to LIST_CONCURRENCY folders in flight) -- same
+    dispatch shape as the old count-only listing this replaces, every
+    folder still listed exactly once. Returns relative_path -> [ {id,
+    size, md5, created_time}, ... ]; a list per path, not a single dict,
+    because Drive allows more than one file with the same name in the same
+    folder -- real duplicates already on Drive that reconciliation has to
+    recognize rather than silently pick one of at random.
 
-    `service` is accepted for call-site compatibility with the rest of this
-    module (the apply phase's single-threaded calls all share it safely)
-    but isn't used directly here -- each worker thread builds its own via
-    _get_thread_local_drive_service() instead (see why above)."""
-    file_count = 0
-    total_size = 0
-    pending_folder_ids = {root_folder_id}
+    This single listing is reused for BOTH reconciliation and the run's
+    verification (see run_sync) instead of listing twice -- the old code
+    re-listed Drive from scratch again after every sync just to verify,
+    which for a large/duplicated folder (one real incident hit 16,000+
+    files) was real, avoidable, repeated work and part of what caused a
+    memory-limit crash during verification.
+
+    Raises on any listing failure (network, auth, quota -- after
+    call_with_backoff's own retries are exhausted). Callers decide what
+    "no usable listing this run" means for them; see run_sync, which skips
+    reconciliation and the projected verification below rather than
+    guessing from partial data."""
+    entries = {}
+    pending = {(root_folder_id, "")}
     in_flight = {}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=LIST_CONCURRENCY) as pool:
-        while pending_folder_ids or in_flight:
-            while pending_folder_ids and len(in_flight) < LIST_CONCURRENCY:
-                folder_id = pending_folder_ids.pop()
-                future = pool.submit(_list_one_folder, folder_id)
-                in_flight[future] = folder_id
+        while pending or in_flight:
+            while pending and len(in_flight) < LIST_CONCURRENCY:
+                folder_id, relative_dir = pending.pop()
+                future = pool.submit(_list_one_folder_entries, folder_id, relative_dir)
+                in_flight[future] = (folder_id, relative_dir)
 
             done, _pending = concurrent.futures.wait(in_flight.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
             for future in done:
                 in_flight.pop(future)
-                folder_file_count, folder_size, subfolder_ids = future.result()
-                file_count += folder_file_count
-                total_size += folder_size
-                pending_folder_ids.update(subfolder_ids)
+                file_entries, subfolders = future.result()
+                for relative_path, info in file_entries:
+                    entries.setdefault(relative_path, []).append(info)
+                pending.update(subfolders)
 
-    return file_count, total_size
+    return entries
 
 
-def _verify(service, manifest):
+def _canonicalize_drive_listing(drive_listing):
+    """Picks the oldest Drive file per relative path as the one
+    reconciliation and verification below treat as canonical, and reports
+    every extra (younger) file at that same path as a duplicate (Part 4)
+    -- never touched or deleted, just surfaced so an admin can clean them
+    up by hand if they want to. createdTime is an RFC3339 string, which
+    sorts correctly as plain text."""
+    canonical = {}
+    duplicates = []
+    for relative_path, drive_entries in drive_listing.items():
+        if len(drive_entries) > 1:
+            ordered = sorted(drive_entries, key=lambda entry: entry.get("created_time") or "")
+            canonical[relative_path] = ordered[0]
+            duplicates.append({
+                "relative_path": relative_path,
+                "kept_drive_file_id": ordered[0]["id"],
+                "duplicate_drive_file_ids": [entry["id"] for entry in ordered[1:]],
+            })
+        else:
+            canonical[relative_path] = drive_entries[0]
+    return canonical, duplicates
+
+
+def _reconcile_manifest_with_drive(manifest, current_files, drive_listing):
+    """Closes the two real drift directions a stale manifest can fall into
+    (see this module's docstring... actually see the two real incidents
+    that motivated this function):
+
+      (a) Drive already has files the manifest doesn't know about -- e.g.
+          a fresh/empty manifest pointed at an already-populated Drive
+          folder (a new deployment reusing an existing backup folder).
+          Without this, every one of those paths looks "new" to
+          classify_changes and gets uploaded a second time, creating real
+          duplicates on Drive (one real run went from an expected 8,044
+          files to 16,102).
+      (b) the manifest references Drive file ids that no longer exist --
+          the Drive folder was emptied, or files removed, by hand.
+          Without this, classify_changes trusts the stale manifest
+          entry's (size, mtime) and treats the file as unchanged forever,
+          so a sync never notices anything is wrong; only a fresh
+          verification listing caught it, after the fact, with nothing
+          done to actually fix it.
+
+    Only ever mutates manifest["files"] in memory -- the caller saves it.
+    Never deletes or modifies anything on Drive itself; a size mismatch is
+    handled by updating that file in place next (via the existing
+    drive_file_id, see _upload_or_update_file's own "update over create"
+    preference), never by creating a second copy."""
+    manifest_files = manifest.setdefault("files", {})
+    canonical, duplicates = _canonicalize_drive_listing(drive_listing)
+
+    # (b) manifest -> Drive: drop any manifest entry whose recorded Drive
+    # file id isn't present ANYWHERE in the current listing (a file id is
+    # globally unique, not just meaningful at its own path) -- classify_
+    # changes then sees no entry at all and correctly treats it as new.
+    all_known_drive_ids = {entry["id"] for entries in drive_listing.values() for entry in entries}
+    dropped = 0
+    for relative_path in list(manifest_files.keys()):
+        drive_file_id = manifest_files[relative_path].get("drive_file_id")
+        if drive_file_id and drive_file_id not in all_known_drive_ids:
+            del manifest_files[relative_path]
+            dropped += 1
+
+    # (a) Drive -> manifest: for every path Drive already has that isn't
+    # currently tracked (never was, or step (b) just dropped it) AND that
+    # corresponds to a real local file we're actually backing up right
+    # now, adopt the canonical Drive copy instead of re-uploading.
+    #
+    # Deliberately skipped when there's no matching local file: adopting
+    # it would hand that path straight to the existing deleted_paths logic
+    # on the very next run (anything in the manifest but not in
+    # current_files gets deleted from Drive) -- silently turning an
+    # unexplained Drive-only file into an automatic deletion, which this
+    # fix explicitly must never do.
+    adopted = 0
+    for relative_path, drive_info in canonical.items():
+        if relative_path in manifest_files or relative_path not in current_files:
+            continue
+        try:
+            local_size, local_mtime_ns = _file_stat_signature(current_files[relative_path])
+        except OSError:
+            continue
+
+        if drive_info["size"] == local_size:
+            # Matches on size (md5 too, recorded for a future ambiguous
+            # same-size/different-mtime check when Drive returned one) --
+            # safe to mark unchanged outright, using the real local mtime
+            # so classify_changes' fast path accepts it immediately
+            # instead of hashing this file on this and every future run.
+            entry = {"drive_file_id": drive_info["id"], "size": drive_info["size"], "mtime_ns": local_mtime_ns}
+            if drive_info.get("md5"):
+                entry["hash"] = drive_info["md5"]
+        else:
+            # Sizes differ -- genuinely out of date on one side. Recording
+            # DRIVE's size (not local) here is what makes classify_changes
+            # detect this as "changed" against the real local file on its
+            # very next comparison; the apply phase's _upload_or_update_
+            # file() already prefers an in-place update over a fresh
+            # create whenever entry["drive_file_id"] is set, so this
+            # becomes an update, never a second copy, with no changes
+            # needed there at all. mtime_ns is set to a value no real
+            # os.stat() can ever produce so it's never mistaken for a
+            # real match.
+            entry = {"drive_file_id": drive_info["id"], "size": drive_info["size"], "mtime_ns": -1}
+        manifest_files[relative_path] = entry
+        adopted += 1
+
+    return {"dropped": dropped, "adopted": adopted, "duplicates": duplicates}
+
+
+def _verify_from_listing(drive_listing, manifest, uploaded_paths, updated_paths, deleted_paths):
+    """Builds this run's verification from the ALREADY-fetched pre-sync
+    listing (Part 1 -- the same one reconciliation used above), projected
+    forward by exactly the operations this run actually performed, instead
+    of a second full recursive Drive listing. One listing per run, reused
+    for both jobs, is the whole point of Part 1 -- see _list_drive_tree's
+    docstring for the incident this avoids repeating.
+
+    Only reasons about paths this run actually touched (successfully --
+    uploaded_paths/updated_paths/deleted_paths are the post-success lists
+    the caller built, not the pre-attempt ones); anything neither touched
+    nor already reconciled keeps its pre-sync canonical entry, which is
+    exactly correct since nothing happened to it this run."""
+    canonical, _duplicates = _canonicalize_drive_listing(drive_listing)
+    projected = dict(canonical)
+
     manifest_files = manifest.get("files", {})
+    for relative_path in uploaded_paths + updated_paths:
+        entry = manifest_files.get(relative_path)
+        if entry:
+            projected[relative_path] = {"id": entry.get("drive_file_id"), "size": entry.get("size", 0)}
+    for relative_path in deleted_paths:
+        projected.pop(relative_path, None)
+
     manifest_count = len(manifest_files)
     manifest_size = sum(entry.get("size", 0) for entry in manifest_files.values())
-
-    drive_count, drive_size = _list_drive_files_recursive(service, Config.GDRIVE_BACKUP_FOLDER_ID)
+    drive_count = len(projected)
+    drive_size = sum(entry.get("size", 0) for entry in projected.values())
 
     ok = (drive_count == manifest_count) and (drive_size == manifest_size)
     discrepancy = None
     if not ok:
         discrepancy = (
             f"Manifest claims {manifest_count} file(s) / {manifest_size} bytes, "
-            f"but Drive actually has {drive_count} file(s) / {drive_size} bytes."
+            f"but Drive is projected to actually have {drive_count} file(s) / {drive_size} bytes "
+            f"(projected from this run's own listing + operations, not a second live check)."
         )
         logger.warning("Cloud backup verification MISMATCH: %s", discrepancy)
     else:
@@ -952,14 +1112,39 @@ def _verify(service, manifest):
         "drive_file_count": drive_count,
         "drive_total_size_bytes": drive_size,
         "discrepancy": discrepancy,
+        "method": "projected_from_initial_listing",
     }
+
+
+def reset_manifest():
+    """Admin action (Part 6): clears the local manifest entirely, so the
+    NEXT sync starts from zero local tracking and reconciles fresh against
+    whatever Drive actually has (adopting real existing files instead of
+    re-uploading them -- see _reconcile_manifest_with_drive above) rather
+    than uploading the whole catalog again. The manual escape hatch for
+    when an admin already knows local tracking has drifted and doesn't
+    want to wait for a scheduled run to discover it.
+
+    Refuses while a sync is actively running, same acquire-in-caller /
+    release-in-finally convention as SYNC_LOCK everywhere else in this
+    module -- clearing the manifest out from under an in-flight sync would
+    race its own save_manifest() calls and could resurrect entries the
+    sync had already dropped."""
+    if not SYNC_LOCK.acquire(blocking=False):
+        return {"ok": False, "error": "A sync is currently running -- wait for it to finish first."}
+    try:
+        save_manifest(_empty_manifest())
+        logger.info("Cloud backup: manifest reset to empty by admin action")
+        return {"ok": True}
+    finally:
+        SYNC_LOCK.release()
 
 
 # ---------------------------------------------------------------------------
 # Sync run (Parts 3-5)
 # ---------------------------------------------------------------------------
 
-def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skipped=0, error=None, verification=None, phase_timing=None):
+def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skipped=0, error=None, verification=None, phase_timing=None, reconciliation=None):
     return {
         "started_at": started_at,
         "finished_at": datetime.now().isoformat(),
@@ -971,6 +1156,7 @@ def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skippe
         "error": error,
         "verification": verification,
         "phase_timing": phase_timing,
+        "reconciliation": reconciliation,  # {dropped, adopted, duplicates: [...]} | None (listing failed/skipped)
     }
 
 
@@ -1018,14 +1204,41 @@ def run_sync(triggered_by="schedule"):
         manifest = load_manifest()
 
         # Phase timing (Part 7): logged separately so a slow run's actual
-        # bottleneck is visible without guessing -- change detection is
-        # local disk I/O (stat every included file), the apply phase is
-        # real Drive API calls for only what actually changed, verification
-        # is a fresh recursive Drive listing regardless of how few files
-        # changed. These can have very different costs at real scale.
-        phase_started = time.monotonic()
-
+        # bottleneck is visible without guessing. listing is the one real
+        # recursive Drive walk (Part 1, reused below for both reconciliation
+        # and verification -- see _list_drive_tree's docstring); change
+        # detection is local disk I/O (stat every included file); apply is
+        # real Drive API calls for only what actually changed. These can
+        # have very different costs at real scale.
         current_files = dict(_iter_included_files())
+
+        phase_started = time.monotonic()
+        reconciliation = None
+        listing_error = None
+        drive_listing = None
+        try:
+            drive_listing = _list_drive_tree(Config.GDRIVE_BACKUP_FOLDER_ID)
+        except Exception as exc:
+            listing_error = _short_error_text(exc)
+            logger.exception(
+                "Cloud backup: initial Drive listing failed -- skipping reconciliation and "
+                "projected verification this run (sync itself still proceeds against the "
+                "manifest as-is)"
+            )
+        listing_seconds = time.monotonic() - phase_started
+
+        if drive_listing is not None:
+            reconciliation = _reconcile_manifest_with_drive(manifest, current_files, drive_listing)
+            save_manifest(manifest)
+            logger.info(
+                "Cloud backup: reconciliation dropped %s stale manifest entr(ies), adopted %s "
+                "existing Drive file(s) instead of re-uploading, found %s duplicate path(s) on "
+                "Drive (reported only -- nothing deleted) (listing took %.2fs)",
+                reconciliation["dropped"], reconciliation["adopted"], len(reconciliation["duplicates"]),
+                listing_seconds,
+            )
+
+        phase_started = time.monotonic()
         new_paths, changed_paths, deleted_paths, unchanged_count, computed_hashes = classify_changes(
             manifest, current_files
         )
@@ -1042,6 +1255,9 @@ def run_sync(triggered_by="schedule"):
         _progress_reset(len(deleted_paths) + len(new_paths) + len(changed_paths), unchanged_count)
 
         phase_started = time.monotonic()
+        uploaded_ok = []
+        updated_ok = []
+        deleted_ok = []
 
         for relative_path in deleted_paths:
             if _cancel_event.is_set():
@@ -1051,6 +1267,7 @@ def run_sync(triggered_by="schedule"):
             try:
                 _delete_file(service, manifest, relative_path)
                 deleted_count += 1
+                deleted_ok.append(relative_path)
                 _progress_finish_item("deleted")
             except Exception as exc:
                 logger.exception("Cloud backup: failed to delete %s from Drive", relative_path)
@@ -1069,6 +1286,7 @@ def run_sync(triggered_by="schedule"):
             try:
                 _upload_or_update_file(service, manifest, relative_path, current_files[relative_path])
                 added += 1
+                uploaded_ok.append(relative_path)
                 _progress_finish_item("uploaded")
             except Exception as exc:
                 logger.exception("Cloud backup: failed to upload %s", relative_path)
@@ -1090,6 +1308,7 @@ def run_sync(triggered_by="schedule"):
                     content_hash=computed_hashes.get(relative_path),
                 )
                 updated += 1
+                updated_ok.append(relative_path)
                 _progress_finish_item("updated")
             except Exception as exc:
                 logger.exception("Cloud backup: failed to update %s", relative_path)
@@ -1107,9 +1326,17 @@ def run_sync(triggered_by="schedule"):
             logger.info("Cloud backup sync stopped by request (triggered_by=%s)", triggered_by)
         else:
             phase_started = time.monotonic()
-            verification = _verify(service, manifest)
+            if drive_listing is not None:
+                verification = _verify_from_listing(drive_listing, manifest, uploaded_ok, updated_ok, deleted_ok)
             verification_seconds = time.monotonic() - phase_started
             if errors:
+                status = "partial"
+            elif verification is None:
+                # Listing failed up front -- honest about not actually
+                # knowing whether Drive matches, rather than claiming
+                # "success" on faith the way the old code effectively did
+                # whenever its own fresh verification listing happened to
+                # fail (it just left `errors` empty and reported "success").
                 status = "partial"
             elif not verification["ok"]:
                 status = "partial"
@@ -1120,21 +1347,23 @@ def run_sync(triggered_by="schedule"):
                 status, verification_seconds,
             )
         logger.info(
-            "Cloud backup: phase timing -- change_detection=%.2fs apply=%.2fs verification=%.2fs total=%.2fs",
-            change_detection_seconds, apply_seconds, verification_seconds,
-            change_detection_seconds + apply_seconds + verification_seconds,
+            "Cloud backup: phase timing -- listing=%.2fs change_detection=%.2fs apply=%.2fs verification=%.2fs total=%.2fs",
+            listing_seconds, change_detection_seconds, apply_seconds, verification_seconds,
+            listing_seconds + change_detection_seconds + apply_seconds + verification_seconds,
         )
 
         summary = _build_run_summary(
             started_at, status,
             added=added, updated=updated, deleted=deleted_count, skipped=unchanged_count,
-            error="; ".join(errors) if errors else None,
+            error="; ".join(errors) if errors else (f"Drive listing failed: {listing_error}" if listing_error else None),
             verification=verification,
             phase_timing={
+                "listing_seconds": round(listing_seconds, 2),
                 "change_detection_seconds": round(change_detection_seconds, 2),
                 "apply_seconds": round(apply_seconds, 2),
                 "verification_seconds": round(verification_seconds, 2),
             },
+            reconciliation=reconciliation,
         )
     except NotAuthorizedError as exc:
         # build_drive_service() never opens a browser itself (see
@@ -1158,6 +1387,8 @@ def run_sync(triggered_by="schedule"):
         with _status_lock:
             _status["running"] = False
             _status["last_run"] = summary
+            if summary and summary.get("status") == "success":
+                _status["last_success_at"] = summary["finished_at"]
         _save_persisted_status()
         _progress_stop()
         _cancel_event.clear()
@@ -1166,42 +1397,208 @@ def run_sync(triggered_by="schedule"):
 
 
 # ---------------------------------------------------------------------------
-# Scheduling (Part 6) -- same self-rescheduling threading.Timer pattern as
-# app.py's schedule_item_export().
+# Scheduling -- fixed daily IST slot (Config.CLOUD_BACKUP_DAILY_TIME,
+# default "02:00"), replacing the old "run shortly after startup, then
+# every CLOUD_BACKUP_INTERVAL seconds" behavior. CLOUD_BACKUP_INTERVAL is
+# now only a fallback, used when CLOUD_BACKUP_DAILY_TIME is unset or
+# unparseable (see _schedule_interval_fallback()).
+#
+# IST is a fixed UTC+5:30 offset applied by hand (IST_OFFSET below), not a
+# real tz-database lookup -- this codebase already treats every naive
+# datetime.now() as UTC by convention (see formatIST() in static/shared.js:
+# it reads a naive ISO timestamp as UTC and renders it in Asia/Kolkata),
+# which only works because both deployment targets (Render's container,
+# and the office PC) keep their system clock on UTC. _now() below is a
+# clearly-named alias for that same convention, not a real conversion --
+# and the one seam the scheduling-math tests monkeypatch to simulate
+# arbitrary restart times without waiting on real threading.Timer delays.
 # ---------------------------------------------------------------------------
 
-def schedule(initial_delay=0):
-    """First run fires after initial_delay; every run after that reschedules
-    itself CLOUD_BACKUP_INTERVAL seconds later (measured from when the run
-    finishes, same as schedule_item_export)."""
-    global _timer
+IST_OFFSET = timedelta(hours=5, minutes=30)
+CATCHUP_STALE_THRESHOLD = timedelta(hours=30)
+CATCHUP_DELAY_SECONDS = 10 * 60
+CATCHUP_WINDOW_START = dt_time(20, 0)  # 20:00 IST
+CATCHUP_WINDOW_END = dt_time(7, 0)  # 07:00 IST (window wraps past midnight)
 
-    if not is_configured():
-        _log_not_configured_once()
-        return
+_next_scheduled_run_utc = None  # what get_next_scheduled_backup_iso() reports
+
+
+def _now():
+    return datetime.now()
+
+
+def _to_ist(dt_utc):
+    return dt_utc + IST_OFFSET
+
+
+def _to_utc(dt_ist):
+    return dt_ist - IST_OFFSET
+
+
+def _parse_daily_time(value):
+    """"HH:MM" -> datetime.time, or None if unset/blank/malformed (callers
+    fall back to the legacy CLOUD_BACKUP_INTERVAL behavior in that case)."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    parts = value.split(":")
+    try:
+        if len(parts) != 2:
+            raise ValueError("expected HH:MM")
+        return dt_time(int(parts[0]), int(parts[1]))
+    except ValueError:
+        logger.warning(
+            "Invalid CLOUD_BACKUP_DAILY_TIME=%r (expected HH:MM) -- falling back to CLOUD_BACKUP_INTERVAL",
+            value,
+        )
+        return None
+
+
+def _next_daily_slot_utc(now_utc, slot_time_ist):
+    """The next occurrence of slot_time_ist (a datetime.time, IST) strictly
+    after now_utc, as a naive UTC-convention datetime."""
+    now_ist = _to_ist(now_utc)
+    candidate_ist = datetime.combine(now_ist.date(), slot_time_ist)
+    if candidate_ist <= now_ist:
+        candidate_ist += timedelta(days=1)
+    return _to_utc(candidate_ist)
+
+
+def _in_catchup_window(now_ist):
+    """20:00-07:00 IST, wrapping past midnight."""
+    t = now_ist.time()
+    return t >= CATCHUP_WINDOW_START or t < CATCHUP_WINDOW_END
+
+
+def _is_last_success_stale(now_utc, last_success_at_iso):
+    if not last_success_at_iso:
+        return True
+    try:
+        last_success_dt = datetime.fromisoformat(last_success_at_iso)
+    except ValueError:
+        return True
+    return (now_utc - last_success_dt) > CATCHUP_STALE_THRESHOLD
+
+
+def _compute_startup_plan(now_utc, last_success_at_iso, slot_time_ist):
+    """Startup-only decision (see schedule()): whether to do the one-time
+    catch-up run or just wait for the next normal daily slot. A pure
+    function of (now, last_success_at, slot_time) so the scheduling MATH is
+    directly unit-testable against a fake clock -- see
+    scripts/verify_cloud_backup_schedule.py -- without waiting on real
+    threading.Timer delays. Returns (delay_seconds, kind, next_slot_utc)
+    where kind is "catchup" or "slot"."""
+    next_slot_utc = _next_daily_slot_utc(now_utc, slot_time_ist)
+    if _is_last_success_stale(now_utc, last_success_at_iso) and _in_catchup_window(_to_ist(now_utc)):
+        return (float(CATCHUP_DELAY_SECONDS), "catchup", next_slot_utc)
+    return (max(0.0, (next_slot_utc - now_utc).total_seconds()), "slot", next_slot_utc)
+
+
+def get_next_scheduled_backup_iso():
+    return _next_scheduled_run_utc.isoformat() if _next_scheduled_run_utc else None
+
+
+def _attempt_scheduled_run():
+    """Shared by both scheduling modes (daily-slot and the legacy interval
+    fallback): try run_sync(), respecting authorization and SYNC_LOCK,
+    recording a skip reason (never raising) if it can't run right now --
+    e.g. a slot landing while Sync Now (or the previous scheduled run) is
+    still in progress."""
+    if not is_authorized():
+        message = "Not yet authorized -- run 'Authorize Google Drive' once from the System panel"
+        logger.info("Skipping scheduled cloud backup -- %s", message)
+        _record_skipped_run("not_authorized", message)
+    elif not SYNC_LOCK.acquire(blocking=False):
+        message = "A sync was already running at the scheduled time"
+        logger.info("Skipping scheduled cloud backup -- %s", message)
+        _record_skipped_run("already_running", message)
+    else:
+        try:
+            run_sync(triggered_by="schedule")
+        except Exception:
+            logger.exception("Scheduled cloud backup run raised unexpectedly")
+        finally:
+            SYNC_LOCK.release()
+
+
+def _run_scheduled_job_once(slot_time_ist):
+    """Fires once per armed timer, for both the one-time startup catch-up
+    and every normal daily slot: attempt the run, then always reschedule
+    against the real NEXT daily slot -- the catch-up rule is a one-time
+    startup exception only (see schedule()), never re-evaluated here, so a
+    sync that keeps failing overnight can't busy-loop retrying every 10
+    minutes."""
+    global _timer, _next_scheduled_run_utc
+
+    _attempt_scheduled_run()
+
+    next_slot_utc = _next_daily_slot_utc(_now(), slot_time_ist)
+    _next_scheduled_run_utc = next_slot_utc
+    _timer = threading.Timer(max(0.0, (next_slot_utc - _now()).total_seconds()), lambda: _run_scheduled_job_once(slot_time_ist))
+    _timer.daemon = True
+    _timer.start()
+
+
+def _schedule_interval_fallback(initial_delay):
+    """Legacy behavior, used only when CLOUD_BACKUP_DAILY_TIME is unset or
+    invalid: run after initial_delay, then every CLOUD_BACKUP_INTERVAL
+    seconds after that (measured from when each run finishes, same as
+    schedule_item_export)."""
+    global _timer, _next_scheduled_run_utc
 
     def _job():
-        global _timer
-        if not is_authorized():
-            message = "Not yet authorized -- run 'Authorize Google Drive' once from the System panel"
-            logger.info("Skipping scheduled cloud backup -- %s", message)
-            _record_skipped_run("not_authorized", message)
-        elif not SYNC_LOCK.acquire(blocking=False):
-            message = "A sync was already running at the scheduled time"
-            logger.info("Skipping scheduled cloud backup -- %s", message)
-            _record_skipped_run("already_running", message)
-        else:
-            try:
-                run_sync(triggered_by="schedule")
-            except Exception:
-                logger.exception("Scheduled cloud backup run raised unexpectedly")
-            finally:
-                SYNC_LOCK.release()
+        global _timer, _next_scheduled_run_utc
+        _attempt_scheduled_run()
+        _next_scheduled_run_utc = _now() + timedelta(seconds=Config.CLOUD_BACKUP_INTERVAL)
         _timer = threading.Timer(Config.CLOUD_BACKUP_INTERVAL, _job)
         _timer.daemon = True
         _timer.start()
 
     delay = initial_delay if initial_delay and initial_delay > 0 else Config.CLOUD_BACKUP_INTERVAL
+    _next_scheduled_run_utc = _now() + timedelta(seconds=delay)
     _timer = threading.Timer(delay, _job)
+    _timer.daemon = True
+    _timer.start()
+
+
+def schedule(initial_delay=0):
+    """Startup entry point -- called once from app.py's startup routine.
+    NEVER runs a backup immediately: the daily-slot path only ever
+    schedules the next slot, and even the catch-up path (last success
+    stale AND currently 20:00-07:00 IST) waits 10 minutes rather than
+    firing at process-start instant. `initial_delay` only affects the
+    legacy CLOUD_BACKUP_INTERVAL fallback path -- the daily-slot path
+    ignores it, since "next slot" is always computed from the real current
+    time, not from whenever schedule() happened to be called."""
+    global _timer, _next_scheduled_run_utc
+
+    if not is_configured():
+        _log_not_configured_once()
+        return
+
+    slot_time_ist = _parse_daily_time(Config.CLOUD_BACKUP_DAILY_TIME)
+    if slot_time_ist is None:
+        _schedule_interval_fallback(initial_delay)
+        return
+
+    with _status_lock:
+        last_success_at_iso = _status.get("last_success_at")
+    delay, kind, next_slot_utc = _compute_startup_plan(_now(), last_success_at_iso, slot_time_ist)
+
+    if kind == "catchup":
+        logger.info(
+            "Cloud backup: last success is stale (or missing) and it's within the 20:00-07:00 IST catch-up "
+            "window -- running once in %d minutes; the normal %s IST daily schedule resumes right after.",
+            int(delay // 60), slot_time_ist.strftime("%H:%M"),
+        )
+        _next_scheduled_run_utc = _now() + timedelta(seconds=delay)
+    else:
+        logger.info(
+            "Cloud backup: next scheduled run at %s IST",
+            _to_ist(next_slot_utc).strftime("%Y-%m-%d %H:%M"),
+        )
+        _next_scheduled_run_utc = next_slot_utc
+
+    _timer = threading.Timer(delay, lambda: _run_scheduled_job_once(slot_time_ist))
     _timer.daemon = True
     _timer.start()
