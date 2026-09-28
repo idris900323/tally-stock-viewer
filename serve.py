@@ -53,9 +53,9 @@ print(f"[DIAGNOSTIC] About to bind waitress to host={host!r} port={port!r}", flu
 # fix whatever is actually accumulating open files/sockets in the first
 # place -- see get_resource_usage()/start_resource_monitor() in app.py for
 # the actual leak-finding instrumentation.
-# threads: lowered from 8 to 4 as part of the memory-leak follow-up
-# investigation -- each waitress worker thread can independently be
-# running a full-size (~3000x4000) share-image decode at once (see
+# threads: lowered from 8 to 4 (default) as part of the memory-leak
+# follow-up investigation -- each waitress worker thread can independently
+# be running a full-size (~3000x4000) share-image decode at once (see
 # _SHARE_IMAGE_BUILD_SEMAPHORE in app.py, which now caps that specific
 # work at 2 concurrent builds regardless of thread count), but every other
 # request type still gets a thread of its own to run in, and this container
@@ -63,7 +63,12 @@ print(f"[DIAGNOSTIC] About to bind waitress to host={host!r} port={port!r}", flu
 # Fewer threads means a smaller worst case across the OTHER (non-share-
 # image) endpoints too, at the cost of a slightly smaller ceiling on truly
 # concurrent unrelated requests -- a reasonable trade on a single small
-# instance that was getting OOM-killed under real daytime traffic.
-serve(app, host=host, port=port, threads=4, asyncore_use_poll=True)
+# instance that was getting OOM-killed under real daytime traffic. Made
+# configurable (WAITRESS_THREADS) rather than a second hardcoded value, so
+# this can be tuned per deployment (e.g. raised again if a future change to
+# the share-image semaphore's own wait behavior changes this trade-off)
+# without another code change.
+threads = int(os.environ.get("WAITRESS_THREADS", "4"))
+serve(app, host=host, port=port, threads=threads, asyncore_use_poll=True)
 
 print("[DIAGNOSTIC] serve() returned -- this should only happen if the server stopped", flush=True)
