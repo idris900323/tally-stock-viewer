@@ -19,7 +19,7 @@ run (with new/changed files added since) actually pushes anything.
 Needs these in the project's .env (see .env.example / MIGRATION_DAY_INSTRUCTIONS.md):
     RENDER_SSH_ADDRESS   e.g. srv-xxxxx@ssh.singapore.render.com (Connect tab)
     RENDER_DATA_DIR      Render disk data path (default: /opt/render/project/src/data)
-    RESCAN_TRIGGER_URL   e.g. https://tally-stock-viewer.onrender.com/admin/system/trigger_rescan
+    RESCAN_TRIGGER_URL   default: https://superseatings.carxone.com/admin/system/trigger_rescan
     RESCAN_TRIGGER_TOKEN same value as RESCAN_TRIGGER_TOKEN set on Render
 Local image folder defaults to IMAGE_SCAN_ROOT (same variable the app itself
 uses), or data/S.S IMAGE under the project root if that's unset.
@@ -62,7 +62,7 @@ MANIFEST_PATH = os.path.join(PROJECT_ROOT, "data", ".image_push_manifest.json")
 RENDER_SSH_ADDRESS = _env("RENDER_SSH_ADDRESS")
 RENDER_DATA_DIR = _env("RENDER_DATA_DIR", "/opt/render/project/src/data")
 REMOTE_ROOT = f"{RENDER_DATA_DIR.rstrip('/')}/{IMAGE_FOLDER_NAME}"
-RESCAN_TRIGGER_URL = _env("RESCAN_TRIGGER_URL")
+RESCAN_TRIGGER_URL = _env("RESCAN_TRIGGER_URL", "https://superseatings.carxone.com/admin/system/trigger_rescan")
 RESCAN_TRIGGER_TOKEN = _env("RESCAN_TRIGGER_TOKEN")
 MANIFEST_SAVE_EVERY = 20
 
