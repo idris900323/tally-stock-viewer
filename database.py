@@ -231,16 +231,32 @@ def _connect():
 
 @contextmanager
 def get_connection():
+    """Mirrors sqlite3.Connection's own context-manager behavior (commit on
+    a clean exit, rollback on an exception) and ALSO closes the connection
+    either way -- unlike `with conn:` (a bare sqlite3.Connection used
+    directly as its own context manager), whose __exit__ only commits/rolls
+    back and never closes, leaving the connection (and its OS-level file
+    descriptors) to be reclaimed only whenever CPython's refcounting or
+    cyclic GC happens to get around to it. Every call site in this file was
+    switched from `with _connect() as conn:` to `with get_connection() as
+    conn:` for exactly this reason -- see the leak investigation this
+    fixed. A caller that already does its own conn.commit() before this
+    generator resumes is unaffected: committing twice with nothing pending
+    is a no-op."""
     conn = _connect()
     try:
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
 
 def init_database():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute(
             """
@@ -761,7 +777,7 @@ def add_image(car_folder, filename, filepath):
     filepath = _validate_filepath(filepath)
     scan_date = datetime.now().isoformat(timespec="seconds")
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO images (car_folder, filename, filepath, scan_date)
@@ -798,7 +814,7 @@ def add_images_batch(records):
         return 0
 
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             conn.executemany(
                 """
                 INSERT INTO images (car_folder, filename, filepath, scan_date)
@@ -821,7 +837,7 @@ def add_mapping(image_id, stock_item_name, car_model, confidence, confirmed_by="
     confidence = _validate_confidence(confidence)
     created_at = datetime.now().isoformat(timespec="seconds")
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO mappings (image_id, stock_item_name, car_model, confidence, confirmed_by, created_at)
@@ -842,7 +858,7 @@ def add_mapping(image_id, stock_item_name, car_model, confidence, confirmed_by="
 
 def remove_mapping_by_image_id(image_id):
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM mappings WHERE image_id = ?",
                 (image_id,),
@@ -856,7 +872,7 @@ def remove_mapping_by_image_id(image_id):
 def add_folder_mapping(folder_name, car_model):
     created_at = datetime.now().isoformat(timespec="seconds")
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO folder_car_mapping (folder_name, car_model_name, created_at)
@@ -873,7 +889,7 @@ def add_folder_mapping(folder_name, car_model):
 
 
 def get_folder_car_model(folder_name):
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT folder_name, car_model_name, created_at FROM folder_car_mapping WHERE folder_name = ?",
             (folder_name,),
@@ -882,7 +898,7 @@ def get_folder_car_model(folder_name):
 
 
 def get_image_by_id(image_id):
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT id, car_folder, filename, filepath, scan_date FROM images WHERE id = ?",
             (image_id,),
@@ -891,7 +907,7 @@ def get_image_by_id(image_id):
 
 
 def get_mapping_by_image_id(image_id):
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             SELECT id, image_id, stock_item_name, car_model, confidence, confirmed_by, created_at
@@ -909,7 +925,7 @@ def remove_mappings_for_stock_item(stock_item_name, exclude_image_id=None):
     Used so a stock item is only ever mapped to a single image at a time.
     """
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             if exclude_image_id is not None:
                 cursor = conn.execute(
                     "DELETE FROM mappings WHERE LOWER(stock_item_name) = LOWER(?) AND image_id != ?",
@@ -927,7 +943,7 @@ def remove_mappings_for_stock_item(stock_item_name, exclude_image_id=None):
 
 
 def get_mapping_for_stock_item(stock_item_name):
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             SELECT
@@ -989,7 +1005,7 @@ def get_mappings_for_stock_items(stock_item_names):
         FROM mappings m
         JOIN images i ON i.id = m.image_id
     """
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(query).fetchall()
 
     result = {}
@@ -1009,7 +1025,7 @@ def get_mappings_for_stock_items(stock_item_names):
 def get_all_categories():
     """All categories in display order (Part 6's reorder controls change
     sort_order; this is the one place that order is read back)."""
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, name, sort_order, abbreviation FROM categories ORDER BY sort_order ASC, id ASC"
         ).fetchall()
@@ -1019,7 +1035,7 @@ def get_all_categories():
 def get_popup():
     """The active popup as {version, text, image} (image is a stored filename,
     '' when none), or None."""
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT version, text, image FROM popup_notice WHERE id = 1 AND active = 1"
         ).fetchone()
@@ -1030,7 +1046,7 @@ def publish_popup(text, image=""):
     """Replaces the popup (text and/or image) and bumps its version."""
     if not (text or image):
         raise ValueError("a popup needs text or an image")
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute(
             """
             UPDATE popup_notice
@@ -1046,18 +1062,18 @@ def publish_popup(text, image=""):
 def set_popup_image(image):
     """Swaps the stored image filename in place (no version bump) -- used to
     replace a temp upload name with its versioned one."""
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute("UPDATE popup_notice SET image = ? WHERE id = 1", (image,))
 
 
 def clear_popup():
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute("UPDATE popup_notice SET active = 0, text = '', image = '' WHERE id = 1")
 
 
 def get_banner():
     """The active banner as {version, text}, or None."""
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT version, text FROM banner_notice WHERE id = 1 AND active = 1"
         ).fetchone()
@@ -1067,7 +1083,7 @@ def get_banner():
 def publish_banner(text):
     if not text:
         raise ValueError("a banner needs text")
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute(
             """
             UPDATE banner_notice
@@ -1081,14 +1097,14 @@ def publish_banner(text):
 
 
 def clear_banner():
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute("UPDATE banner_notice SET active = 0, text = '' WHERE id = 1")
 
 
 def add_customer_report(car, car_key, details, reported_by=""):
     """Records a report unless the car already has an unresolved one.
     Returns True when a new row was created, False for a repeat."""
-    with _connect() as conn:
+    with get_connection() as conn:
         cursor = conn.execute(
             """
             INSERT OR IGNORE INTO customer_reports (car, car_key, details, reported_by, reported_at)
@@ -1100,7 +1116,7 @@ def add_customer_report(car, car_key, details, reported_by=""):
 
 
 def list_open_customer_reports():
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, car, details, reported_by, reported_at FROM customer_reports WHERE resolved = 0 ORDER BY id ASC"
         ).fetchall()
@@ -1109,7 +1125,7 @@ def list_open_customer_reports():
 
 def resolve_customer_report(report_id):
     """Marks one open report resolved. Returns False if it wasn't open."""
-    with _connect() as conn:
+    with get_connection() as conn:
         cursor = conn.execute(
             "UPDATE customer_reports SET resolved = 1, resolved_at = ? WHERE id = ? AND resolved = 0",
             (datetime.now().isoformat(timespec="seconds"), int(report_id)),
@@ -1121,7 +1137,7 @@ def category_exists(name):
     value = str(name or "").strip()
     if not value:
         return False
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT 1 FROM categories WHERE name = ? LIMIT 1", (value,)).fetchone()
     return row is not None
 
@@ -1130,7 +1146,7 @@ def get_category_by_name(name):
     value = str(name or "").strip()
     if not value:
         return None
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT id, name, sort_order, abbreviation FROM categories WHERE name = ? LIMIT 1", (value,)
         ).fetchone()
@@ -1146,7 +1162,7 @@ def find_category_by_name_ci(name, exclude_name=None):
     value = str(name or "").strip()
     if not value:
         return None
-    with _connect() as conn:
+    with get_connection() as conn:
         if exclude_name is not None:
             row = conn.execute(
                 "SELECT id, name, sort_order, abbreviation FROM categories WHERE LOWER(name) = LOWER(?) AND name != ? LIMIT 1",
@@ -1164,7 +1180,7 @@ def count_items_for_category(name):
     """How many design_categories rows are currently tagged with `name` --
     the affected-item count shown in the rename-merge and delete warnings
     (Part 3.2/3.3)."""
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS count FROM design_categories WHERE category = ?", (name,)
         ).fetchone()
@@ -1185,7 +1201,7 @@ def add_category(name):
 
     abbreviation = generate_category_abbreviation(value)
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             row = conn.execute("SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM categories").fetchone()
             next_order = int(row["max_order"] if row else -1) + 1
             cursor = conn.execute(
@@ -1304,7 +1320,7 @@ def update_category_abbreviation(name, abbreviation):
         raise ValueError("abbreviation is required")
     if len(abbr_value) > CATEGORY_ABBREVIATION_MAX_LENGTH:
         raise ValueError(f"abbreviation exceeds {CATEGORY_ABBREVIATION_MAX_LENGTH} characters")
-    with _connect() as conn:
+    with get_connection() as conn:
         cursor = conn.execute("UPDATE categories SET abbreviation = ? WHERE name = ?", (abbr_value, value))
         if cursor.rowcount == 0:
             raise ValueError(f"category '{value}' not found")
@@ -1364,7 +1380,7 @@ def upsert_design_category(stock_item_name, category, assigned_by):
 
     assigned_at = datetime.now().isoformat(timespec="seconds")
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO design_categories (stock_item_key, stock_item_name, category, assigned_at, assigned_by)
@@ -1386,7 +1402,7 @@ def get_category_for_stock_item(stock_item_name):
     key = normalize_lookup_key(stock_item_name)
     if not key:
         return None
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT category FROM design_categories WHERE stock_item_key = ?",
             (key,),
@@ -1404,7 +1420,7 @@ def remove_design_category(stock_item_name):
     if not key:
         return False
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             cursor = conn.execute("DELETE FROM design_categories WHERE stock_item_key = ?", (key,))
         return cursor.rowcount > 0
     except Exception:
@@ -1425,7 +1441,7 @@ def get_categories_for_stock_items(stock_item_names):
         return {}
 
     placeholders = ",".join("?" for _ in cleaned_keys)
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             f"SELECT stock_item_key, category FROM design_categories WHERE stock_item_key IN ({placeholders})",
             tuple(cleaned_keys),
@@ -1434,7 +1450,7 @@ def get_categories_for_stock_items(stock_item_names):
 
 
 def get_confirmed_mappings():
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT
@@ -1484,7 +1500,7 @@ def get_unmapped_images(limit=None):
     if limit is not None:
         query += " LIMIT ?"
         params.append(int(limit))
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_dict(row) for row in rows]
 
@@ -1522,7 +1538,7 @@ def get_unmapped_images_by_folder(folder_name, limit=None):
         query = query.strip() + " LIMIT ?"
         params.append(int(limit))
 
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_dict(row) for row in rows]
 
@@ -1568,7 +1584,7 @@ def get_images_by_folder(folder_name, limit=None):
         query = query.strip() + " LIMIT ?"
         params.append(int(limit))
 
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(query, params).fetchall()
     return [_row_to_dict(row) for row in rows]
 
@@ -1578,7 +1594,7 @@ def get_next_unmapped_image(after_image_id=None):
         rows = get_unmapped_images(limit=1)
         return rows[0] if rows else None
 
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             WITH ranked_unmapped AS (
@@ -1609,13 +1625,13 @@ def get_next_unmapped_image(after_image_id=None):
 
 
 def get_image_count():
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT COUNT(*) AS count FROM images").fetchone()
     return int(row["count"] if row else 0)
 
 
 def get_mapped_image_count():
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             SELECT COUNT(*) AS count
@@ -1628,13 +1644,13 @@ def get_mapped_image_count():
 
 
 def get_processed_image_count():
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT COUNT(*) AS count FROM mappings").fetchone()
     return int(row["count"] if row else 0)
 
 
 def get_mapping_stats():
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             SELECT
@@ -1661,7 +1677,7 @@ def get_mapping_stats():
 
 
 def get_all_images():
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             "SELECT id, car_folder, filename, filepath, scan_date FROM images ORDER BY id ASC"
         ).fetchall()
@@ -1678,7 +1694,7 @@ def get_all_images_with_link_status():
     "Confirmed" mirrors get_mapped_image_count()'s definition: a non-empty
     stock_item_name that isn't the '__UNMATCHABLE__' sentinel.
     """
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT
@@ -1711,7 +1727,7 @@ def get_stock_item_names_for_images(image_ids):
         return {}
 
     placeholders = ",".join("?" for _ in ids)
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             f"""
             SELECT image_id, stock_item_name
@@ -1731,7 +1747,7 @@ def get_stock_item_names_for_images(image_ids):
 
 
 def get_image_folders():
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT DISTINCT car_folder
@@ -1775,7 +1791,7 @@ def find_duplicate_image_rows():
 
     Read-only: does not delete or modify anything.
     """
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT
@@ -1839,7 +1855,7 @@ def remove_missing_image_rows(image_ids):
 
     placeholders = ",".join("?" for _ in ids)
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             mapping_row = conn.execute(
                 f"SELECT COUNT(*) AS count FROM mappings WHERE image_id IN ({placeholders})",
                 ids,
@@ -1862,7 +1878,7 @@ def authenticate_user(username, access_code):
     access_code_value = str(access_code or "").strip()
     if not username_value or not access_code_value:
         return None
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             """
             SELECT id, username, role, is_active
@@ -1876,7 +1892,7 @@ def authenticate_user(username, access_code):
 
 
 def update_last_login(user_id):
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute(
             "UPDATE users SET last_login = ? WHERE id = ?",
             (datetime.now().isoformat(timespec="seconds"), int(user_id)),
@@ -1884,7 +1900,7 @@ def update_last_login(user_id):
 
 
 def get_user_by_id(user_id):
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT id, username, role FROM users WHERE id = ?",
             (int(user_id),),
@@ -1905,7 +1921,7 @@ def create_customer_user(username, access_code):
         raise ValueError("access code is too long")
 
     try:
-        with _connect() as conn:
+        with get_connection() as conn:
             created_at = datetime.now().isoformat(timespec="seconds")
             cursor = conn.execute(
                 """
@@ -1925,7 +1941,7 @@ def log_account_action(user_id, action, performed_by):
     action_value = str(action or "").strip().lower()
     if not action_value:
         return
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute(
             """
             INSERT INTO account_logs (user_id, action, performed_by, timestamp)
@@ -1941,7 +1957,7 @@ def log_account_action(user_id, action, performed_by):
 
 
 def get_all_customers_with_details():
-    with _connect() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             """
             SELECT id, username, access_code, role, is_active, created_at, last_login
@@ -1955,7 +1971,7 @@ def get_all_customers_with_details():
 
 def toggle_customer_active_status(user_id):
     user_id_value = int(user_id)
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT id, username, role, is_active FROM users WHERE id = ?",
             (user_id_value,),
@@ -1974,7 +1990,7 @@ def toggle_customer_active_status(user_id):
 
 def set_all_customer_active_status(is_active):
     status_value = 1 if is_active else 0
-    with _connect() as conn:
+    with get_connection() as conn:
         cursor = conn.execute(
             "UPDATE users SET is_active = ? WHERE role = 'customer'",
             (status_value,),
@@ -1984,7 +2000,7 @@ def set_all_customer_active_status(is_active):
 
 def delete_customer_user(user_id):
     user_id_value = int(user_id)
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute(
             "SELECT id, username, role FROM users WHERE id = ?",
             (user_id_value,),
@@ -2013,7 +2029,7 @@ def update_access_code(user_id, new_access_code):
     if len(access_code_value) > 100:
         raise ValueError("access code is too long")
 
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id_value,)).fetchone()
         user = _row_to_dict(row)
         if not user:
@@ -2023,7 +2039,7 @@ def update_access_code(user_id, new_access_code):
 
 
 def get_accounts_password():
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT accounts_password FROM app_settings WHERE id = 1").fetchone()
     return (row["accounts_password"] if row else "") or ""
 
@@ -2034,7 +2050,7 @@ def get_accounts_password_version():
     session at unlock time and re-checked on every accounts_access_required
     request (see app.py) so changing the password re-locks every session
     that had already unlocked it, not just new ones going forward."""
-    with _connect() as conn:
+    with get_connection() as conn:
         row = conn.execute("SELECT updated_at FROM app_settings WHERE id = 1").fetchone()
     return (row["updated_at"] if row else "") or ""
 
@@ -2045,7 +2061,7 @@ def set_accounts_password(new_password):
         raise ValueError("password is required")
     if len(password_value) > 200:
         raise ValueError("password is too long")
-    with _connect() as conn:
+    with get_connection() as conn:
         conn.execute(
             "UPDATE app_settings SET accounts_password = ?, updated_at = ? WHERE id = 1",
             (password_value, datetime.now().isoformat(timespec="seconds")),

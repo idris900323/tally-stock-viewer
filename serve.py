@@ -45,6 +45,25 @@ print(f"[DIAGNOSTIC] About to bind waitress to host={host!r} port={port!r}", flu
 # executes -- its absence, combined with every line above it having
 # printed, is itself the confirmation that we got all the way into
 # serve.run() and it's just blocking as expected, not stuck earlier.
-serve(app, host=host, port=port, threads=8)
+# asyncore_use_poll: switches waitress's connection-handling loop from
+# select() to poll(), which has no FD_SETSIZE-style ceiling (select()'s is
+# 1024 -- the exact "filedescriptor out of range in select()" crash from
+# the OOM/fd-exhaustion investigation this was added for). Belt and braces
+# only: it raises the ceiling this specific crash mode hits, it does not
+# fix whatever is actually accumulating open files/sockets in the first
+# place -- see get_resource_usage()/start_resource_monitor() in app.py for
+# the actual leak-finding instrumentation.
+# threads: lowered from 8 to 4 as part of the memory-leak follow-up
+# investigation -- each waitress worker thread can independently be
+# running a full-size (~3000x4000) share-image decode at once (see
+# _SHARE_IMAGE_BUILD_SEMAPHORE in app.py, which now caps that specific
+# work at 2 concurrent builds regardless of thread count), but every other
+# request type still gets a thread of its own to run in, and this container
+# only has 512MB to share across however many are live simultaneously.
+# Fewer threads means a smaller worst case across the OTHER (non-share-
+# image) endpoints too, at the cost of a slightly smaller ceiling on truly
+# concurrent unrelated requests -- a reasonable trade on a single small
+# instance that was getting OOM-killed under real daytime traffic.
+serve(app, host=host, port=port, threads=4, asyncore_use_poll=True)
 
 print("[DIAGNOSTIC] serve() returned -- this should only happen if the server stopped", flush=True)

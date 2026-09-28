@@ -1,5 +1,5 @@
 '''idris' special project'''
-from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for
+from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for, g
 import hmac
 import json
 import os
@@ -137,6 +137,18 @@ IMAGE_SCAN_ROOT = os.path.abspath(
 SHARE_IMAGE_MAX_DIMENSION = 1280
 SHARE_IMAGE_JPEG_QUALITY = 80
 SHARE_IMAGE_CACHE_DIR = os.path.join(BASE_DIR, "data", "share_cache")
+
+# Caps how many share-image builds (decode + resize + re-encode, the
+# memory-heavy part of _build_share_image()/_build_badged_share_image())
+# run at once. Measured: a burst of just 10 concurrent share requests
+# against full-size (~3000x4000) source photos peaked at ~900MB RSS with no
+# cap at all (waitress's 8 worker threads can all be decoding a full photo
+# simultaneously) on a deployment with a 512MB container limit -- a real,
+# reproducible way to get OOM-killed outright, independent of any leak. 2
+# is deliberately small: this is CPU/memory-bound work competing with every
+# other request on the same small instance, not something to parallelize
+# for throughput.
+_SHARE_IMAGE_BUILD_SEMAPHORE = threading.Semaphore(2)
 PLACEHOLDER_SVG = b"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 320' role='img' aria-label='No image available'>
 <rect width='320' height='320' rx='24' fill='#eef2f7'/>
 <rect x='54' y='54' width='212' height='212' rx='18' fill='#d9e2ec'/>
@@ -412,6 +424,11 @@ def accounts_access_required(view_func=None, *, is_page=False):
 
 
 @app.before_request
+def _start_request_timer():
+    g.request_start_time = time.perf_counter()
+
+
+@app.before_request
 def require_login():
     session.permanent = True
     if request.endpoint in PUBLIC_ENDPOINTS or request.endpoint is None:
@@ -465,6 +482,31 @@ def add_security_headers(response):
     # different (none currently do) can still override it.
     if response.mimetype == "application/json":
         response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+# Light app-level access log for exactly the requests Render's Hobby-tier
+# workspace gives no visibility into otherwise (no request logs there at
+# all) -- added after a production incident where a burst of 279 HTTP 404s
+# in one hour was visible only as a count in Render's metrics, with no way
+# to tell which paths were being hit. Deliberately narrow: only 404/500s and
+# slow (>2s) requests are worth a log line here, not every request -- this
+# is meant to stay readable in app.log, not become a full request log.
+_SLOW_REQUEST_LOG_THRESHOLD_SECONDS = 2.0
+
+
+@app.after_request
+def _log_notable_requests(response):
+    start = g.get("request_start_time")
+    if start is None:
+        return response
+    duration = time.perf_counter() - start
+    status = response.status_code
+    if status == 404 or status >= 500 or duration > _SLOW_REQUEST_LOG_THRESHOLD_SECONDS:
+        logger.warning(
+            "access: %s %s -> %d in %.2fs",
+            request.method, request.path, status, duration,
+        )
     return response
 
 
@@ -1249,6 +1291,81 @@ def _scan_images_on_startup():
         print("warning: initial image scan skipped:", exc)
 
 
+_RESOURCE_PROCESS = psutil.Process(os.getpid())
+
+
+def get_resource_usage():
+    """RSS + open-file-descriptor count for THIS process, added after a
+    production OOM/fd-exhaustion investigation (10 OOM kills + a waitress
+    "filedescriptor out of range in select()" crash on a 512Mi Render
+    instance, ~38 minutes apart, with the leak reproducing even with zero
+    external HTTP traffic). Every candidate cause tested during that
+    investigation came back flat on the available (Windows) test rig, so
+    this is deliberately left running permanently in production rather than
+    only during a one-off test -- the next occurrence gets an actual
+    RSS/open-file trend in app.log leading up to the crash, not just the
+    crash itself.
+
+    num_fds() is POSIX-only (what Render's Linux containers actually run,
+    and what the reported crash's "select()" fd ceiling is about);
+    num_handles() is the Windows equivalent used only for local dev, and
+    counts a broader set of OS handles, not just files/sockets, so the two
+    numbers are not directly comparable -- only the trend on a given
+    platform matters."""
+    try:
+        rss_mb = _RESOURCE_PROCESS.memory_info().rss / 1024 / 1024
+    except Exception:
+        rss_mb = None
+    open_fds = None
+    fd_label = "open files"
+    try:
+        if hasattr(_RESOURCE_PROCESS, "num_fds"):
+            open_fds = _RESOURCE_PROCESS.num_fds()
+            fd_label = "open file descriptors"
+        else:
+            open_fds = _RESOURCE_PROCESS.num_handles()
+            fd_label = "open handles (Windows)"
+    except Exception:
+        pass
+    return {
+        "rss_mb": round(rss_mb, 1) if rss_mb is not None else None,
+        "memory_limit_mb": Config.MEMORY_LIMIT_MB,
+        "open_fds": open_fds,
+        "fd_label": fd_label,
+    }
+
+
+_resource_log_timer = None
+
+
+def start_resource_monitor():
+    """Self-rescheduling threading.Timer (same pattern as
+    schedule_item_export()/cloud_backup.schedule()) that logs RSS and open-
+    fd count to app.log every RESOURCE_LOG_INTERVAL_SECONDS, unconditionally
+    -- unlike the Tally export timer, this has nothing to do with
+    DISABLE_TALLY_SCHEDULING and should run the same way in cloud mode and
+    on the office PC."""
+    global _resource_log_timer
+
+    def _job():
+        global _resource_log_timer
+        try:
+            usage = get_resource_usage()
+            logger.info(
+                "Resource usage: RSS=%s MB (limit %s MB), %s=%s",
+                usage["rss_mb"], usage["memory_limit_mb"], usage["fd_label"], usage["open_fds"],
+            )
+        except Exception:
+            logger.exception("Resource monitor logging failed")
+        _resource_log_timer = threading.Timer(Config.RESOURCE_LOG_INTERVAL_SECONDS, _job)
+        _resource_log_timer.daemon = True
+        _resource_log_timer.start()
+
+    _resource_log_timer = threading.Timer(Config.RESOURCE_LOG_INTERVAL_SECONDS, _job)
+    _resource_log_timer.daemon = True
+    _resource_log_timer.start()
+
+
 STARTUP_TASKS_STARTED = False
 
 def start_background_startup_tasks():
@@ -1282,6 +1399,11 @@ def start_background_startup_tasks():
         # Unaffected by DISABLE_TALLY_SCHEDULING -- this backs up local
         # files to Drive, it never touches Tally.
         cloud_backup.schedule(initial_delay=120)
+
+        # Unconditional, same as cloud_backup.schedule() above -- RSS/fd
+        # trend logging is equally relevant on the office PC and in cloud
+        # mode, and has nothing to do with Tally.
+        start_resource_monitor()
 
     thread = threading.Thread(target=_startup_routine, daemon=True)
     thread.start()
@@ -4124,6 +4246,23 @@ def _prepare_share_image(source_path):
     lives. Returns a standalone PIL Image (detached from the source file
     handle)."""
     with Image.open(source_path) as original:
+        # draft() asks libjpeg to DCT-scale-decode straight to roughly this
+        # size instead of decoding the full original resolution into memory
+        # before resize() throws most of it away -- JPEG only supports
+        # 1/1, 1/2, 1/4, 1/8 decode ratios, and Pillow picks the SMALLEST
+        # of those whose result is still >= the requested size in both
+        # dimensions (verified directly: requesting a size close to the
+        # source's own resolution, e.g. 2x SHARE_IMAGE_MAX_DIMENSION, was
+        # too big a request and made draft() fall back to full-resolution
+        # decode every time -- passing the actual final target size here is
+        # what's needed for it to ever pick a reduced ratio). For a typical
+        # ~3000x4000 phone photo this lands on the 1/2 ratio (~1500x2000),
+        # a ~4x cut in decoded pixel count -- and the peak memory that
+        # scales with it -- while still leaving comfortable headroom above
+        # SHARE_IMAGE_MAX_DIMENSION (1280) for a clean LANCZOS downscale
+        # to the final size. A no-op for non-JPEG sources and for images
+        # already smaller than the draft target.
+        original.draft("RGB", (SHARE_IMAGE_MAX_DIMENSION, SHARE_IMAGE_MAX_DIMENSION))
         image = ImageOps.exif_transpose(original)  # bake in phone-camera rotation
 
         if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
@@ -4149,10 +4288,11 @@ def _build_share_image(source_path, cache_path):
     handful of already-small, already-compressed originals re-encode
     slightly larger), the original bytes are cached under the same name
     unchanged instead -- callers never need to know which happened."""
-    image = _prepare_share_image(source_path)
-    buffer = BytesIO()
-    image.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
-    compressed_bytes = buffer.getvalue()
+    with _SHARE_IMAGE_BUILD_SEMAPHORE:
+        image = _prepare_share_image(source_path)
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
+        compressed_bytes = buffer.getvalue()
 
     if len(compressed_bytes) >= os.path.getsize(source_path):
         shutil.copyfile(source_path, cache_path)
@@ -4296,10 +4436,11 @@ def _build_badged_share_image(source_path, cache_path, category):
     encoding. Unlike _build_share_image(), there's no "keep the original
     bytes if smaller" fallback -- the pixels are always modified, so the
     original file is never a valid substitute."""
-    image = _prepare_share_image(source_path)
-    badged = _draw_category_badge(image, category)
-    buffer = BytesIO()
-    badged.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
+    with _SHARE_IMAGE_BUILD_SEMAPHORE:
+        image = _prepare_share_image(source_path)
+        badged = _draw_category_badge(image, category)
+        buffer = BytesIO()
+        badged.save(buffer, format="JPEG", quality=SHARE_IMAGE_JPEG_QUALITY, optimize=True)
     with open(cache_path, "wb") as handle:
         handle.write(buffer.getvalue())
 
@@ -5154,6 +5295,13 @@ def system_restart_app_only():
 
     _trigger_self_restart("Restarting via admin panel (no code pull)")
     return jsonify({"success": True, "restarted": True})
+
+
+@app.route("/admin/system/resource_usage")
+@admin_required
+@system_device_required
+def system_resource_usage():
+    return jsonify(get_resource_usage())
 
 
 @app.route("/admin/system/download_backup")
