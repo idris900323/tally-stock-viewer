@@ -1,8 +1,13 @@
 import os
 from typing import Iterable, Sequence, Tuple, Any, List
 
-import pandas as pd
-import openpyxl
+# pandas/openpyxl are imported lazily inside the functions that actually use
+# them (below), not at module level -- callers that only ever hit the JSON-
+# cache-first path (see app.py's memory-diet comment near its own now-lazy
+# import of this module) can import this module without ever triggering
+# either import. pandas especially is a real, non-trivial chunk of memory to
+# pull in for a code path (reading a local Tally .xls/.xlsx export) that
+# cloud mode never actually exercises.
 
 
 def _normalize_value(value: Any) -> Any:
@@ -12,6 +17,7 @@ def _normalize_value(value: Any) -> Any:
 
 
 def _pandas_read_excel(file_path: str, usecols=None, engine=None):
+    import pandas as pd
     if engine:
         return pd.read_excel(file_path, engine=engine, usecols=usecols)
     return pd.read_excel(file_path, usecols=usecols)
@@ -37,6 +43,7 @@ def load_excel_rows(file_path: str, usecols=None, min_row: int = 1, engines: Seq
 
     for engine in engines:
         try:
+            import pandas as pd
             df = _pandas_read_excel(file_path, usecols=usecols, engine=engine)
             if min_row > 1:
                 df = df.iloc[min_row - 1 :]
@@ -47,6 +54,7 @@ def load_excel_rows(file_path: str, usecols=None, min_row: int = 1, engines: Seq
         except Exception:
             continue
 
+    import openpyxl
     workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     try:
         worksheet = workbook.active
