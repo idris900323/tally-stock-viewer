@@ -67,7 +67,10 @@ print(f"[DIAGNOSTIC] About to bind waitress to host={host!r} port={port!r}", flu
 # that mostly sit idle or serve cheap requests (JSON APIs, cached files,
 # static assets) -- keeping threads comfortably above the semaphore's
 # permit count is what guarantees those cheap requests always have a
-# thread free even while share-image work is genuinely busy.
-serve(app, host=host, port=port, threads=8, asyncore_use_poll=True)
+# thread free even while share-image work is genuinely busy. Made
+# configurable (WAITRESS_THREADS) rather than a hardcoded value, so this
+# can be tuned per deployment without another code change.
+threads = int(os.environ.get("WAITRESS_THREADS", "8"))
+serve(app, host=host, port=port, threads=threads, asyncore_use_poll=True)
 
 print("[DIAGNOSTIC] serve() returned -- this should only happen if the server stopped", flush=True)

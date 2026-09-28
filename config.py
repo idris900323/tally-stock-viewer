@@ -69,6 +69,11 @@ class Config:
     GDRIVE_OAUTH_CLIENT_SECRETS_PATH = os.environ.get("GDRIVE_OAUTH_CLIENT_SECRETS_PATH", "").strip()
     GDRIVE_OAUTH_TOKEN_PATH = os.environ.get("GDRIVE_OAUTH_TOKEN_PATH", "").strip()
     GDRIVE_BACKUP_FOLDER_ID = os.environ.get("GDRIVE_BACKUP_FOLDER_ID", "").strip()
+    # Fixed daily backup slot, "HH:MM" in IST (fixed UTC+5:30 offset, no tz
+    # database -- see cloud_backup.py's scheduling section). This is now
+    # the normal schedule; CLOUD_BACKUP_INTERVAL below is only a fallback,
+    # used if this is unset or not parseable as HH:MM.
+    CLOUD_BACKUP_DAILY_TIME = os.environ.get("CLOUD_BACKUP_DAILY_TIME", "02:00").strip()
     CLOUD_BACKUP_INTERVAL = int(os.environ.get("CLOUD_BACKUP_INTERVAL", str(3 * 24 * 3600)))
 
     # Cloud deployment — a cloud-hosted instance can never reach Tally
