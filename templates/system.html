@@ -503,6 +503,7 @@
             <tr><td>Image folder size</td><td id="diskImageSize">-</td></tr>
             <tr><td>Disk usage</td><td id="diskUsage">-</td></tr>
             <tr><td>Server uptime</td><td id="serverUptime">-</td></tr>
+            <tr><td>Process resources</td><td id="resourceUsage">-</td></tr>
         </table>
     </div>
 
@@ -1114,6 +1115,7 @@ async function refreshEnvironment() {
             fetchJson("/admin/system/env_summary"),
             fetchJson("/admin/system/disk_usage"),
             fetchJson("/admin/system/uptime"),
+            fetchJson("/admin/system/resource_usage"),
         ];
         // Windows-only registry check -- pointless (and, before this fix,
         // errored) on Render's Linux container. The row is hidden in cloud
@@ -1122,7 +1124,7 @@ async function refreshEnvironment() {
         if (!CLOUD_MODE) {
             fetches.push(fetchJson("/admin/system/autostart_status"));
         }
-        const [tally, env, disk, uptime, autostart] = await Promise.all(fetches);
+        const [tally, env, disk, uptime, resources, autostart] = await Promise.all(fetches);
 
         if (tally.cloud_mode) {
             // Neutral, non-alarming -- this instance never reaching Tally
@@ -1152,6 +1154,20 @@ async function refreshEnvironment() {
             `${disk.used_disk_space_gb} GB used of ${disk.total_disk_space_gb} GB (${disk.free_disk_space_gb} GB free)`;
 
         document.getElementById("serverUptime").textContent = uptime.uptime_human;
+
+        // Added after a production OOM/fd-exhaustion investigation -- see
+        // get_resource_usage() in app.py. rss_mb/open_fds can each
+        // individually be null if psutil couldn't read them; guard rather
+        // than render "null MB".
+        const resourceEl = document.getElementById("resourceUsage");
+        if (resources.rss_mb != null) {
+            const nearLimit = resources.rss_mb > resources.memory_limit_mb * 0.85;
+            resourceEl.textContent = `memory ${resources.rss_mb}/${resources.memory_limit_mb}MB, ${resources.fd_label} ${resources.open_fds != null ? resources.open_fds : "unknown"}`;
+            resourceEl.style.color = nearLimit ? "#dc2626" : "";
+            resourceEl.style.fontWeight = nearLimit ? "600" : "";
+        } else {
+            resourceEl.textContent = "unavailable";
+        }
 
         if (!CLOUD_MODE) {
             const autostartEl = document.getElementById("autostartStatus");

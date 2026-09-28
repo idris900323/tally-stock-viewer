@@ -105,3 +105,12 @@ class Config:
     LOG_DIR = os.environ.get("LOG_DIR", "logs")
     LOG_FILE = os.environ.get("LOG_FILE", "logs/app.log")
     LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+    # Resource monitor (see log_resource_usage()/start_resource_monitor() in
+    # app.py) -- added after a production OOM/fd-exhaustion investigation so
+    # the NEXT occurrence has an actual RSS/open-file trend in app.log
+    # leading up to it, instead of only the crash itself. MEMORY_LIMIT_MB
+    # should match the real deployment's container memory limit (e.g.
+    # Render's 512Mi plan -> 512); it's display-only, not enforced.
+    RESOURCE_LOG_INTERVAL_SECONDS = int(os.environ.get("RESOURCE_LOG_INTERVAL_SECONDS", "300"))
+    MEMORY_LIMIT_MB = int(os.environ.get("MEMORY_LIMIT_MB", "512"))
