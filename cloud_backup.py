@@ -75,6 +75,7 @@ _status = {
     "running": False,
     "last_run": None,  # filled after first run: dict, see _build_run_summary()
     "last_success_at": None,  # ISO timestamp of the last run whose status was "success" -- distinct from last_run, which can be a more recent failed/partial attempt. Drives the nightly scheduler's catch-up rule (see schedule()).
+    "last_catchup_attempted_at": None,  # ISO timestamp of the last time schedule() ARMED a catch-up run (set at decision time, not at run completion, so even a restart seconds later already sees it) -- regardless of that attempt's outcome. Lets _compute_startup_plan() tell "already tried a catch-up this window" apart from "last sync wasn't a success", so a persistent partial/failed sync can't make catch-up re-fire on every restart -- see _compute_startup_plan()'s docstring.
 }
 _status_lock = threading.Lock()
 
@@ -109,10 +110,12 @@ def _save_persisted_status():
         skipped_runs_snapshot = list(_skipped_runs)
     with _status_lock:
         last_success_at_snapshot = _status.get("last_success_at")
+        last_catchup_attempted_at_snapshot = _status.get("last_catchup_attempted_at")
     payload = {
         "last_run": last_run_snapshot,
         "skipped_runs": skipped_runs_snapshot,
         "last_success_at": last_success_at_snapshot,
+        "last_catchup_attempted_at": last_catchup_attempted_at_snapshot,
     }
     try:
         with _persisted_status_lock:
@@ -142,6 +145,7 @@ def _load_persisted_status():
     with _status_lock:
         _status["last_run"] = data.get("last_run")
         _status["last_success_at"] = data.get("last_success_at")
+        _status["last_catchup_attempted_at"] = data.get("last_catchup_attempted_at")
     with _skipped_runs_lock:
         skipped = data.get("skipped_runs")
         if isinstance(skipped, list):
@@ -1480,16 +1484,59 @@ def _is_last_success_stale(now_utc, last_success_at_iso):
     return (now_utc - last_success_dt) > CATCHUP_STALE_THRESHOLD
 
 
-def _compute_startup_plan(now_utc, last_success_at_iso, slot_time_ist):
-    """Startup-only decision (see schedule()): whether to do the one-time
-    catch-up run or just wait for the next normal daily slot. A pure
-    function of (now, last_success_at, slot_time) so the scheduling MATH is
-    directly unit-testable against a fake clock -- see
-    scripts/verify_cloud_backup_schedule.py -- without waiting on real
+def _current_catchup_window_start_utc(now_utc):
+    """The UTC-convention datetime at which the catch-up window (20:00-07:00
+    IST, wrapping past midnight) CONTAINING now_utc began. E.g. now=02:00
+    IST belongs to the window that started at 20:00 IST the previous
+    calendar day, not "today's" 20:00 (which hasn't happened yet). Used by
+    _catchup_already_attempted_this_window() to tell "already tried a
+    catch-up during tonight's window" apart from "a new window has started
+    since" -- restarts within the same window must not re-arm catch-up,
+    but a genuinely new night must."""
+    now_ist = _to_ist(now_utc)
+    if now_ist.time() >= CATCHUP_WINDOW_START:
+        window_start_ist = datetime.combine(now_ist.date(), CATCHUP_WINDOW_START)
+    else:
+        window_start_ist = datetime.combine(now_ist.date() - timedelta(days=1), CATCHUP_WINDOW_START)
+    return _to_utc(window_start_ist)
+
+
+def _catchup_already_attempted_this_window(now_utc, last_catchup_attempt_iso):
+    if not last_catchup_attempt_iso:
+        return False
+    try:
+        last_attempt_dt = datetime.fromisoformat(last_catchup_attempt_iso)
+    except ValueError:
+        return False
+    return last_attempt_dt >= _current_catchup_window_start_utc(now_utc)
+
+
+def _compute_startup_plan(now_utc, last_success_at_iso, last_catchup_attempt_iso, slot_time_ist):
+    """Startup-only decision (see schedule()): whether to do a catch-up run
+    or just wait for the next normal daily slot. A pure function of (now,
+    last_success_at, last_catchup_attempt, slot_time) so the scheduling MATH
+    is directly unit-testable against a fake clock without waiting on real
     threading.Timer delays. Returns (delay_seconds, kind, next_slot_utc)
-    where kind is "catchup" or "slot"."""
+    where kind is "catchup" or "slot".
+
+    Catch-up requires all three: last success stale (or missing), currently
+    in the 20:00-07:00 IST window, AND no catch-up already attempted since
+    THIS window began (see _current_catchup_window_start_utc()) -- that
+    third condition is what makes this safe across restarts, not just
+    within one continuous process. Without it, a sync that keeps ending
+    "partial" (never "success") would make _is_last_success_stale() stay
+    permanently True, so EVERY restart landing in the window would re-arm
+    catch-up, and the schedule could never advance to the real daily slot.
+    The attempted-marker is set at decision time in schedule() (not at run
+    completion), deliberately independent of whether that attempt
+    ultimately succeeds, fails, or ends partial -- only whether one was
+    tried this window."""
     next_slot_utc = _next_daily_slot_utc(now_utc, slot_time_ist)
-    if _is_last_success_stale(now_utc, last_success_at_iso) and _in_catchup_window(_to_ist(now_utc)):
+    if (
+        _is_last_success_stale(now_utc, last_success_at_iso)
+        and _in_catchup_window(_to_ist(now_utc))
+        and not _catchup_already_attempted_this_window(now_utc, last_catchup_attempt_iso)
+    ):
         return (float(CATCHUP_DELAY_SECONDS), "catchup", next_slot_utc)
     return (max(0.0, (next_slot_utc - now_utc).total_seconds()), "slot", next_slot_utc)
 
@@ -1562,14 +1609,19 @@ def _schedule_interval_fallback(initial_delay):
 
 
 def schedule(initial_delay=0):
-    """Startup entry point -- called once from app.py's startup routine.
-    NEVER runs a backup immediately: the daily-slot path only ever
-    schedules the next slot, and even the catch-up path (last success
-    stale AND currently 20:00-07:00 IST) waits 10 minutes rather than
-    firing at process-start instant. `initial_delay` only affects the
-    legacy CLOUD_BACKUP_INTERVAL fallback path -- the daily-slot path
-    ignores it, since "next slot" is always computed from the real current
-    time, not from whenever schedule() happened to be called."""
+    """Startup entry point -- called once from app.py's startup routine, but
+    NOT just once ever: it reruns from scratch on every process restart
+    (redeploy, crash, manual restart), each time re-deriving its decision
+    purely from persisted state (_status), with no memory of its own past
+    invocations beyond that. NEVER runs a backup immediately: the
+    daily-slot path only ever schedules the next slot, and even the
+    catch-up path (last success stale, currently 20:00-07:00 IST, AND no
+    catch-up already attempted this window -- see _compute_startup_plan())
+    waits 10 minutes rather than firing at process-start instant.
+    `initial_delay` only affects the legacy CLOUD_BACKUP_INTERVAL fallback
+    path -- the daily-slot path ignores it, since "next slot" is always
+    computed from the real current time, not from whenever schedule()
+    happened to be called."""
     global _timer, _next_scheduled_run_utc
 
     if not is_configured():
@@ -1583,15 +1635,26 @@ def schedule(initial_delay=0):
 
     with _status_lock:
         last_success_at_iso = _status.get("last_success_at")
-    delay, kind, next_slot_utc = _compute_startup_plan(_now(), last_success_at_iso, slot_time_ist)
+        last_catchup_attempt_iso = _status.get("last_catchup_attempted_at")
+    delay, kind, next_slot_utc = _compute_startup_plan(
+        _now(), last_success_at_iso, last_catchup_attempt_iso, slot_time_ist
+    )
 
     if kind == "catchup":
         logger.info(
-            "Cloud backup: last success is stale (or missing) and it's within the 20:00-07:00 IST catch-up "
-            "window -- running once in %d minutes; the normal %s IST daily schedule resumes right after.",
+            "Cloud backup: last success is stale (or missing), it's within the 20:00-07:00 IST catch-up "
+            "window, and no catch-up has been attempted yet this window -- running once in %d minutes; "
+            "the normal %s IST daily schedule resumes right after regardless of this run's outcome.",
             int(delay // 60), slot_time_ist.strftime("%H:%M"),
         )
         _next_scheduled_run_utc = _now() + timedelta(seconds=delay)
+        # Recorded at decision time, not at run completion, and independent
+        # of outcome -- see _status["last_catchup_attempted_at"]'s comment.
+        # A restart seconds from now must already see this, or it would
+        # re-arm its own catch-up on top of the one this process just armed.
+        with _status_lock:
+            _status["last_catchup_attempted_at"] = _now().isoformat()
+        _save_persisted_status()
     else:
         logger.info(
             "Cloud backup: next scheduled run at %s IST",
