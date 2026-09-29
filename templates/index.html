@@ -2258,14 +2258,18 @@
                  separate nav-link look, so the three read as one cohesive
                  cluster. -->
             <div class="actions-cluster" id="generalActionsCluster">
+                {% if not cloud_mode %}
                 <button id="updateStockBtn" class="secondary toolbar-admin-btn" onclick="updateStock()" title="Pull the latest stock quantities from Tally without touching car master or hierarchy data">Update Stock</button>
+                {% endif %}
                 <button class="secondary toolbar-admin-btn" onclick="window.location.href='/train'" title="Open Training Mode to match scanned images to stock items">Train Matches</button>
                 <div class="more-menu-wrap toolbar-admin-btn" id="moreMenuWrap">
                     <button type="button" id="moreMenuBtn" class="secondary more-menu-btn" onclick="toggleMoreMenu()" aria-haspopup="true" aria-expanded="false" aria-label="More actions" title="More actions">
                         <span aria-hidden="true">&#8942;</span> More
                     </button>
                     <div id="moreMenu" class="more-menu" role="menu" aria-label="More actions" style="display:none;">
+                        {% if not cloud_mode %}
                         <button type="button" role="menuitem" id="fullRefreshBtn" class="more-menu-item" onclick="handleMoreMenuAction(startFullRefresh)" title="Reload car master, hierarchy, and stock from Tally, then refresh the app's data">Full Refresh</button>
+                        {% endif %}
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/accounts')" title="Manage dealer login accounts">Manage Accounts</button>
                         <button type="button" role="menuitem" class="more-menu-item" onclick="handleMoreMenuAction(() => window.location.href='/admin/system')" title="Check deployment status, logs, and Tally/environment health, and manage backups">System</button>
                         <div class="more-menu-divider" role="separator"></div>
@@ -2351,11 +2355,15 @@
          wording (how THIS app keeps itself in sync with Tally) that a
          customer has no use for and no way to act on; "Last updated" and
          its stale-timestamp/hint behavior stay admin-only too, unchanged
-         (see checkTimestampFreshness()/updateStaleWarningUI()). -->
+         (see checkTimestampFreshness()/updateStaleWarningUI()). Cloud mode
+         drops the auto-export sentence entirely (no local export timer
+         ever runs there, and the else-branch's "Use Update Stock" would
+         otherwise point at a button that's hidden in this mode -- see
+         the toolbar buttons below) instead of showing either branch. -->
     {% if is_admin %}
     <div class="status-summary">
-        {% if auto_export_enabled %}Auto-export enabled every {{ refresh_interval }} seconds.{% else %}Auto-export disabled. Use Update Stock to update manually.{% endif %}
-        &nbsp;&middot; <span id="lastUpdate">Last updated: loading...</span> <span id="autoRefreshHint"></span>
+        {% if not cloud_mode %}{% if auto_export_enabled %}Auto-export enabled every {{ refresh_interval }} seconds.{% else %}Auto-export disabled. Use Update Stock to update manually.{% endif %}
+        &nbsp;&middot; {% endif %}<span id="lastUpdate">Last updated: loading...</span> <span id="autoRefreshHint"></span>
     </div>
     {% endif %}
     {% if is_admin %}
@@ -2538,6 +2546,7 @@
 <script>
 const isAdmin = {{ is_admin|tojson }};
 const isCustomer = {{ is_customer|tojson }};
+const CLOUD_MODE = {{ cloud_mode|tojson }};
 // Badge icons (see renderDesignItem()) so "Linked" vs "Needs link" isn't
 // conveyed by color alone -- distinct shapes (check-circle vs
 // exclamation-triangle) read the same regardless of color vision. Inline
@@ -5097,8 +5106,15 @@ function checkTimestampFreshness() {
 
     const diffSeconds = (Date.now() - parsed.getTime()) / 1000;
 
-    // Unchanged: the red-timestamp threshold stays exactly 180 seconds.
-    const isStale = diffSeconds > 180;
+    // Local mode: unchanged, 180 seconds (matches its own ~3-minute
+    // auto-export cadence). Cloud mode reuses STALE_WARNING_THRESHOLD_
+    // SECONDS (900s/15min) instead -- the feeder also runs on a ~3-minute
+    // cadence, so 180s would flicker this red on every normal cycle just
+    // before the next push arrives; 900s is the same "feeder's gone quiet"
+    // threshold the System panel's Feeder heartbeat already uses
+    // (FEEDER_STALE_WARNING_SECONDS in app.py).
+    const lastUpdateStaleThresholdSeconds = CLOUD_MODE ? STALE_WARNING_THRESHOLD_SECONDS : 180;
+    const isStale = diffSeconds > lastUpdateStaleThresholdSeconds;
     if (isStale) {
         lastUpdateEl.classList.add("stale-timestamp");
     } else {

@@ -5181,8 +5181,35 @@ def refresh_item_stock():
 
 @app.route("/last_update")
 def last_update():
-    """Return the last modification time of the item stock export file."""
+    """Return the last modification time of the item stock export file
+    (local mode) -- or, in cloud mode, the feeder's last successful push
+    (FEEDER_LAST_SEEN_AT, the same value the System panel's own Feeder
+    heartbeat already tracks -- see system_feeder_status()).
+
+    Cloud mode never writes any of get_latest_stock_file_path()'s .xlsx
+    candidates (that write path is gated behind `if not Config.
+    DISABLE_TALLY_SCHEDULING`), so the local-mode branch below always fell
+    through to its "file not found" case there -- which itself returns
+    "formatted": _format_ist(now) (the CURRENT time, not a real update
+    time), silently showing a live-updating "just refreshed" timestamp on
+    every poll regardless of whether the feeder was still alive. Checking
+    FEEDER_LAST_SEEN_AT directly (not calling /admin/system/feeder_status)
+    since this route -- unlike that one -- isn't behind the System panel's
+    separate device-pairing gate."""
     try:
+        if Config.DISABLE_TALLY_SCHEDULING:
+            if FEEDER_LAST_SEEN_AT is None:
+                return jsonify({
+                    "last_update": "Waiting for first feeder push",
+                    "timestamp": None,
+                    "formatted": None,
+                })
+            return jsonify({
+                "last_update": _format_ist(FEEDER_LAST_SEEN_AT),
+                "timestamp": FEEDER_LAST_SEEN_AT.isoformat(),
+                "formatted": _format_ist(FEEDER_LAST_SEEN_AT),
+            })
+
         update_file = get_latest_stock_file_path() or ITEM_STOCK_FILE_AUTO
         if os.path.exists(update_file):
             mtime = os.path.getmtime(update_file)
