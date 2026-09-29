@@ -66,6 +66,16 @@ RETRY_BASE_DELAY_SECONDS = 1.0
 RETRY_MAX_DELAY_SECONDS = 60.0
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503}
 
+# Drive's quota errors don't always arrive as 429 -- confirmed for real:
+# one production run got a 403 (not 429) with reason "userRateLimitExceeded"
+# on a file upload, which RETRYABLE_STATUS_CODES alone never retried (403
+# is otherwise a real, permanent failure -- e.g. a genuine permissions
+# problem -- so the status code alone can't tell them apart; the reason
+# string can). Google's own Drive API quota docs list both of these 403
+# reasons as the rate-limit ones meant to be retried with backoff exactly
+# like 429, never the many other, permanent reasons a 403 can carry.
+RETRYABLE_403_REASONS = {"userRateLimitExceeded", "rateLimitExceeded"}
+
 SYNC_LOCK = threading.Lock()  # same acquire-in-caller / release-in-finally convention as app.py's FULL_REFRESH_LOCK/EXPORT_LOCK
 _timer = None
 _last_call_time = 0.0
@@ -624,20 +634,51 @@ def _pace():
         _last_call_time = time.monotonic()
 
 
+def _http_error_reasons(exc):
+    """Extracts every machine-readable reason code (e.g.
+    "userRateLimitExceeded") from an HttpError's parsed body, defensively --
+    error_details' shape depends on which key Google's response happened to
+    use (see HttpError._get_reason() upstream), so this only ever returns
+    what it can confidently identify as reason strings, never raises on an
+    unexpected shape."""
+    details = getattr(exc, "error_details", None)
+    if isinstance(details, list):
+        return {item.get("reason") for item in details if isinstance(item, dict) and item.get("reason")}
+    if isinstance(details, dict) and details.get("reason"):
+        return {details["reason"]}
+    return set()
+
+
+def _is_retryable_http_error(exc, status):
+    if status in RETRYABLE_STATUS_CODES:
+        return True
+    # 403 covers many permanent failures (real permissions problems included)
+    # alongside Drive's rate-limit ones -- only retry the specific reasons
+    # Google documents as transient, never a bare "status == 403".
+    if status == 403 and _http_error_reasons(exc) & RETRYABLE_403_REASONS:
+        return True
+    return False
+
+
 def call_with_backoff(request_factory, **execute_kwargs):
     """request_factory: zero-arg callable returning a fresh googleapiclient
     request object (must be fresh per attempt -- request objects are
-    single-use). Retries with exponential backoff + jitter for 429/5xx
-    HttpErrors, AND for transient network-level failures below the HTTP
-    layer (TimeoutError, ConnectionError) -- confirmed for real: a bare
-    TimeoutError from ssl.SSLSocket.read() while waiting for Drive's
-    response to a resumable upload PUT is NOT an HttpError, so it used to
-    bypass this function's retry logic entirely and permanently fail that
-    one file for the whole run on a single transient blip (2 files lost
-    this way in one 8,047-file run, confirmed from production logs). Any
-    other exception still raises immediately.
+    single-use). Retries with exponential backoff + jitter for:
+      - 429/5xx HttpErrors, and 403 HttpErrors whose reason is one of
+        RETRYABLE_403_REASONS (confirmed for real: Drive returned a 403
+        "userRateLimitExceeded" for one file in one production run -- a
+        bare status-code check alone never retries any 403, permanent ones
+        included, so the reason string is what tells them apart);
+      - transient network-level failures below the HTTP layer (TimeoutError,
+        ConnectionError) -- confirmed for real: a bare TimeoutError from
+        ssl.SSLSocket.read() while waiting for Drive's response to a
+        resumable upload PUT is NOT an HttpError, so it used to bypass this
+        function's retry logic entirely.
+    Both of the above permanently failed one file each in the same
+    8,047-file production run before this fix. Any other exception still
+    raises immediately.
 
-    For a resumable upload specifically, a timeout here can occur AFTER
+    For a resumable upload specifically, either failure can occur AFTER
     Drive already received the bytes but before the confirmation response
     was read -- retrying then starts a FRESH resumable session (request_
     factory() is always called again fresh), which can occasionally leave
@@ -658,7 +699,7 @@ def call_with_backoff(request_factory, **execute_kwargs):
         except HttpError as exc:
             status = exc.resp.status if getattr(exc, "resp", None) is not None else None
             last_error = exc
-            if status in RETRYABLE_STATUS_CODES and attempt < MAX_RETRY_ATTEMPTS:
+            if _is_retryable_http_error(exc, status) and attempt < MAX_RETRY_ATTEMPTS:
                 sleep_for = min(delay, RETRY_MAX_DELAY_SECONDS) + random.uniform(0, 0.5)
                 logger.warning(
                     "Drive API call failed with status %s (attempt %s/%s) -- retrying in %.1fs",
