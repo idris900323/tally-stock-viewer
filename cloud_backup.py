@@ -627,8 +627,26 @@ def _pace():
 def call_with_backoff(request_factory, **execute_kwargs):
     """request_factory: zero-arg callable returning a fresh googleapiclient
     request object (must be fresh per attempt -- request objects are
-    single-use). Retries with exponential backoff + jitter specifically for
-    429/5xx responses; anything else raises immediately."""
+    single-use). Retries with exponential backoff + jitter for 429/5xx
+    HttpErrors, AND for transient network-level failures below the HTTP
+    layer (TimeoutError, ConnectionError) -- confirmed for real: a bare
+    TimeoutError from ssl.SSLSocket.read() while waiting for Drive's
+    response to a resumable upload PUT is NOT an HttpError, so it used to
+    bypass this function's retry logic entirely and permanently fail that
+    one file for the whole run on a single transient blip (2 files lost
+    this way in one 8,047-file run, confirmed from production logs). Any
+    other exception still raises immediately.
+
+    For a resumable upload specifically, a timeout here can occur AFTER
+    Drive already received the bytes but before the confirmation response
+    was read -- retrying then starts a FRESH resumable session (request_
+    factory() is always called again fresh), which can occasionally leave
+    a real duplicate on Drive. Accepted trade-off, not silently unsafe: the
+    next run's reconciliation (_reconcile_manifest_with_drive) detects and
+    reports same-path duplicates, always keeping the oldest as canonical
+    and never auto-deleting -- an admin sees it. That's strictly better
+    than the previous behavior of silently dropping the file for up to a
+    full day until the next scheduled run retried it."""
     from googleapiclient.errors import HttpError
 
     delay = RETRY_BASE_DELAY_SECONDS
@@ -645,6 +663,19 @@ def call_with_backoff(request_factory, **execute_kwargs):
                 logger.warning(
                     "Drive API call failed with status %s (attempt %s/%s) -- retrying in %.1fs",
                     status, attempt, MAX_RETRY_ATTEMPTS, sleep_for,
+                )
+                time.sleep(sleep_for)
+                delay *= 2
+                continue
+            raise
+        except (TimeoutError, ConnectionError) as exc:
+            last_error = exc
+            if attempt < MAX_RETRY_ATTEMPTS:
+                sleep_for = min(delay, RETRY_MAX_DELAY_SECONDS) + random.uniform(0, 0.5)
+                logger.warning(
+                    "Drive API call failed with a transient network error (%s: %s) (attempt %s/%s) -- "
+                    "retrying in %.1fs",
+                    type(exc).__name__, exc, attempt, MAX_RETRY_ATTEMPTS, sleep_for,
                 )
                 time.sleep(sleep_for)
                 delay *= 2
