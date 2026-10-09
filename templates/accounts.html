@@ -256,6 +256,108 @@
             margin-bottom: 12px;
         }
 
+        /* Usage Charts panel */
+        .usage-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin: 10px 0 14px;
+        }
+
+        .usage-controls label {
+            font-size: 13px;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .usage-controls select {
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: #fff;
+            color: var(--text);
+            font-size: 14px;
+            max-width: 100%;
+        }
+
+        .usage-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .usage-card {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 12px;
+            background: #f8fafd;
+        }
+
+        .usage-card .num {
+            font-size: 24px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .usage-card .lbl {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .usage-charts {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 14px;
+        }
+
+        .usage-chart-box {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            min-width: 0;
+        }
+
+        .usage-chart-box h3 {
+            margin: 0 0 8px;
+            font-size: 15px;
+        }
+
+        .usage-canvas-wrap {
+            position: relative;
+            height: 260px;
+        }
+
+        .usage-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .usage-state {
+            padding: 18px 4px;
+            color: var(--muted);
+        }
+
+        .usage-state.error {
+            color: var(--error-text);
+        }
+
+        @media (min-width: 900px) {
+            .usage-charts {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .usage-chart-box.wide {
+                grid-column: 1 / -1;
+            }
+        }
+
         @media (max-width: 980px) {
             .grid {
                 grid-template-columns: 1fr;
@@ -343,6 +445,7 @@
             <div class="bulk-actions toolbar">
                 <button type="button" class="secondary" onclick="setAllCustomerStatus(true)" title="Resume login access for every dealer account">Resume All</button>
                 <button type="button" class="secondary" onclick="setAllCustomerStatus(false)" title="Pause login access for every dealer account">Pause All</button>
+                <button type="button" class="secondary" onclick="openUsagePanel()" title="Charts of how dealers use the app">Usage Charts</button>
             </div>
             <div class="table-wrap">
                 <table>
@@ -361,6 +464,36 @@
                 </table>
             </div>
             <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No dealer accounts found.</div>
+        </div>
+    </div>
+
+    <div class="panel" id="usagePanel" style="display:none;">
+        <h2 style="margin:0 0 4px;">Usage Charts</h2>
+        <div class="usage-controls">
+            <label>Range
+                <select id="usageDays" onchange="loadUsage()">
+                    <option value="1">Last 1 day</option>
+                    <option value="7" selected>Last 7 days</option>
+                    <option value="14">Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                </select>
+            </label>
+            <label>Dealer
+                <select id="usageUser" onchange="loadUsage()"><option value="">All dealers</option></select>
+            </label>
+            <button type="button" class="secondary" onclick="closeUsagePanel()">Close</button>
+        </div>
+        <div id="usageState" class="usage-state"></div>
+        <div id="usageContent" style="display:none;">
+            <div class="usage-cards" id="usageCards"></div>
+            <div class="usage-charts">
+                <div class="usage-chart-box wide"><h3>Daily activity</h3><div class="usage-canvas-wrap"><canvas id="chartDaily" role="img" aria-label="Daily active users, visits and actions"></canvas></div></div>
+                <div class="usage-chart-box"><h3>Busiest hours (IST)</h3><div class="usage-canvas-wrap"><canvas id="chartHourly" role="img" aria-label="Actions by hour of day"></canvas></div></div>
+                <div class="usage-chart-box"><h3>Top cars opened</h3><div class="usage-canvas-wrap"><canvas id="chartCars" role="img" aria-label="Most opened cars"></canvas></div></div>
+                <div class="usage-chart-box"><h3>Top searches</h3><div class="usage-canvas-wrap"><canvas id="chartSearches" role="img" aria-label="Most frequent searches"></canvas></div></div>
+                <div class="usage-chart-box wide"><h3>Activity by dealer</h3><div class="usage-canvas-wrap" id="usersWrap"><canvas id="chartUsers" role="img" aria-label="Actions per dealer by type"></canvas></div></div>
+            </div>
+            <p class="muted" id="usageFootnote" style="margin:12px 0 0; font-size:13px;"></p>
         </div>
     </div>
 
@@ -465,6 +598,232 @@ async function showActivity(button) {
 
 function closeActivity() {
     document.getElementById("activityPanel").style.display = "none";
+}
+
+// ---- Usage Charts -------------------------------------------------------
+const CHARTJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js";
+const CHARTJS_SRI = "sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD";
+let chartJsPromise = null;
+let usageCharts = {};
+let usageRequestSeq = 0;
+
+function loadChartJs() {
+    if (window.Chart) {
+        return Promise.resolve();
+    }
+    if (!chartJsPromise) {
+        chartJsPromise = new Promise((resolve, reject) => {
+            const el = document.createElement("script");
+            el.src = CHARTJS_URL;
+            el.integrity = CHARTJS_SRI;
+            el.crossOrigin = "anonymous";
+            el.onload = () => resolve();
+            el.onerror = () => {
+                chartJsPromise = null;
+                el.remove();
+                reject(new Error("Could not load the chart library"));
+            };
+            document.head.appendChild(el);
+        });
+    }
+    return chartJsPromise;
+}
+
+function setUsageState(message, isError) {
+    const el = document.getElementById("usageState");
+    el.textContent = message || "";
+    el.className = "usage-state" + (isError ? " error" : "");
+    el.style.display = message ? "block" : "none";
+}
+
+function openUsagePanel() {
+    const panel = document.getElementById("usagePanel");
+    const select = document.getElementById("usageUser");
+    const previous = select.value;
+    select.innerHTML = `<option value="">All dealers</option>` + (customerAccounts || [])
+        .map(c => `<option value="${Number(c.id)}">${escapeHtml(c.username || "")}</option>`).join("");
+    select.value = previous;
+    panel.style.display = "block";
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    loadUsage();
+}
+
+function closeUsagePanel() {
+    document.getElementById("usagePanel").style.display = "none";
+    destroyUsageCharts();
+}
+
+function destroyUsageCharts() {
+    Object.values(usageCharts).forEach(chart => chart.destroy());
+    usageCharts = {};
+}
+
+function truncLabel(text, max) {
+    const t = String(text || "");
+    return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+function shortDate(iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${d} ${months[m - 1]}`;
+}
+
+function hourLabel(h) {
+    return `${h % 12 || 12}${h < 12 ? "am" : "pm"}`;
+}
+
+const USAGE_GROUPS = [
+    { label: "Car opens", color: "#1f6feb", actions: ["view_car"] },
+    { label: "Searches", color: "#14b8a6", actions: ["search"] },
+    { label: "Shares", color: "#f59e0b", actions: ["share_image", "share_longpress"] },
+    { label: "Copies", color: "#8b5cf6", actions: ["copy_image"] },
+    { label: "Reports", color: "#ef4444", actions: ["report"] },
+    { label: "Other", color: "#94a3b8", actions: null },
+];
+
+function usageGroupCount(byAction, group) {
+    if (group.actions) {
+        return group.actions.reduce((sum, a) => sum + (byAction[a] || 0), 0);
+    }
+    const known = new Set(USAGE_GROUPS.flatMap(g => g.actions || []));
+    return Object.entries(byAction).reduce((sum, [a, n]) => sum + (known.has(a) ? 0 : n), 0);
+}
+
+function horizontalBar(canvasId, labels, values, color, emptyText) {
+    const wrap = document.getElementById(canvasId).parentElement;
+    const note = wrap.querySelector(".usage-empty");
+    if (note) note.remove();
+    if (!values.length) {
+        const p = document.createElement("div");
+        p.className = "usage-empty muted";
+        p.textContent = emptyText;
+        wrap.appendChild(p);
+    }
+    usageCharts[canvasId] = new Chart(document.getElementById(canvasId), {
+        type: "bar",
+        data: { labels, datasets: [{ data: values, backgroundColor: color, borderRadius: 4 }] },
+        options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { beginAtZero: true, ticks: { precision: 0 } },
+                y: { ticks: { callback(value) { return truncLabel(this.getLabelForValue(value), 24); } } },
+            },
+        },
+    });
+}
+
+function renderUsage(data) {
+    destroyUsageCharts();
+    Chart.defaults.color = "#5d6b82";
+    Chart.defaults.font.family = "Arial, sans-serif";
+    const s = data.summary;
+
+    document.getElementById("usageCards").innerHTML = [
+        [s.total_actions, "Actions"],
+        [`${s.active_users} / ${s.total_users}`, "Active dealers"],
+        [s.visits, "Visits"],
+        [s.peak_hour_ist === null ? "-" : hourLabel(s.peak_hour_ist), "Busiest hour (IST)"],
+    ].map(([n, l]) => `<div class="usage-card"><div class="num">${escapeHtml(String(n))}</div><div class="lbl">${l}</div></div>`).join("");
+
+    usageCharts.chartDaily = new Chart(document.getElementById("chartDaily"), {
+        data: {
+            labels: data.daily.map(d => shortDate(d.date)),
+            datasets: [
+                { type: "bar", label: "Actions", data: data.daily.map(d => d.actions), backgroundColor: "rgba(31,111,235,0.25)", borderRadius: 3, yAxisID: "y" },
+                { type: "line", label: "Visits", data: data.daily.map(d => d.visits), borderColor: "#14b8a6", backgroundColor: "#14b8a6", tension: 0.25, pointRadius: 3, yAxisID: "y1" },
+                { type: "line", label: "Active dealers", data: data.daily.map(d => d.active_users), borderColor: "#f59e0b", backgroundColor: "#f59e0b", tension: 0.25, pointRadius: 3, yAxisID: "y2" },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            plugins: { legend: { position: "bottom" } },
+            scales: {
+                x: { ticks: { autoSkip: true, maxRotation: 0, maxTicksLimit: 10 } },
+                y: { beginAtZero: true, position: "left", title: { display: true, text: "Actions" }, ticks: { precision: 0 } },
+                y1: { beginAtZero: true, position: "right", title: { display: true, text: "Visits" }, ticks: { precision: 0 }, grid: { drawOnChartArea: false } },
+                // Dealer counts are far smaller than visit counts, so they get their own
+                // (hidden) scale; hover tooltips show the real numbers.
+                y2: { beginAtZero: true, display: false, grace: "20%", ticks: { precision: 0 } },
+            },
+        },
+    });
+
+    usageCharts.chartHourly = new Chart(document.getElementById("chartHourly"), {
+        type: "bar",
+        data: { labels: data.hourly.map((_, h) => hourLabel(h)), datasets: [{ data: data.hourly, backgroundColor: "#1f6feb", borderRadius: 3 }] },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { autoSkip: true, maxRotation: 0, maxTicksLimit: 8 } },
+                y: { beginAtZero: true, ticks: { precision: 0 } },
+            },
+        },
+    });
+
+    horizontalBar("chartCars", data.top_cars.map(c => c.name), data.top_cars.map(c => c.count), "#1f6feb", "No cars opened in this range.");
+    horizontalBar("chartSearches", data.top_searches.map(c => c.query), data.top_searches.map(c => c.count), "#14b8a6", "No searches in this range.");
+
+    const users = data.per_user;
+    document.getElementById("usersWrap").style.height = `${Math.max(180, users.length * 30 + 80)}px`;
+    usageCharts.chartUsers = new Chart(document.getElementById("chartUsers"), {
+        type: "bar",
+        data: {
+            labels: users.map(u => u.username),
+            datasets: USAGE_GROUPS.map(g => ({
+                label: g.label,
+                backgroundColor: g.color,
+                data: users.map(u => usageGroupCount(u.by_action, g)),
+            })),
+        },
+        options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom" } },
+            scales: {
+                x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+                y: { stacked: true, ticks: { callback(value) { return truncLabel(this.getLabelForValue(value), 20); } } },
+            },
+        },
+    });
+
+    document.getElementById("usageFootnote").textContent =
+        `Based on logged actions (opens, searches, shares, copies, reports) over the last ${data.days} day${data.days === 1 ? "" : "s"}.`;
+}
+
+async function loadUsage() {
+    const seq = ++usageRequestSeq;
+    const days = document.getElementById("usageDays").value;
+    const userId = document.getElementById("usageUser").value;
+    document.getElementById("usageContent").style.display = "none";
+    setUsageState("Loading...", false);
+    try {
+        const url = `/admin/user_activity_stats?days=${encodeURIComponent(days)}` + (userId ? `&user_id=${encodeURIComponent(userId)}` : "");
+        const [response] = await Promise.all([fetch(url), loadChartJs()]);
+        const data = await response.json().catch(() => ({}));
+        if (seq !== usageRequestSeq) return;
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        if (!data.summary.total_actions) {
+            destroyUsageCharts();
+            setUsageState("No activity recorded yet", false);
+            return;
+        }
+        setUsageState("", false);
+        document.getElementById("usageContent").style.display = "block";
+        renderUsage(data);
+    } catch (error) {
+        if (seq !== usageRequestSeq) return;
+        destroyUsageCharts();
+        setUsageState(`Could not load usage charts: ${error.message}`, true);
+    }
 }
 
 function formatLastLoginLabel(value) {

@@ -1971,7 +1971,64 @@ def get_recent_user_activity(user_id, limit=50):
     return {"user": _row_to_dict(user), "rows": [_row_to_dict(r) for r in rows]}
 
 
-def prune_user_activity(days=30):
+def get_activity_stats(start_utc, user_id=None):
+    """Read-only aggregates over user_activity rows with at_utc >= start_utc
+    (naive-UTC ISO). user_id=None means all dealers (role='customer'); else
+    that one user. Bucketing is done in SQL in IST (+330 minutes), so a day
+    boundary is IST midnight. Returns compact aggregates plus the minimal
+    (user_id, at_utc, action) tuples the caller needs for visit grouping;
+    detail text only ever leaves here as the top-10 cars/searches."""
+    ist = "+330 minutes"
+    if user_id is None:
+        scope_sql, scope_args = "u.role = 'customer'", ()
+        act_scope, act_args = "user_id IN (SELECT id FROM users WHERE role = 'customer')", ()
+    else:
+        scope_sql, scope_args = "u.id = ?", (int(user_id),)
+        act_scope, act_args = "user_id = ?", (int(user_id),)
+    base = f"at_utc >= ? AND {act_scope}"
+    base_args = (start_utc,) + act_args
+    with get_connection() as conn:
+        daily = conn.execute(
+            f"SELECT date(at_utc, '{ist}') AS d, COUNT(*) AS actions, COUNT(DISTINCT user_id) AS users "
+            f"FROM user_activity WHERE {base} GROUP BY d", base_args,
+        ).fetchall()
+        hours = conn.execute(
+            f"SELECT CAST(strftime('%H', at_utc, '{ist}') AS INTEGER) AS h, COUNT(*) AS n "
+            f"FROM user_activity WHERE {base} GROUP BY h", base_args,
+        ).fetchall()
+        per_user = conn.execute(
+            "SELECT u.id AS user_id, u.username, a.action, COUNT(a.id) AS n "
+            "FROM users u LEFT JOIN user_activity a ON a.user_id = u.id AND a.at_utc >= ? "
+            f"WHERE {scope_sql} GROUP BY u.id, a.action", (start_utc,) + scope_args,
+        ).fetchall()
+        cars = conn.execute(
+            f"SELECT detail, COUNT(*) AS n FROM user_activity WHERE {base} AND action = 'view_car' "
+            "AND detail IS NOT NULL AND detail != '' GROUP BY detail ORDER BY n DESC, detail LIMIT 10", base_args,
+        ).fetchall()
+        searches = conn.execute(
+            f"SELECT LOWER(TRIM(detail)) AS q, COUNT(*) AS n FROM user_activity WHERE {base} AND action = 'search' "
+            "AND detail IS NOT NULL AND TRIM(detail) != '' GROUP BY q ORDER BY n DESC, q LIMIT 10", base_args,
+        ).fetchall()
+        stamps = conn.execute(
+            f"SELECT user_id, at_utc, action FROM user_activity WHERE {base} ORDER BY user_id, at_utc DESC, id DESC",
+            base_args,
+        ).fetchall()
+    return {
+        "daily": [tuple(r) for r in daily],
+        "hours": [tuple(r) for r in hours],
+        "per_user": [tuple(r) for r in per_user],
+        "cars": [tuple(r) for r in cars],
+        "searches": [tuple(r) for r in searches],
+        "stamps": [tuple(r) for r in stamps],
+    }
+
+
+def user_exists(user_id):
+    with get_connection() as conn:
+        return conn.execute("SELECT 1 FROM users WHERE id = ?", (int(user_id),)).fetchone() is not None
+
+
+def prune_user_activity(days=60):
     cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat(timespec="seconds")
     with get_connection() as conn:
         cursor = conn.execute("DELETE FROM user_activity WHERE at_utc < ?", (cutoff,))

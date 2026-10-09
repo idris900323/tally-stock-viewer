@@ -601,7 +601,7 @@ ACTIVITY_TOUCH_INTERVAL_SECONDS = 60
 ACTIVITY_SEARCH_COLLAPSE_SECONDS = 10     # type-ahead keystrokes -> one row
 ACTIVITY_VIEW_CAR_COLLAPSE_SECONDS = 600  # same car reopened within 10 min -> refresh the row
 ACTIVITY_BEACON_MAX_PER_MINUTE = 30       # per user, /api/activity only
-ACTIVITY_RETENTION_DAYS = 30
+ACTIVITY_RETENTION_DAYS = 60
 ACTIVITY_PRUNE_INTERVAL_SECONDS = 24 * 3600
 ACTIVITY_MAX_TRACKED_USERS = 5000         # hard cap on each in-memory dict
 ACTIVITY_VISIT_GAP_MINUTES = 30
@@ -844,24 +844,34 @@ def _summarize_visit(entries):
     return ", ".join(parts)
 
 
-def group_activity_into_visits(rows, gap_minutes=ACTIVITY_VISIT_GAP_MINUTES):
-    """rows: newest-first [{at_utc, action, detail}]. Returns newest-first
-    visits; a gap of >= gap_minutes between consecutive actions starts a new
-    visit. Entries inside a visit are chronological."""
+def split_into_visit_groups(rows, time_of, gap_minutes=ACTIVITY_VISIT_GAP_MINUTES):
+    """The one place the visit rule lives. rows: newest-first; time_of(row)
+    returns its naive-UTC ISO timestamp. Returns newest-first groups of rows
+    (each group chronological); a gap of >= gap_minutes between consecutive
+    actions starts a new group."""
     if not rows:
         return []
     gap = timedelta(minutes=gap_minutes)
     chronological = list(reversed(rows))
     groups = [[chronological[0]]]
-    prev_time = datetime.fromisoformat(chronological[0]["at_utc"])
+    prev_time = datetime.fromisoformat(time_of(chronological[0]))
     for row in chronological[1:]:
-        t = datetime.fromisoformat(row["at_utc"])
+        t = datetime.fromisoformat(time_of(row))
         if t - prev_time >= gap:
             groups.append([])
         groups[-1].append(row)
         prev_time = t
+    groups.reverse()
+    return groups
+
+
+def group_activity_into_visits(rows, gap_minutes=ACTIVITY_VISIT_GAP_MINUTES):
+    """rows: newest-first [{at_utc, action, detail}]. Returns newest-first
+    visits; a gap of >= gap_minutes between consecutive actions starts a new
+    visit. Entries inside a visit are chronological."""
+    groups = split_into_visit_groups(rows, lambda r: r["at_utc"], gap_minutes)
     visits = []
-    for group in reversed(groups):
+    for group in groups:
         entries = [{
             "at_utc": r["at_utc"],
             "action": r["action"],
@@ -3624,6 +3634,110 @@ def admin_get_all_customers():
         }
         for customer in customers
     ])
+
+
+IST_OFFSET = timedelta(hours=5, minutes=30)
+ACTIVITY_STATS_DEFAULT_DAYS = 30
+ACTIVITY_STATS_MAX_DAYS = 30
+
+
+@app.route("/admin/user_activity_stats")
+@admin_required
+@accounts_access_required
+def admin_user_activity_stats():
+    """Read-only aggregates for the Usage Charts panel (compact JSON only,
+    never raw rows). Days are IST calendar days ending today."""
+    try:
+        days = int(request.args.get("days", ""))
+    except (TypeError, ValueError):
+        days = ACTIVITY_STATS_DEFAULT_DAYS
+    days = max(1, min(days, ACTIVITY_STATS_MAX_DAYS))
+
+    user_id = None
+    raw_user = request.args.get("user_id")
+    if raw_user not in (None, ""):
+        try:
+            user_id = int(raw_user)
+        except ValueError:
+            return jsonify({"error": "invalid user_id"}), 400
+        try:
+            exists = db.user_exists(user_id)
+        except Exception as exc:
+            logger.warning("usage stats failed (%s)", type(exc).__name__)
+            return jsonify({"error": "Could not load usage stats"}), 500
+        if not exists:
+            return jsonify({"error": "invalid user_id"}), 400
+
+    try:
+        now_ist = datetime.now(timezone.utc).replace(tzinfo=None) + IST_OFFSET
+        first_day = now_ist.date() - timedelta(days=days - 1)
+        start_utc = (datetime.combine(first_day, datetime.min.time()) - IST_OFFSET).isoformat(timespec="seconds")
+        agg = db.get_activity_stats(start_utc, user_id)
+
+        day_labels = [(first_day + timedelta(days=i)).isoformat() for i in range(days)]
+        by_day = {d: (actions, users) for d, actions, users in agg["daily"]}
+
+        # Visits: same 30-minute rule as the per-user view (shared splitter);
+        # stamps arrive grouped by user, newest first.
+        visits_by_day = {}
+        total_visits = 0
+        current_user, bucket = None, []
+
+        def _flush():
+            nonlocal total_visits
+            for group in split_into_visit_groups(bucket, lambda r: r[1]):
+                start_ist = datetime.fromisoformat(group[0][1]) + IST_OFFSET
+                key = start_ist.date().isoformat()
+                visits_by_day[key] = visits_by_day.get(key, 0) + 1
+                total_visits += 1
+
+        for stamp in agg["stamps"]:
+            if stamp[0] != current_user and bucket:
+                _flush()
+                bucket = []
+            current_user = stamp[0]
+            bucket.append(stamp)
+        if bucket:
+            _flush()
+
+        hours = [0] * 24
+        for h, n in agg["hours"]:
+            hours[int(h)] = n
+
+        users = {}
+        for uid_, username, action, n in agg["per_user"]:
+            u = users.setdefault(uid_, {"user_id": uid_, "username": username, "total": 0, "by_action": {}})
+            if action:
+                u["by_action"][action] = n
+                u["total"] += n
+        per_user = sorted(users.values(), key=lambda u: (-u["total"], u["username"].lower()))
+
+        total_actions = sum(a for a, _ in by_day.values())
+        peak_hour = max(range(24), key=lambda h: (hours[h], -h)) if total_actions else None
+        return jsonify({
+            "days": days,
+            "user_id": user_id,
+            "summary": {
+                "total_actions": total_actions,
+                "active_users": sum(1 for u in per_user if u["total"] > 0),
+                "total_users": len(per_user),
+                "visits": total_visits,
+                "peak_hour_ist": peak_hour,
+            },
+            "daily": [{
+                "date": d,
+                "active_users": by_day.get(d, (0, 0))[1],
+                "actions": by_day.get(d, (0, 0))[0],
+                "visits": visits_by_day.get(d, 0),
+            } for d in day_labels],
+            "hourly": hours,
+            "per_user": per_user,
+            "top_cars": [{"name": n, "count": c} for n, c in agg["cars"]],
+            "top_searches": [{"query": q, "count": c} for q, c in agg["searches"]],
+        })
+    except Exception as exc:
+        logger.warning("usage stats failed (%s)", type(exc).__name__)
+        return jsonify({"error": "Could not load usage stats"}), 500
 
 
 @app.route("/admin/user_activity/<int:user_id>")
