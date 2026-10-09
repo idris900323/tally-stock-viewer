@@ -352,6 +352,7 @@
                             <th style="width:160px;" title="This code is used by the dealer to log in">Access Code</th>
                             <th style="width:110px;">Status</th>
                             <th style="width:200px;">Last login</th>
+                            <th style="width:130px;" title="Last time this account actually used the app (not just logged in)">Last active</th>
                             <th style="width:180px;">Created</th>
                             <th style="width:240px;">Actions</th>
                         </tr>
@@ -361,6 +362,13 @@
             </div>
             <div id="accountsEmptyState" class="muted" style="display:none; margin-top:10px;">No dealer accounts found.</div>
         </div>
+    </div>
+
+    <div class="panel" id="activityPanel" style="display:none;">
+        <h2 style="margin:0 0 6px;">Recent activity: <span id="activityUser"></span></h2>
+        <p class="muted" style="margin:0 0 12px;">Last ~50 actions, grouped into visits (30+ minutes apart starts a new visit). Times are IST.</p>
+        <div id="activityBody"></div>
+        <button type="button" class="secondary" onclick="closeActivity()" style="margin-top:10px;">Close</button>
     </div>
 
     <div class="panel">
@@ -405,6 +413,58 @@ function formatDateLabel(value) {
     // ISO timestamp as UTC and render it in Asia/Kolkata -- see the
     // comment there for why a plain new Date(value) is wrong here.
     return value ? formatIST(value) : "-";
+}
+
+function formatRelativeTime(value) {
+    const date = value ? toISTDate(value) : null;
+    if (!date || isNaN(date.getTime())) {
+        return "Never";
+    }
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (seconds < 90) return "Just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+}
+
+function istTimeOnly(value) {
+    const f = formatISTFriendly(value) || "";
+    return f.replace(/^\d+ \w+ \d+, /, "");
+}
+
+async function showActivity(button) {
+    const userId = Number(button?.dataset?.userId || 0);
+    if (!userId) return;
+    const panel = document.getElementById("activityPanel");
+    const body = document.getElementById("activityBody");
+    document.getElementById("activityUser").textContent = button.dataset.username || "";
+    body.textContent = "Loading...";
+    panel.style.display = "block";
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    try {
+        const response = await fetch(`/admin/user_activity/${encodeURIComponent(userId)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        if (!data.visits.length) {
+            body.innerHTML = `<p class="muted">No recorded activity yet.</p>`;
+            return;
+        }
+        body.innerHTML = data.visits.map(visit => `
+            <details style="margin-bottom:8px;">
+                <summary><strong>${escapeHtml(formatISTFriendly(visit.start_utc) || "")}</strong> &mdash; ${escapeHtml(visit.summary)}</summary>
+                <ul style="margin:6px 0 0 18px; padding:0;">
+                    ${visit.entries.slice().reverse().map(e => `<li>${escapeHtml(istTimeOnly(e.at_utc))} &middot; ${escapeHtml(e.label)}${e.detail ? ": " + escapeHtml(e.detail) : ""}</li>`).join("")}
+                </ul>
+            </details>`).join("");
+    } catch (error) {
+        body.textContent = `Could not load activity: ${error.message}`;
+    }
+}
+
+function closeActivity() {
+    document.getElementById("activityPanel").style.display = "none";
 }
 
 function formatLastLoginLabel(value) {
@@ -479,9 +539,11 @@ function renderAccountsTable(customers) {
                 <td>${escapeHtml(customer.access_code || "")}</td>
                 <td>${statusBadge}</td>
                 <td>${escapeHtml(lastLoginLabel)}</td>
+                <td title="${escapeHtml(customer.last_active_at ? (formatISTFriendly(customer.last_active_at) || "") : "")}">${escapeHtml(formatRelativeTime(customer.last_active_at))}</td>
                 <td>${escapeHtml(createdLabel)}</td>
                 <td>
                     <div class="row-actions">
+                        <button type="button" class="secondary" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="showActivity(this)" title="See this dealer's recent activity">Activity</button>
                         <button type="button" class="secondary" data-user-id="${Number(customer.id)}" onclick="toggleAccountStatus(this)" title="${isActive ? "Pause this account's login access" : "Resume this account's login access"}">${toggleLabel}</button>
                         <button type="button" class="secondary" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="resetAccessCodeFromButton(this)" title="Set a new access code for this dealer -- use this if they've forgotten theirs">Reset</button>
                         <button type="button" class="btn-delete" data-user-id="${Number(customer.id)}" data-username="${escapeHtml(String(customer.username || ""))}" onclick="deleteAccountFromButton(this)">Delete</button>

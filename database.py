@@ -6,7 +6,7 @@ import sqlite3
 import logging
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from config import Config
 from utils.normalize import normalize_lookup_key
@@ -643,6 +643,27 @@ def _ensure_users_schema(conn):
         conn.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
     if "last_login" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN last_login TEXT")
+    if "last_active_at" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN last_active_at TEXT")
+
+    # Small rows only: no IPs, no user agents. ON DELETE CASCADE so deleting
+    # a dealer account takes their activity with it (foreign_keys is ON for
+    # every connection, see _connect()).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            at_utc TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_activity_user_at ON user_activity (user_id, at_utc)"
+    )
 
     conn.execute(
         """
@@ -1899,6 +1920,64 @@ def update_last_login(user_id):
         )
 
 
+def _utc_now_naive_iso():
+    # Naive-UTC ISO ("2026-10-09T12:00:00"): the convention static/shared.js's
+    # formatIST() expects, and independent of the server's local clock.
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def touch_last_active(user_id):
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE users SET last_active_at = ? WHERE id = ?",
+            (_utc_now_naive_iso(), int(user_id)),
+        )
+
+
+def add_user_activity(user_id, action, detail=None):
+    """Returns the new row id."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO user_activity (user_id, at_utc, action, detail) VALUES (?, ?, ?, ?)",
+            (int(user_id), _utc_now_naive_iso(), str(action)[:40], (str(detail)[:120] if detail else None)),
+        )
+        return int(cursor.lastrowid)
+
+
+def replace_user_activity(row_id, user_id, detail):
+    """Refreshes a just-written row (search type-ahead collapsing). Scoped by
+    user_id too so it can never touch another user's row."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE user_activity SET at_utc = ?, detail = ? WHERE id = ? AND user_id = ?",
+            (_utc_now_naive_iso(), (str(detail)[:120] if detail else None), int(row_id), int(user_id)),
+        )
+        return cursor.rowcount > 0
+
+
+def get_recent_user_activity(user_id, limit=50):
+    with get_connection() as conn:
+        user = conn.execute(
+            "SELECT id, username, role, last_active_at FROM users WHERE id = ?",
+            (int(user_id),),
+        ).fetchone()
+        if not user:
+            return None
+        rows = conn.execute(
+            "SELECT at_utc, action, detail FROM user_activity WHERE user_id = ? "
+            "ORDER BY at_utc DESC, id DESC LIMIT ?",
+            (int(user_id), int(limit)),
+        ).fetchall()
+    return {"user": _row_to_dict(user), "rows": [_row_to_dict(r) for r in rows]}
+
+
+def prune_user_activity(days=30):
+    cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat(timespec="seconds")
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM user_activity WHERE at_utc < ?", (cutoff,))
+        return cursor.rowcount
+
+
 def get_user_by_id(user_id):
     with get_connection() as conn:
         row = conn.execute(
@@ -1960,7 +2039,7 @@ def get_all_customers_with_details():
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, username, access_code, role, is_active, created_at, last_login
+            SELECT id, username, access_code, role, is_active, created_at, last_login, last_active_at
             FROM users
             WHERE role = 'customer'
             ORDER BY datetime(COALESCE(created_at, '1970-01-01T00:00:00')) DESC, id DESC

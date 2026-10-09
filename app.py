@@ -583,6 +583,300 @@ def _log_notable_requests(response):
     return response
 
 
+
+# ============================================================
+# USER ACTIVITY TRACKING (admin-visible "who used the app, when")
+# ============================================================
+# Remember Me only stretches the signed session cookie's lifetime, so
+# users.last_login says nothing about real usage. This records
+#   * users.last_active_at -- bumped by any person-initiated authenticated
+#     request, at most once per ACTIVITY_TOUCH_INTERVAL_SECONDS per user
+#   * user_activity rows   -- only for the meaningful actions in
+#     _ACTIVITY_ROW_BUILDERS / the /api/activity beacon below
+# Background traffic (pollers, health checks, image/static fetches, the
+# System panel's auto-refresh) never touches either. Nothing here may ever
+# fail a request, and nothing here writes car names or query strings to
+# app.log (they only go into the DB).
+ACTIVITY_TOUCH_INTERVAL_SECONDS = 60
+ACTIVITY_SEARCH_COLLAPSE_SECONDS = 10     # type-ahead keystrokes -> one row
+ACTIVITY_VIEW_CAR_COLLAPSE_SECONDS = 600  # same car reopened within 10 min -> refresh the row
+ACTIVITY_BEACON_MAX_PER_MINUTE = 30       # per user, /api/activity only
+ACTIVITY_RETENTION_DAYS = 30
+ACTIVITY_PRUNE_INTERVAL_SECONDS = 24 * 3600
+ACTIVITY_MAX_TRACKED_USERS = 5000         # hard cap on each in-memory dict
+ACTIVITY_VISIT_GAP_MINUTES = 30
+
+# Endpoints whose GETs count as a person using the app. Any GET not listed
+# here is treated as background/asset traffic and ignored (default-deny, so
+# a future poller can't silently inflate "last active"). Non-GET requests
+# (a click that POSTs) always count, except _ACTIVITY_EXCLUDED_ENDPOINTS.
+_ACTIVITY_COUNTED_GET_ENDPOINTS = {
+    # Pages / loads a person navigates to
+    "home", "cars", "designs", "change_password", "admin_accounts", "train",
+    "bulk_match", "system_panel",
+    # Searches and lookups a person triggers
+    "search.search_cars", "search.search_car_folders", "search.get_stock_items_for_car",
+    "get_all_items_for_car", "needs_category_queue", "needs_image_matching_queue",
+    "search_all_stock_items", "list_product_categories", "get_unmapped_images_route",
+    "train_images", "resolve_car_from_folder", "suggest_match_route", "category_usage",
+}
+# Never counted for any method (public/machine endpoints and pollers).
+_ACTIVITY_EXCLUDED_ENDPOINTS = {
+    "static", "health", "robots_txt", "logout",
+    "intake_sync_data", "trigger_rescan", "system_authorize_device",
+}
+
+_activity_lock = threading.Lock()
+_activity_last_touch = {}    # user_id -> time.monotonic() of last last_active write
+_activity_last_collapsed = {}  # (user_id, action, key) -> (time.monotonic(), user_activity row id)
+_activity_beacon_window = {}  # user_id -> (window_start_monotonic, count)
+_activity_last_prune = 0.0
+
+
+def _bounded_put(store, key, value):
+    if len(store) >= ACTIVITY_MAX_TRACKED_USERS and key not in store:
+        store.clear()
+    store[key] = value
+
+
+def _activity_counts_for_request():
+    """True if this request is a person acting (vs background traffic)."""
+    endpoint = request.endpoint
+    if endpoint is None or endpoint in _ACTIVITY_EXCLUDED_ENDPOINTS:
+        return False
+    if request.method in ("GET", "HEAD"):
+        return endpoint in _ACTIVITY_COUNTED_GET_ENDPOINTS
+    return True
+
+
+def _activity_touch(user_id):
+    """Bump users.last_active_at at most once per interval per user. The slot
+    is claimed under the lock BEFORE the write, so concurrent requests can't
+    double-write, and a failing DB isn't hammered on every request."""
+    now = time.monotonic()
+    with _activity_lock:
+        last = _activity_last_touch.get(user_id)
+        if last is not None and now - last < ACTIVITY_TOUCH_INTERVAL_SECONDS:
+            return
+        _bounded_put(_activity_last_touch, user_id, now)
+    db.touch_last_active(user_id)
+
+
+def _activity_record(user_id, action, detail=None):
+    """Writes one user_activity row. For collapsible actions (a search typed
+    keystroke by keystroke, the same car reopened), a repeat inside the
+    window refreshes the existing row's timestamp/detail instead of adding
+    another. Per user a search collapses on its own; view_car collapses per
+    (user, car)."""
+    if action == "search":
+        window, key = ACTIVITY_SEARCH_COLLAPSE_SECONDS, None
+    elif action == "view_car":
+        window, key = ACTIVITY_VIEW_CAR_COLLAPSE_SECONDS, detail
+    else:
+        db.add_user_activity(user_id, action, detail)
+        return
+    slot = (user_id, action, key)
+    now = time.monotonic()
+    with _activity_lock:
+        prev = _activity_last_collapsed.get(slot)
+    if prev and now - prev[0] < window and db.replace_user_activity(prev[1], user_id, detail):
+        with _activity_lock:
+            _bounded_put(_activity_last_collapsed, slot, (now, prev[1]))
+        return
+    row_id = db.add_user_activity(user_id, action, detail)
+    with _activity_lock:
+        _bounded_put(_activity_last_collapsed, slot, (now, row_id))
+
+
+def _activity_row_for_request(response):
+    """(action, detail) for the meaningful-action routes, else None.
+    Only called for successful (<400) responses."""
+    endpoint = request.endpoint
+    if endpoint == "login" and request.method == "POST":
+        return ("login", None)
+    if endpoint == "designs":
+        car = (request.args.get("car") or "").strip()
+        return ("view_car", car) if car else None
+    if endpoint == "search.search_cars":
+        query = (request.args.get("q") or "").strip()
+        page = request.args.get("page", 1, type=int)
+        return ("search", query) if query and page == 1 else None
+    if endpoint == "api_report_item" and request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        return ("report", str(body.get("car") or "").strip())
+    if request.method != "POST" or _current_role() != "admin":
+        return None
+    body = request.get_json(silent=True) or {}
+    if endpoint == "assign_category":
+        names = body.get("stock_item_names")
+        count = len(names) if isinstance(names, list) else 0
+        first = str(names[0]).strip() if count == 1 else ""
+        return ("assign_category", f"{body.get('category', '')} × {count}" + (f" · {first}" if first else ""))
+    if endpoint == "add_category_route":
+        return ("category_add", str(body.get("name") or ""))
+    if endpoint == "rename_category_route":
+        return ("category_rename", f"{body.get('old_name', '')} → {body.get('new_name', '')}")
+    if endpoint == "merge_categories_route":
+        return ("category_merge", f"{body.get('source_name', '')} → {body.get('target_name', '')}")
+    if endpoint == "delete_category_route":
+        return ("category_delete", str(body.get("name") or ""))
+    return None
+
+
+@app.after_request
+def _track_user_activity(response):
+    try:
+        user_id = _current_user_id()
+        if user_id is None or _current_role() is None or response.status_code >= 400:
+            return response
+        if not _activity_counts_for_request():
+            return response
+        _activity_touch(user_id)
+        row = _activity_row_for_request(response)
+        if row:
+            _activity_record(user_id, row[0], row[1])
+    except Exception as exc:
+        # Class name only: never the message/params, which could carry a car
+        # name or search text.
+        logger.warning("activity tracking failed (%s)", type(exc).__name__)
+    return response
+
+
+_ACTIVITY_BEACON_ACTIONS = {"share_image", "share_longpress", "copy_image"}
+
+
+@app.route("/api/activity", methods=["POST"])
+def api_activity():
+    """Client-reported actions the server can't see on its own (shares and
+    clipboard copies happen entirely in the browser, and the image routes
+    they fetch are the same ones the grid uses for thumbnails). Writes only
+    the caller's OWN row, whitelisted actions only, hard rate limit. Always
+    answers 204 so a tracking hiccup is invisible to the user."""
+    try:
+        user_id = _current_user_id()
+        body = request.get_json(silent=True) or {}
+        action = str(body.get("action") or "")
+        if user_id is not None and action in _ACTIVITY_BEACON_ACTIONS:
+            now = time.monotonic()
+            with _activity_lock:
+                start, count = _activity_beacon_window.get(user_id, (now, 0))
+                if now - start >= 60:
+                    start, count = now, 0
+                allowed = count < ACTIVITY_BEACON_MAX_PER_MINUTE
+                if allowed:
+                    _bounded_put(_activity_beacon_window, user_id, (start, count + 1))
+            if allowed:
+                try:
+                    n = max(1, min(int(body.get("count") or 1), 999))
+                except (TypeError, ValueError):
+                    n = 1
+                car = str(body.get("car") or "").strip()[:100]
+                _activity_record(user_id, action, f"{n} img · {car}" if car else f"{n} img")
+    except Exception as exc:
+        logger.warning("activity beacon failed (%s)", type(exc).__name__)
+    return "", 204
+
+
+def _maybe_prune_user_activity():
+    """Called from the existing resource-monitor timer tick (no new thread);
+    does real work at most once per ACTIVITY_PRUNE_INTERVAL_SECONDS."""
+    global _activity_last_prune
+    now = time.monotonic()
+    if _activity_last_prune and now - _activity_last_prune < ACTIVITY_PRUNE_INTERVAL_SECONDS:
+        return
+    _activity_last_prune = now
+    removed = db.prune_user_activity(ACTIVITY_RETENTION_DAYS)
+    logger.info("Pruned %d user_activity row(s) older than %d days", removed, ACTIVITY_RETENTION_DAYS)
+
+
+_ACTIVITY_LABELS = {
+    "login": "Logged in",
+    "view_car": "Viewed car",
+    "search": "Searched",
+    "share_image": "Shared images",
+    "share_longpress": "Shared images (long-press)",
+    "copy_image": "Copied image",
+    "report": "Reported missing items",
+    "assign_category": "Assigned category",
+    "category_add": "Added category",
+    "category_rename": "Renamed category",
+    "category_merge": "Merged categories",
+    "category_delete": "Deleted category",
+}
+
+
+def _plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _summarize_visit(entries):
+    counts = {}
+    images_shared = images_copied = items_tagged = 0
+    for e in entries:
+        counts[e["action"]] = counts.get(e["action"], 0) + 1
+        detail = e.get("detail") or ""
+        m = re.match(r"(\d+) img", detail)
+        if e["action"] in ("share_image", "share_longpress"):
+            images_shared += int(m.group(1)) if m else 1
+        elif e["action"] == "copy_image":
+            images_copied += int(m.group(1)) if m else 1
+        elif e["action"] == "assign_category":
+            m = re.search(r"× (\d+)", detail)
+            items_tagged += int(m.group(1)) if m else 1
+    parts = []
+    if counts.get("view_car"):
+        parts.append(f"viewed {_plural(counts['view_car'], 'car')}")
+    if counts.get("search"):
+        parts.append(f"searched {_plural(counts['search'], 'time')}")
+    if images_shared:
+        parts.append(f"shared {_plural(images_shared, 'image')}")
+    if images_copied:
+        parts.append(f"copied {_plural(images_copied, 'image')}")
+    if counts.get("report"):
+        parts.append(f"sent {_plural(counts['report'], 'report')}")
+    if items_tagged:
+        parts.append(f"tagged {_plural(items_tagged, 'item')}")
+    category_edits = sum(counts.get(k, 0) for k in ("category_add", "category_rename", "category_merge", "category_delete"))
+    if category_edits:
+        parts.append(f"edited categories {_plural(category_edits, 'time')}")
+    if not parts:
+        return "logged in" if counts.get("login") else "browsed"
+    return ", ".join(parts)
+
+
+def group_activity_into_visits(rows, gap_minutes=ACTIVITY_VISIT_GAP_MINUTES):
+    """rows: newest-first [{at_utc, action, detail}]. Returns newest-first
+    visits; a gap of >= gap_minutes between consecutive actions starts a new
+    visit. Entries inside a visit are chronological."""
+    if not rows:
+        return []
+    gap = timedelta(minutes=gap_minutes)
+    chronological = list(reversed(rows))
+    groups = [[chronological[0]]]
+    prev_time = datetime.fromisoformat(chronological[0]["at_utc"])
+    for row in chronological[1:]:
+        t = datetime.fromisoformat(row["at_utc"])
+        if t - prev_time >= gap:
+            groups.append([])
+        groups[-1].append(row)
+        prev_time = t
+    visits = []
+    for group in reversed(groups):
+        entries = [{
+            "at_utc": r["at_utc"],
+            "action": r["action"],
+            "label": _ACTIVITY_LABELS.get(r["action"], r["action"]),
+            "detail": r.get("detail"),
+        } for r in group]
+        visits.append({
+            "start_utc": group[0]["at_utc"],
+            "end_utc": group[-1]["at_utc"],
+            "summary": _summarize_visit(entries),
+            "entries": entries,
+        })
+    return visits
+
+
 @app.context_processor
 def inject_session_context():
     role = _current_role()
@@ -1432,6 +1726,12 @@ def start_resource_monitor():
             )
         except Exception:
             logger.exception("Resource monitor logging failed")
+        # Piggybacks on this existing timer (no extra thread); self-limits to
+        # once a day. Defined later in the module, resolved at call time.
+        try:
+            _maybe_prune_user_activity()
+        except Exception:
+            logger.exception("user_activity prune failed")
         _resource_log_timer = threading.Timer(Config.RESOURCE_LOG_INTERVAL_SECONDS, _job)
         _resource_log_timer.daemon = True
         _resource_log_timer.start()
@@ -3320,9 +3620,25 @@ def admin_get_all_customers():
             "is_active": bool(customer.get("is_active", 1)),
             "created_at": customer.get("created_at"),
             "last_login": customer.get("last_login"),
+            "last_active_at": customer.get("last_active_at"),
         }
         for customer in customers
     ])
+
+
+@app.route("/admin/user_activity/<int:user_id>")
+@admin_required
+@accounts_access_required
+def admin_user_activity(user_id):
+    """Admin-only: a user's last ~50 actions grouped into visits."""
+    data = db.get_recent_user_activity(user_id, limit=50)
+    if data is None:
+        return jsonify({"error": "user not found"}), 404
+    return jsonify({
+        "username": data["user"]["username"],
+        "last_active_at": data["user"].get("last_active_at"),
+        "visits": group_activity_into_visits(data["rows"]),
+    })
 
 
 @app.route("/admin/toggle_user_status/<int:user_id>", methods=["POST"])

@@ -3077,6 +3077,23 @@ function updateCarReportRow(items) {
     }
 }
 
+// Fire-and-forget usage beacon (see /api/activity). Never awaited, never
+// surfaces an error: tracking must not be able to affect sharing/copying.
+function logActivity(action, count) {
+    try {
+        fetch("/api/activity", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                action,
+                count: count || 1,
+                car: (document.getElementById("carSelect") || {}).value || "",
+            }),
+            keepalive: true,
+        }).catch(() => {});
+    } catch (e) { /* ignore */ }
+}
+
 async function copyImageToClipboard(src) {
     const response = await fetch(getImageSource(src));
     if (!response.ok) {
@@ -3088,6 +3105,7 @@ async function copyImageToClipboard(src) {
         try {
             const pngBlob = await convertImageBlobToPng(blob);
             await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+            logActivity("copy_image", 1);
             return;
         } catch (error) {
             console.warn("Clipboard image copy failed, falling back to download.", error);
@@ -4628,6 +4646,7 @@ async function shareBatchesSequentially(succeeded, skippedNote, mode) {
         }
 
         // Shared successfully.
+        logActivity(isAdmin ? "share_image" : "share_longpress", batch.length);
         sharedCount += batch.length;
         if (isLast) {
             const countLabel = batches.length > 1 ? `all ${total} images` : `${total} image${total === 1 ? "" : "s"}`;
