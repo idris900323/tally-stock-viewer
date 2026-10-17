@@ -9,6 +9,7 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="{{ url_for('static', filename='shared.js') }}"></script>
+    <script src="{{ url_for('static', filename='data_sync.js') }}"></script>
     <style>
         :root {
             --bg: #f4f7fb;
@@ -2871,9 +2872,43 @@ async function initializePage() {
     }
 }
 
+// "Data updated" notice (static/data_sync.js): refreshes only the dashboard
+// counts and any already-loaded work queue, never the image being matched.
+async function refreshTrainDataInPlace() {
+    const versionBeforeFetch = DataSync.current();
+    const res = await fetch("/mapping_stats", { cache: "no-store" });
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+    }
+    const stats = await res.json();
+    updateProgress(stats);
+    if (stats.category_stats) {
+        updateCategoryStats(stats.category_stats);
+    }
+    await Promise.all(Object.keys(workQueues).filter(key => workQueues[key].loaded).map(key => loadWorkQueue(key)));
+    DataSync.markApplied(versionBeforeFetch);
+}
+
+function isTrainViewBusy() {
+    if (document.querySelector(".modal.open")) {
+        return true;
+    }
+    const active = document.activeElement;
+    return Boolean(active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT"));
+}
+
 window.addEventListener("DOMContentLoaded", () => {
     initializePage().catch(error => {
         showNotice("error", error.message);
+    });
+    DataSync.init({
+        version: {{ page_data_version|tojson }},
+        adminVersion: {{ page_admin_version|tojson }},
+        watch: ["data"],
+        intervalMs: 30000,
+        isBusy: isTrainViewBusy,
+        refresh: refreshTrainDataInPlace,
+        label: "Data updated · tap to refresh",
     });
 
     document.getElementById("imageModal").addEventListener("click", event => {

@@ -1,9 +1,11 @@
+import functools
 import glob
 import hashlib
 import os
 import shutil
 import sqlite3
 import logging
+import threading
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -794,6 +796,92 @@ def _row_to_dict(row):
     return dict(row) if row is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Content signatures -- what the "Stock updated" notice keys off.
+#
+# A signature is a hash of exactly the stored rows a dealer (or, for the
+# accounts signature, an admin) can SEE, so it changes only when what they
+# see changes -- never for last_active / last_login / user_activity writes,
+# image scan_date refreshes, or an admin action that rewrote identical
+# values. It is derived from stored content (not a counter), so it is the
+# same after a restart and needs no table or setting of its own.
+#
+# The mutators below are decorated to flag the signature stale; the next
+# get_content_signatures() call (one poll, after a change) recomputes it.
+# Steady-state polls do no DB work at all.
+# ---------------------------------------------------------------------------
+_signature_lock = threading.Lock()
+_dealer_dirty = True
+_accounts_dirty = True
+_dealer_signature = ""
+_accounts_signature = ""
+
+
+def _marks_content_dirty(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        global _dealer_dirty
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _dealer_dirty = True
+    return wrapper
+
+
+def _marks_accounts_dirty(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        global _accounts_dirty
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _accounts_dirty = True
+    return wrapper
+
+
+def _hash_rows(conn, queries):
+    digest = hashlib.sha1()
+    for sql in queries:
+        digest.update(sql.encode("ascii"))
+        for row in conn.execute(sql):
+            digest.update(repr(tuple(row)).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def get_content_signatures():
+    """(dealer_signature, accounts_signature). Recomputed only if a flagged
+    mutator ran since the last call. The dirty flag is cleared BEFORE the
+    read, so a write landing mid-read re-flags it and is picked up next time."""
+    global _dealer_dirty, _accounts_dirty, _dealer_signature, _accounts_signature
+    with _signature_lock:
+        if _dealer_dirty or _accounts_dirty:
+            do_dealer, do_accounts = _dealer_dirty, _accounts_dirty
+            _dealer_dirty = _accounts_dirty = False
+            try:
+                with get_connection() as conn:
+                    if do_dealer:
+                        # scan_date is deliberately left out: a rescan
+                        # refreshes it on every image without changing
+                        # anything visible.
+                        _dealer_signature = _hash_rows(conn, (
+                            "SELECT name, abbreviation, sort_order FROM categories ORDER BY id",
+                            "SELECT stock_item_key, category FROM design_categories ORDER BY stock_item_key",
+                            "SELECT image_id, stock_item_name FROM mappings ORDER BY image_id, stock_item_name",
+                            "SELECT id, car_folder, filename, filepath FROM images ORDER BY id",
+                        ))
+                    if do_accounts:
+                        # last_login / last_active / access_code excluded.
+                        _accounts_signature = _hash_rows(conn, (
+                            "SELECT id, username, role, is_active FROM users ORDER BY id",
+                        ))
+            except Exception:
+                _dealer_dirty = _dealer_dirty or do_dealer
+                _accounts_dirty = _accounts_dirty or do_accounts
+                raise
+        return _dealer_signature, _accounts_signature
+
+
+@_marks_content_dirty
 def add_image(car_folder, filename, filepath):
     filepath = _validate_filepath(filepath)
     scan_date = datetime.now().isoformat(timespec="seconds")
@@ -816,6 +904,7 @@ def add_image(car_folder, filename, filepath):
         raise
 
 
+@_marks_content_dirty
 def add_images_batch(records):
     """Batch upsert image records.
 
@@ -853,6 +942,7 @@ def add_images_batch(records):
         raise
 
 
+@_marks_content_dirty
 def add_mapping(image_id, stock_item_name, car_model, confidence, confirmed_by="human"):
     stock_item_name = _validate_stock_item_name(stock_item_name)
     confidence = _validate_confidence(confidence)
@@ -877,6 +967,7 @@ def add_mapping(image_id, stock_item_name, car_model, confidence, confirmed_by="
         raise
 
 
+@_marks_content_dirty
 def remove_mapping_by_image_id(image_id):
     try:
         with get_connection() as conn:
@@ -940,6 +1031,7 @@ def get_mapping_by_image_id(image_id):
     return _row_to_dict(row)
 
 
+@_marks_content_dirty
 def remove_mappings_for_stock_item(stock_item_name, exclude_image_id=None):
     """Delete any mapping(s) pointing at stock_item_name, optionally excluding one image_id.
 
@@ -1208,6 +1300,7 @@ def count_items_for_category(name):
     return int(row["count"] if row else 0)
 
 
+@_marks_content_dirty
 def add_category(name):
     """Adds a new category (Part 3.1): auto-generated abbreviation, always
     appended to the end of the display order. Raises ValueError on a blank
@@ -1235,6 +1328,7 @@ def add_category(name):
     return {"id": category_id, "name": value, "sort_order": next_order, "abbreviation": abbreviation}
 
 
+@_marks_content_dirty
 def rename_category(old_name, new_name):
     """Renames a category and cascades the new name onto every
     design_categories row that referenced the old one, atomically (Part
@@ -1272,6 +1366,7 @@ def rename_category(old_name, new_name):
     return affected
 
 
+@_marks_content_dirty
 def merge_categories(source_name, target_name):
     """Moves every design_categories row from source_name to target_name,
     then deletes the now-empty source category row, atomically (Part 3.2's
@@ -1304,6 +1399,7 @@ def merge_categories(source_name, target_name):
     return affected
 
 
+@_marks_content_dirty
 def delete_category(name):
     """Deletes the category row and REMOVES (not blanks) every
     design_categories row that had it, atomically (Part 3.3) -- reverting
@@ -1333,6 +1429,7 @@ def delete_category(name):
     return affected_names
 
 
+@_marks_content_dirty
 def update_category_abbreviation(name, abbreviation):
     """System panel abbreviation override (Part 6.3)."""
     value = str(name or "").strip()
@@ -1348,6 +1445,7 @@ def update_category_abbreviation(name, abbreviation):
     return abbr_value
 
 
+@_marks_content_dirty
 def move_category(name, direction):
     """Swaps sort_order with the immediate neighbor above/below (Part 6.2's
     up/down arrow buttons) -- a simple adjacent swap, no drag-and-drop
@@ -1386,6 +1484,7 @@ def move_category(name, direction):
         conn.close()
 
 
+@_marks_content_dirty
 def upsert_design_category(stock_item_name, category, assigned_by):
     """Assign/overwrite a stock item's material-tier category (last-write-wins,
     see design_categories table). Keyed on normalize_lookup_key() so the same
@@ -1431,6 +1530,7 @@ def get_category_for_stock_item(stock_item_name):
     return row["category"] if row else None
 
 
+@_marks_content_dirty
 def remove_design_category(stock_item_name):
     """Clears a single stock item's category assignment -- the explicit
     "(No category)" clear action in Training Mode's confirm-match category
@@ -1863,6 +1963,7 @@ def find_duplicate_image_rows():
     return duplicate_groups
 
 
+@_marks_content_dirty
 def remove_missing_image_rows(image_ids):
     """Delete the given image rows (and their mappings, via ON DELETE CASCADE).
 
@@ -2044,6 +2145,7 @@ def get_user_by_id(user_id):
     return _row_to_dict(row)
 
 
+@_marks_accounts_dirty
 def create_customer_user(username, access_code):
     username_value = str(username or "").strip()
     access_code_value = str(access_code or "").strip()
@@ -2105,6 +2207,7 @@ def get_all_customers_with_details():
     return [_row_to_dict(row) for row in rows]
 
 
+@_marks_accounts_dirty
 def toggle_customer_active_status(user_id):
     user_id_value = int(user_id)
     with get_connection() as conn:
@@ -2124,6 +2227,7 @@ def toggle_customer_active_status(user_id):
     return user
 
 
+@_marks_accounts_dirty
 def set_all_customer_active_status(is_active):
     status_value = 1 if is_active else 0
     with get_connection() as conn:
@@ -2134,6 +2238,7 @@ def set_all_customer_active_status(is_active):
     return cursor.rowcount
 
 
+@_marks_accounts_dirty
 def delete_customer_user(user_id):
     user_id_value = int(user_id)
     with get_connection() as conn:

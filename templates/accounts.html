@@ -522,6 +522,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='shared.js') }}"></script>
+<script src="{{ url_for('static', filename='data_sync.js') }}"></script>
 <script>
 const initialStatus = {{ status_message|tojson }};
 const initialError = {{ error_message|tojson }};
@@ -1098,6 +1099,22 @@ window.addEventListener("DOMContentLoaded", () => {
         showError(initialError);
     }
     loadCustomerAccounts();
+    DataSync.init({
+        version: {{ page_data_version|tojson }},
+        adminVersion: {{ page_admin_version|tojson }},
+        watch: ["admin"],
+        intervalMs: 30000,
+        isBusy: () => {
+            const active = document.activeElement;
+            return Boolean(active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT"));
+        },
+        refresh: async () => {
+            const versionBeforeFetch = DataSync.current();
+            await loadCustomerAccounts();
+            DataSync.markApplied(versionBeforeFetch);
+        },
+        label: "Accounts updated · tap to refresh",
+    });
 });
 </script>
 </body>

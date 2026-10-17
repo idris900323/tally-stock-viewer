@@ -21,6 +21,7 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script src="{{ url_for('static', filename='shared.js') }}"></script>
+    <script src="{{ url_for('static', filename='data_sync.js') }}"></script>
     <style>
         :root {
             --bg: #f3f6fb;
@@ -5173,9 +5174,12 @@ async function updateTimestamp() {
     }
 
     try {
-        const res = await fetch("/last_update");
+        const res = await fetch("/last_update", { cache: "no-store" });
         if (res.ok) {
             const data = await res.json();
+            if (window.DataSync) {
+                DataSync.observe(data);
+            }
             if (data.formatted) {
                 document.getElementById("lastUpdate").textContent = `Last updated: ${data.formatted}`;
                 checkTimestampFreshness();
@@ -5415,6 +5419,7 @@ async function loadDesigns() {
         list.innerHTML = renderSkeletonCards(SKELETON_CARD_COUNT);
         container.classList.add("show");
 
+        const versionBeforeFetch = window.DataSync ? DataSync.current() : null;
         const res = await fetch(`/designs?car=${encodeURIComponent(car)}`);
 
         if (!res.ok) {
@@ -5425,6 +5430,9 @@ async function loadDesigns() {
         }
 
         const data = await res.json();
+        if (versionBeforeFetch) {
+            DataSync.markApplied(versionBeforeFetch);
+        }
         list.innerHTML = "";
 
         if (Array.isArray(data) && data.length > 0) {
@@ -5444,6 +5452,52 @@ async function loadDesigns() {
     } catch (error) {
         showError(`Error loading designs: ${error.message}`);
     }
+}
+
+// ---- "Stock updated" notice support (static/data_sync.js) ----
+// True when swapping the view under the user would lose their place or work.
+function isViewBusyForRefresh() {
+    if (selectMode || categoryAssignMode || batchContinuePending || shareInProgress) {
+        return true;
+    }
+    if (document.querySelector(".modal.open") || document.querySelector(".select2-container--open")) {
+        return true;
+    }
+    const active = document.activeElement;
+    return Boolean(active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT"));
+}
+
+// In-place refresh: re-fetch the open car's designs and swap the list
+// without the skeleton flash or a scroll jump, then the category list.
+async function refreshOpenViewInPlace() {
+    const carSelect = document.getElementById("carSelect");
+    const car = carSelect ? carSelect.value : "";
+    const versionBeforeFetch = DataSync.current();
+    const scrollY = window.scrollY;
+    await refreshCategoryData();
+    if (car) {
+        const res = await fetch(`/designs?car=${encodeURIComponent(car)}`);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const list = document.getElementById("designsList");
+        if (Array.isArray(data) && data.length > 0) {
+            list.innerHTML = data.map((item, index) => renderDesignItem(item, index)).join("");
+            document.getElementById("designCount").textContent = `Total: ${data.length} designs with stock`;
+            updateCarReportRow(data);
+        } else {
+            updateCarReportRow([]);
+            list.innerHTML = '<li><div class="empty-state">No designs found for this car.</div></li>';
+            document.getElementById("designCount").textContent = "Total: 0 designs with stock";
+        }
+        updateSelectModeUI();
+    }
+    if (isAdmin) {
+        await updateTimestamp();
+    }
+    DataSync.markApplied(versionBeforeFetch);
+    window.scrollTo(0, scrollY);
 }
 
 async function reloadData() {
@@ -5844,23 +5898,33 @@ document.addEventListener("click", event => {
 window.addEventListener("DOMContentLoaded", () => {
     loadCars();
     if (isAdmin) {
-        setInterval(() => {
-            updateTimestamp();
-        }, 30000);
         // Picks up a still-running badge regeneration job on page load too --
         // e.g. an abbreviation override just triggered from the System panel,
         // then the admin navigated back here. pollBadgeRegenStatus() itself
         // is a no-op (hides the indicator) if nothing is running.
         startBadgeRegenPolling();
         pollCustomerReports();
-        setInterval(pollCustomerReports, REPORT_POLL_INTERVAL_MS);
     }
+    // One scheduler for everything that polls (see static/data_sync.js): it
+    // pauses while the tab is hidden and re-checks immediately on return.
+    // Admins keep their 30s cadence (timestamp + refresh status + dealer
+    // reports); customers had no poll before and get one /last_update per
+    // minute while the tab is visible.
+    DataSync.init({
+        version: {{ page_data_version|tojson }},
+        adminVersion: {{ page_admin_version|tojson }},
+        watch: ["data"],
+        intervalMs: isAdmin ? 30000 : 60000,
+        isBusy: isViewBusyForRefresh,
+        refresh: refreshOpenViewInPlace,
+        poll: isAdmin ? async () => { await updateTimestamp(); await pollCustomerReports(); } : undefined,
+    });
     if (isCustomer) {
         loadPopup();
         loadBanner();
         maybeScrollToSectionFromUrl();
     }
-    setInterval(checkTimestampFreshness, 10000);
+    setInterval(() => { if (!document.hidden) checkTimestampFreshness(); }, 10000);
 
     const designsList = document.getElementById("designsList");
     if (designsList) {

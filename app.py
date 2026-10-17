@@ -1,5 +1,6 @@
 '''idris' special project'''
 from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for, g
+import hashlib
 import hmac
 import json
 import os
@@ -897,7 +898,13 @@ def inject_session_context():
     # "Assign Category" picker on the client (see index.html); design_category_choices
     # keeps the same shape existing templates already iterate over.
     live_categories = db.get_all_categories()
+    try:
+        versions = get_data_versions()
+    except Exception:
+        versions = {}
     return {
+        "page_data_version": versions.get("data_version", ""),
+        "page_admin_version": versions.get("admin_version", "") if role == "admin" else "",
         "current_role": role,
         "current_user_id": _current_user_id(),
         "current_username": session.get("username", ""),
@@ -2189,6 +2196,138 @@ def _load_car_groups_from_cache_or_excel():
     return car_groups
 
 
+# ---------------------------------------------------------------------------
+# Data version -- lets an open page notice that what it shows has changed.
+#
+# data_version = hash(content of the three feeder cache files, database
+# dealer-signature). Both halves are derived from STORED CONTENT, so the
+# value is identical after a restart and an identical feeder re-push (same
+# bytes written again) leaves it unchanged. It deliberately does not look at
+# FEEDER_LAST_SEEN_AT, file mtimes, or the user/activity tables.
+# admin_version is separate: the accounts signature alone (id, username,
+# role, active flag -- never last_login/last_active), for the admin-only
+# Manage Accounts page. Recomputed lazily, only after one of the inputs
+# was written -- polling itself does no file or DB work.
+# ---------------------------------------------------------------------------
+_VERSION_LOCK = threading.Lock()
+_INTAKE_APPLY_LOCK = threading.Lock()
+_INTAKE_LOCK_TIMEOUT_SECONDS = 30
+_FEEDER_CONTENT_PATHS = None  # set on first use (constants above are final by then)
+_feeder_dirty = True
+_feeder_hold = False  # True while an intake push is mid-write (3 files)
+_feeder_fingerprint = ""
+
+
+def _feeder_content_paths():
+    global _FEEDER_CONTENT_PATHS
+    if _FEEDER_CONTENT_PATHS is None:
+        _FEEDER_CONTENT_PATHS = tuple(
+            os.path.abspath(p)
+            for p in (CAR_MASTER_CACHE_JSON, MAIN_HIERARCHY_CACHE_JSON, ITEM_STOCK_CACHE_JSON)
+        )
+    return _FEEDER_CONTENT_PATHS
+
+
+def _note_json_written(path):
+    global _feeder_dirty
+    if os.path.abspath(path) in _feeder_content_paths():
+        _feeder_dirty = True
+
+
+def _normalize_feeder_payload(path, payload):
+    """In place (the parsed copy is ours alone, so no second copy is made):
+    whole-number floats become ints, and the order of item_stock rows / of
+    children within a parent is made canonical -- Tally's collection order
+    isn't a stock change, so the same Tally data must always hash the same.
+    Parent (car) order is kept: car_master is already sorted by the feeder
+    and a changed car list is a real change."""
+    def fix_floats(rows):
+        stack = [rows]
+        while stack:
+            node = stack.pop()
+            items = node.items() if isinstance(node, dict) else enumerate(node)
+            for key, value in list(items):
+                if isinstance(value, float) and value.is_integer():
+                    node[key] = int(value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+
+    def row_key(row):
+        if isinstance(row, dict):
+            return (str(row.get("item_name", "")), str(row.get("qty", "")), str(sorted(row)))
+        return (str(row), "", "")
+
+    if isinstance(payload, (dict, list)):
+        fix_floats(payload)
+    resolved = os.path.abspath(path)
+    if resolved == os.path.abspath(ITEM_STOCK_CACHE_JSON) and isinstance(payload, list):
+        payload.sort(key=row_key)
+    elif resolved == os.path.abspath(MAIN_HIERARCHY_CACHE_JSON) and isinstance(payload, list):
+        for entry in payload:
+            if isinstance(entry, dict) and isinstance(entry.get("children"), list):
+                entry["children"].sort(key=row_key)
+    return payload
+
+
+# path -> (sha256 of the raw file bytes, digest of its canonical content)
+_feeder_file_state = {}
+
+
+def _raw_file_hash(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _canonical_file_digest(path):
+    """Hex digest of a file's canonical content. Streams the raw bytes first;
+    if they match what was hashed last time the cached canonical digest is
+    reused and NOTHING is parsed. Only changed bytes are parsed, and the
+    canonical text is fed to the hash in chunks (never built as one string)."""
+    try:
+        raw = _raw_file_hash(path)
+        cached = _feeder_file_state.get(path)
+        if cached and cached[0] == raw:
+            return cached[1]
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload = _normalize_feeder_payload(path, payload)
+        digest = hashlib.sha256()
+        encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        for piece in encoder.iterencode(payload):
+            digest.update(piece.encode("utf-8"))
+        del payload
+        _feeder_file_state[path] = (raw, digest.hexdigest())
+        return _feeder_file_state[path][1]
+    except (OSError, ValueError):
+        _feeder_file_state.pop(path, None)
+        return "-"
+
+
+def _compute_feeder_fingerprint():
+    digest = hashlib.sha1()
+    for path in _feeder_content_paths():
+        digest.update(_canonical_file_digest(path).encode("ascii"))
+        digest.update(b"|")
+    return digest.hexdigest()
+
+
+def get_data_versions():
+    """{'data_version': str, 'admin_version': str}. Cheap after the first call."""
+    global _feeder_dirty, _feeder_fingerprint
+    with _VERSION_LOCK:
+        if _feeder_dirty and not _feeder_hold:
+            _feeder_dirty = False
+            _feeder_fingerprint = _compute_feeder_fingerprint()
+        fingerprint = _feeder_fingerprint
+    dealer_sig, accounts_sig = db.get_content_signatures()
+    data_version = hashlib.sha1(f"{fingerprint}|{dealer_sig}".encode()).hexdigest()[:12]
+    admin_version = hashlib.sha1(accounts_sig.encode()).hexdigest()[:12]
+    return {"data_version": data_version, "admin_version": admin_version}
+
+
 def _atomic_json_write(path, data, retries=10, retry_delay=0.05):
     """Writes JSON atomically: temp file + os.replace, so a concurrent
     reader (cloud_backup.py streaming this same file to Drive in the
@@ -2209,6 +2348,7 @@ def _atomic_json_write(path, data, retries=10, retry_delay=0.05):
     for attempt in range(retries):
         try:
             os.replace(temp_path, path)
+            _note_json_written(path)
             return
         except PermissionError:
             if attempt == retries - 1:
@@ -5415,7 +5555,12 @@ def remove_missing_images():
 
 @app.route("/mapping_stats")
 def mapping_stats():
-    return jsonify(db.get_mapping_stats())
+    stats = db.get_mapping_stats()
+    if _current_role() == "admin":
+        # The Train Matches page refreshes its dashboard counts in place
+        # from this one call (see refreshTrainDataInPlace() in train.html).
+        stats = {**stats, "category_stats": _compute_category_completion_stats()}
+    return jsonify(stats)
 
 
 def run_full_refresh_job():
@@ -5557,16 +5702,38 @@ def intake_sync_data():
     ):
         return jsonify({"error": "item_stock must be a list of objects each containing 'item_name' and 'qty'."}), 400
 
+    global _feeder_hold, _feeder_dirty
+    # One push applies at a time: two overlapping pushes would otherwise
+    # interleave their three file writes (car list from one, stock from the
+    # other). _feeder_hold keeps get_data_versions() from fingerprinting a
+    # half-applied push; taking _VERSION_LOCK to raise it also waits out any
+    # fingerprint already running, so a compute can never overlap the writes.
+    # Taken only now, after the body has been received and parsed (waitress
+    # hands the view a complete request). A push stuck behind another gives up
+    # after the timeout with a 503 -- the feeder retries on its next cycle --
+    # rather than holding a server thread indefinitely.
+    if not _INTAKE_APPLY_LOCK.acquire(timeout=_INTAKE_LOCK_TIMEOUT_SECONDS):
+        logger.warning("Cloud intake: another push is still being applied; rejecting this one with 503")
+        return jsonify({"error": "Another push is still being applied. Retry shortly."}), 503
     try:
-        # Reuses the exact same write paths a local Tally-sourced refresh
-        # uses -- this data just came from a POST body instead of a fetch.
-        save_car_master_to_file(car_master)
-        save_main_hierarchy_to_file(main_hierarchy)
-        _save_item_stock_data(item_stock)
-        load_data(refresh_first=False)
-    except Exception as exc:
-        logger.exception("Cloud intake sync_data failed to apply pushed data")
-        return jsonify({"error": f"Failed to apply pushed data: {exc}"}), 500
+        with _VERSION_LOCK:
+            _feeder_hold = True
+        try:
+            # Reuses the exact same write paths a local Tally-sourced refresh
+            # uses -- this data just came from a POST body instead of a fetch.
+            save_car_master_to_file(car_master)
+            save_main_hierarchy_to_file(main_hierarchy)
+            _save_item_stock_data(item_stock)
+            load_data(refresh_first=False)
+        except Exception as exc:
+            logger.exception("Cloud intake sync_data failed to apply pushed data")
+            return jsonify({"error": f"Failed to apply pushed data: {exc}"}), 500
+        finally:
+            with _VERSION_LOCK:
+                _feeder_hold = False
+                _feeder_dirty = True
+    finally:
+        _INTAKE_APPLY_LOCK.release()
 
     global FEEDER_LAST_SEEN_AT
     FEEDER_LAST_SEEN_AT = datetime.now()
@@ -5627,17 +5794,26 @@ def last_update():
     since this route -- unlike that one -- isn't behind the System panel's
     separate device-pairing gate."""
     try:
+        # data_version / admin_version ride on this existing poll so open
+        # pages can notice changed stock/categories/mappings with no extra
+        # request (see get_data_versions()). admin_version is admin-only.
+        versions = get_data_versions()
+        if _current_role() != "admin":
+            versions.pop("admin_version", None)
+
         if Config.DISABLE_TALLY_SCHEDULING:
             if FEEDER_LAST_SEEN_AT is None:
                 return jsonify({
                     "last_update": "Waiting for first feeder push",
                     "timestamp": None,
                     "formatted": None,
+                    **versions,
                 })
             return jsonify({
                 "last_update": _format_ist(FEEDER_LAST_SEEN_AT),
                 "timestamp": FEEDER_LAST_SEEN_AT.isoformat(),
                 "formatted": _format_ist(FEEDER_LAST_SEEN_AT),
+                **versions,
             })
 
         update_file = get_latest_stock_file_path() or ITEM_STOCK_FILE_AUTO
@@ -5650,6 +5826,7 @@ def last_update():
                 "timestamp": iso_ts,
                 "formatted": _format_ist(dt),
                 "file": update_file,
+                **versions,
             })
         else:
             now = datetime.now()
@@ -5658,6 +5835,7 @@ def last_update():
                 "last_update": "File not found",
                 "timestamp": now_iso,
                 "formatted": _format_ist(now),
+                **versions,
             })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
