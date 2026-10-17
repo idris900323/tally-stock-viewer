@@ -501,6 +501,12 @@ def robots_txt():
     return "User-agent: *\nDisallow: /\n", 200, {"Content-Type": "text/plain"}
 
 
+_REVALIDATE_STATIC_PATHS = frozenset({
+    "/static/sw.js", "/static/shared.js", "/static/shared.css",
+    "/static/data_sync.js", "/static/manifest.json",
+})
+
+
 @app.after_request
 def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -533,6 +539,14 @@ def add_security_headers(response):
     # different (none currently do) can still override it.
     if response.mimetype == "application/json":
         response.headers.setdefault("Cache-Control", "no-store")
+
+    # The service worker script and the app's own code must always be
+    # revalidated (ETag/304, so unchanged files cost almost nothing), set
+    # explicitly rather than relying on Flask's default or whatever a CDN in
+    # front decides -- a stale sw.js is how a bad worker stays stuck, and
+    # stale shared.js/data_sync.js would drift from the HTML that uses them.
+    if request.path in _REVALIDATE_STATIC_PATHS:
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 

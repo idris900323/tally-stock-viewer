@@ -8,15 +8,37 @@
 // regardless of who ends up served by it: HTML and data always go to the
 // network first, real business data (stock/mappings) is never served stale
 // from a cache.
-const CACHE_VERSION = "v2";
+//
+// Strategies (by request):
+//   * the app's own code -- shared.css, shared.js, data_sync.js: NETWORK-FIRST
+//     (always revalidated), cached copy used only if the network fails. An
+//     edit on the server reaches the very next load, and a page and its JS
+//     can't drift apart because of an old cache.
+//   * manifest.json + icons: STALE-WHILE-REVALIDATE -- served instantly from
+//     cache but re-fetched every time, so a changed icon/manifest shows up
+//     one load later and can never be stuck forever.
+//   * everything else (HTML pages, /designs, /cars, /last_update, images,
+//     POSTs...): straight to the network. Only a genuine network failure
+//     falls back -- to a clearly-labeled offline message for a page
+//     navigation, never to a stale copy of stock data.
+//
+// Updates: skipWaiting() + clients.claim() so a fixed worker takes over on
+// the next load instead of waiting for every tab to close. Safe because the
+// worker is stateless (the only state is the cache below, which every
+// version fully replaces), and it never reloads or navigates an open page.
+// Old caches are deleted on activate.
+const CACHE_VERSION = "v3";
 const STATIC_CACHE = `super-seatings-static-${CACHE_VERSION}`;
 
-// Genuinely static, rarely-changing assets only -- no HTML, no API/data
-// routes. Cache-first is safe for these because none of them carry live
-// business data.
-const STATIC_ASSETS = [
+// The app's own code: network-first, cache only as an offline fallback.
+const NETWORK_FIRST_ASSETS = [
     "/static/shared.css",
     "/static/shared.js",
+    "/static/data_sync.js",
+];
+
+// Rarely change, no live data: cached, but revalidated on every use.
+const REVALIDATED_ASSETS = [
     "/static/manifest.json",
     "/static/icons/icon-192.png",
     "/static/icons/icon-512.png",
@@ -47,10 +69,32 @@ const OFFLINE_MESSAGE_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-self.addEventListener("install", (event) => {
-    event.waitUntil(
-        caches.open(STATIC_CACHE).then((cache) => cache.addAll(STATIC_ASSETS))
+// Cache entries are keyed by path only, so "?v=2" style URLs share one slot.
+function cacheKey(url) {
+    return new Request(url.origin + url.pathname);
+}
+
+// Best-effort precache so the offline fallback has something the first time.
+// Each file is fetched fresh (bypassing the HTTP cache) and a failure of any
+// one never blocks installing the worker.
+async function precache() {
+    const cache = await caches.open(STATIC_CACHE);
+    await Promise.all(
+        NETWORK_FIRST_ASSETS.concat(REVALIDATED_ASSETS).map(async (path) => {
+            try {
+                const response = await fetch(new Request(path, { cache: "reload" }));
+                if (response.ok) {
+                    await cache.put(new Request(self.location.origin + path), response);
+                }
+            } catch (error) {
+                // Ignore: it will be cached on first real use.
+            }
+        })
     );
+}
+
+self.addEventListener("install", (event) => {
+    event.waitUntil(precache());
     self.skipWaiting();
 });
 
@@ -67,8 +111,53 @@ self.addEventListener("activate", (event) => {
     self.clients.claim();
 });
 
-function isStaticAsset(url) {
-    return STATIC_ASSETS.some((path) => url.pathname === path);
+async function networkFirst(request, url) {
+    const cache = await caches.open(STATIC_CACHE);
+    try {
+        const response = await fetch(request, { cache: "no-cache" });
+        if (response.ok) {
+            await cache.put(cacheKey(url), response.clone());
+        }
+        return response;
+    } catch (error) {
+        const cached = await cache.match(cacheKey(url));
+        if (cached) {
+            return cached;
+        }
+        throw error;
+    }
+}
+
+function staleWhileRevalidate(event, request, url) {
+    return caches.open(STATIC_CACHE).then((cache) =>
+        cache.match(cacheKey(url)).then((cached) => {
+            const refresh = fetch(request, { cache: "no-cache" })
+                .then((response) => {
+                    if (response.ok) {
+                        return cache.put(cacheKey(url), response.clone()).then(() => response);
+                    }
+                    return response;
+                });
+            if (cached) {
+                event.waitUntil(refresh.catch(() => {}));
+                return cached;
+            }
+            return refresh;
+        })
+    );
+}
+
+function offlineResponse(request) {
+    if (request.mode === "navigate") {
+        return new Response(OFFLINE_MESSAGE_HTML, {
+            status: 503,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+    }
+    return new Response(JSON.stringify({ ok: false, offline: true, error: "You're offline." }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+    });
 }
 
 self.addEventListener("fetch", (event) => {
@@ -84,42 +173,16 @@ self.addEventListener("fetch", (event) => {
         return;
     }
 
-    if (isStaticAsset(url)) {
-        // Cache-first: these never carry live business data.
-        event.respondWith(
-            caches.match(request).then((cached) => {
-                if (cached) {
-                    return cached;
-                }
-                return fetch(request).then((response) => {
-                    if (response.ok) {
-                        const clone = response.clone();
-                        caches.open(STATIC_CACHE).then((cache) => cache.put(request, clone));
-                    }
-                    return response;
-                });
-            })
-        );
+    if (NETWORK_FIRST_ASSETS.includes(url.pathname)) {
+        event.respondWith(networkFirst(request, url).catch(() => offlineResponse(request)));
         return;
     }
 
-    // Everything else (HTML pages, /designs, /cars, /get_stock_image,
-    // /update_stock, etc.) is network-first, always. Only a genuine network
-    // failure falls back -- and only to a clearly-labeled offline message
-    // for a real page navigation, never to a silently-stale cached
-    // response standing in for current stock/mapping data.
-    event.respondWith(
-        fetch(request).catch(() => {
-            if (request.mode === "navigate") {
-                return new Response(OFFLINE_MESSAGE_HTML, {
-                    status: 503,
-                    headers: { "Content-Type": "text/html; charset=utf-8" },
-                });
-            }
-            return new Response(JSON.stringify({ ok: false, offline: true, error: "You're offline." }), {
-                status: 503,
-                headers: { "Content-Type": "application/json" },
-            });
-        })
-    );
+    if (REVALIDATED_ASSETS.includes(url.pathname)) {
+        event.respondWith(staleWhileRevalidate(event, request, url).catch(() => offlineResponse(request)));
+        return;
+    }
+
+    // Everything else is network-only (see the header comment).
+    event.respondWith(fetch(request).catch(() => offlineResponse(request)));
 });
