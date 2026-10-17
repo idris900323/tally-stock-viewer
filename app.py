@@ -5666,11 +5666,43 @@ def full_refresh_status_route():
 # The feeder machine is now the one link in the whole system with no
 # monitoring of its own -- if it silently dies, this cloud instance just
 # keeps serving whatever stock data it last received, with no visible
-# sign anything is wrong. Tracked in memory only (reset on every restart/
-# redeploy, like last_refresh_status above); the next successful push -- up
-# to TALLY_EXPORT_INTERVAL seconds later -- repopulates it, so this is
-# "minimal tracking", not a durable audit log. See /admin/system/feeder_status.
-FEEDER_LAST_SEEN_AT = None
+# sign anything is wrong. Held in memory and mirrored to a small file
+# (data/feeder_last_seen.json, one write per accepted push) that is loaded at
+# startup, so a restart/redeploy keeps the real last-push time (and thus the
+# real staleness). "Minimal tracking", not an audit log. See
+# /admin/system/feeder_status and _load_feeder_last_seen().
+FEEDER_LAST_SEEN_FILE = os.path.join(BASE_DIR, "data", "feeder_last_seen.json")
+
+
+def _load_feeder_last_seen():
+    """Time of the last accepted feeder push, from the small file written on
+    each push -- so a deploy/restart doesn't reset the Feeder heartbeat to
+    "Waiting for first feeder push". None (-> that message) only on a fresh
+    install: no file, unreadable/corrupt, or a time in the future (a bad
+    value must never make a dead feeder look fresh). The real age is kept,
+    so a restart after an outage still shows stale."""
+    if os.environ.get("FEEDER_MODE") == "1":
+        return None
+    try:
+        with open(FEEDER_LAST_SEEN_FILE, "r", encoding="utf-8") as handle:
+            epoch = float(json.load(handle)["last_push_epoch"])
+        if not (0 < epoch <= time.time() + 60):
+            return None
+        return datetime.fromtimestamp(epoch)  # naive local, same as datetime.now()
+    except Exception:
+        return None
+
+
+def _persist_feeder_last_seen(moment):
+    """Once per accepted push; atomic; never raises (a failed write only means
+    the heartbeat resets on the next restart, as before)."""
+    try:
+        _atomic_json_write(FEEDER_LAST_SEEN_FILE, {"last_push_epoch": moment.timestamp()})
+    except Exception:
+        logger.warning("Could not persist feeder last-seen time")
+
+
+FEEDER_LAST_SEEN_AT = _load_feeder_last_seen()
 
 
 @app.route("/admin/intake/sync_data", methods=["POST"])
@@ -5737,6 +5769,7 @@ def intake_sync_data():
 
     global FEEDER_LAST_SEEN_AT
     FEEDER_LAST_SEEN_AT = datetime.now()
+    _persist_feeder_last_seen(FEEDER_LAST_SEEN_AT)
 
     logger.info(
         "Cloud intake: received and applied pushed data (%d cars, %d hierarchy rows, %d stock rows)",
