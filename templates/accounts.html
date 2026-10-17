@@ -680,8 +680,30 @@ const USAGE_GROUPS = [
     { label: "Shares", color: "#f59e0b", actions: ["share_image", "share_longpress"] },
     { label: "Copies", color: "#8b5cf6", actions: ["copy_image"] },
     { label: "Reports", color: "#ef4444", actions: ["report"] },
-    { label: "Other", color: "#94a3b8", actions: null },
+    // Everything not in a group above. For dealers that is logins (the only
+    // other thing a dealer session records); admin-only actions (category
+    // changes) land here too if an admin is ever in scope. Named in the
+    // legend and itemized in the tooltip (see usageOtherBreakdown()).
+    { label: "Logins & other", color: "#94a3b8", actions: null },
 ];
+
+const USAGE_ACTION_NAMES = {
+    login: "Logins",
+    assign_category: "Category assigns",
+    category_add: "Category adds",
+    category_rename: "Category renames",
+    category_merge: "Category merges",
+    category_delete: "Category deletes",
+};
+
+// [[name, count], ...] of the actions inside the "Logins & other" segment, biggest first.
+function usageOtherBreakdown(byAction) {
+    const known = new Set(USAGE_GROUPS.flatMap(g => g.actions || []));
+    return Object.entries(byAction)
+        .filter(([a, n]) => !known.has(a) && n > 0)
+        .map(([a, n]) => [USAGE_ACTION_NAMES[a] || a, n])
+        .sort((x, y) => y[1] - x[1]);
+}
 
 function usageGroupCount(byAction, group) {
     if (group.actions) {
@@ -788,7 +810,17 @@ function renderUsage(data) {
             indexAxis: "y",
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { position: "bottom" } },
+            plugins: {
+                legend: { position: "bottom" },
+                tooltip: {
+                    callbacks: {
+                        afterLabel(ctx) {
+                            if (USAGE_GROUPS[ctx.datasetIndex].actions) return [];
+                            return usageOtherBreakdown(users[ctx.dataIndex].by_action).map(([name, n]) => `  ${name}: ${n}`);
+                        },
+                    },
+                },
+            },
             scales: {
                 x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
                 y: { stacked: true, ticks: { callback(value) { return truncLabel(this.getLabelForValue(value), 20); } } },
@@ -797,7 +829,7 @@ function renderUsage(data) {
     });
 
     document.getElementById("usageFootnote").textContent =
-        `Based on logged actions (opens, searches, shares, copies, reports) over the last ${data.days} day${data.days === 1 ? "" : "s"}.`;
+        `Based on logged actions (opens, searches, shares, copies, reports, logins) over the last ${data.days} day${data.days === 1 ? "" : "s"}.`;
 }
 
 async function loadUsage() {
