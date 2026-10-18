@@ -47,12 +47,13 @@ cd C:\tally_feeder
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements-feeder.txt
 ```
 
-This takes a few minutes. (It installs the whole project's packages, more than the
-feeder strictly needs - that is intentional, so the feeder reuses the site's
-proven Tally code unchanged.)
+This takes a few minutes. It installs only what the feeder needs (the feeder reuses the
+site's Tally code, so Flask, pandas and friends are included). **Use `requirements-feeder.txt`,
+not `requirements.txt`:** the latter is pinned to the exact versions Render uses on Python 3.14,
+and some of them do not install on this PC's Python 3.11.
 
 ## 5. Create the settings file
 
@@ -142,8 +143,10 @@ Double-click `update_feeder.bat`. It refuses unless `.env` has `MACHINE_ROLE=fee
 (touching nothing) if any tracked file has local changes, then fetches and moves to
 `origin/main` with `git checkout -B main origin/main` - not `git pull`, so it works even when
 this clone's history diverged from GitHub's rewritten history. `.env`, `data\` and `logs\` are
-never touched. It then updates packages, checks `feeder.py` still imports, restarts the task
-and prints the old and new commit. `update_app.bat` and `first_time_setup.bat` are for the old
+never touched. It then installs the packages in `requirements-feeder.txt`, checks `feeder.py`
+still imports, restarts the task and prints the old and new commit. **If the package install or
+the import check fails, it puts the previous commit back and restarts the task** (it says
+`[ROLLBACK]` and the window shows the reason), so the feeder keeps running the old code. `update_app.bat` and `first_time_setup.bat` are for the old
 full-site PC only and refuse to run on a feeder machine.
 
 Do not run `scripts\make_dormant.ps1` in a feeder checkout: it renames tracked files, so the
@@ -169,7 +172,8 @@ below are placeholders: find the real ones in step 1. Run everything in a Comman
    schtasks /Query /FO LIST | findstr /I "TaskName"
    schtasks /Query /TN "<task name>" /V /FO LIST | findstr /I "Task To Run, Start In, Status"
    ```
-   "Task To Run" / "Start In" show the folder that holds `feeder.py`. Then:
+   "Task To Run" / "Start In" show the folder that holds `feeder.py` (probably `C:	ally_stock`; check
+   with `dir C:	ally_stockeeder.py`, or `dir C:	ally_feedereeder.py`). Then:
    ```
    cd /d <that folder>
    dir feeder.py .env
@@ -199,7 +203,8 @@ below are placeholders: find the real ones in step 1. Run everything in a Comman
    print **exactly one** line, `MACHINE_ROLE=feeder`.
    If the task name is not `TallyFeeder`, also add a line `FEEDER_TASK_NAME=<task name>` the same
    way, so `update_feeder.bat` can restart it later.
-6. **Fetch:** `git fetch origin`. If it asks for a username/password or fails, **stop**.
+6. **Fetch:** `git fetch origin`. If it asks for a username/password (or a browser sign-in) or
+   fails, **stop**, close the window and do not type credentials. Nothing has changed yet.
 7. **Check the fetch worked:** `git log -1 --oneline origin/main` shows the expected newest commit.
 8. **Move to the new code** (works even though history was rewritten):
    ```
@@ -209,8 +214,11 @@ below are placeholders: find the real ones in step 1. Run everything in a Comman
    ```
    `machine_role.py` must exist and `git log -1` must show the new commit. **If either is wrong,
    stop - do not run `serve.py`: an old `serve.py` would start the web app.**
-9. **Packages:** `.venv\Scripts\python.exe -m pip install -r requirements.txt`
-10. **Prove the guard:** `.venv\Scripts\python.exe serve.py` should print
+9. **Packages:** `.venv\Scripts\python.exe -m pip install -r requirements-feeder.txt`
+   If this prints an **ERROR**, put the old code back before anything else (the feeder is still
+   stopped from step 4): `git checkout -B main <hash from step 3>`, then
+   `schtasks /Run /TN "<task name>"`, and send the error text. Nothing else was changed.
+10. **Prove the guard** (only after steps 8-9 went fine): `.venv\Scripts\python.exe serve.py` should print
     `serve.py: This machine is set to feeder-only; ...` and return; then `echo %errorlevel%` must
     print `3`. Then `.venv\Scripts\python.exe -c "import feeder"` must print nothing.
 11. **Start the feeder and confirm:**

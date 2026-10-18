@@ -1,6 +1,8 @@
 @echo off
-rem Updates the Tally feeder machine: move to the latest origin/main, refresh
-rem packages, check the feeder still imports, and restart the scheduled task.
+rem Updates the Tally feeder machine: move to the latest origin/main, install ONLY the packages the
+rem feeder needs (requirements-feeder.txt), check the feeder still imports, and restart the scheduled
+rem task. If the package install or the import check fails, the previous commit is put back and the
+rem task is restarted, so a failed update never leaves the feeder on half-updated code.
 rem Run from anywhere; it works on the folder this file lives in.
 rem (update_app.bat is for the legacy full-site PC only and refuses to run here.)
 rem
@@ -11,7 +13,25 @@ rem   * moves to origin/main with "git checkout -B main origin/main", NOT "git p
 rem     works even when this clone's history diverged from the rewritten history on GitHub.
 rem     .env, data\ and logs\ are untracked/ignored and are never touched.
 setlocal EnableExtensions
-cd /d "%~dp0"
+
+rem ---- 0. run from a temporary copy of this file. "git checkout" below replaces update_feeder.bat while
+rem cmd is still reading it (cmd reads batch files by byte offset), which could run garbage half-way. ----
+if /i "%~1"=="--from-copy" goto :main
+set "SELF_COPY=%TEMP%\update_feeder_run_%RANDOM%.bat"
+copy /y "%~f0" "%SELF_COPY%" >nul
+if errorlevel 1 goto :no_copy
+call "%SELF_COPY%" --from-copy "%~dp0"
+set "RC=%ERRORLEVEL%"
+del "%SELF_COPY%" >nul 2>&1
+exit /b %RC%
+
+:no_copy
+echo [ERROR] Could not make a temporary copy of this script in %TEMP%. Nothing was changed.
+pause
+exit /b 1
+
+:main
+cd /d "%~2"
 
 rem ---- 1. role check (plain batch: must work even on the OLD checkout) ----
 rem Never prints .env (it holds the sync token). Requires EXACTLY ONE line starting with
@@ -54,7 +74,7 @@ if not exist ".venv\Scripts\python.exe" (
     pause
     exit /b 1
 )
-schtasks /Query /TN "%TASK_NAME%" >nul 2>&1
+call schtasks /Query /TN "%TASK_NAME%" >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] No scheduled task named "%TASK_NAME%" was found, so it could not be restarted. Nothing was changed.
     echo         Find the real name:  schtasks /Query /FO LIST ^| findstr /I "TaskName"
@@ -75,7 +95,14 @@ if errorlevel 1 (
 )
 
 set "OLDHASH="
+set "OLDFULL="
 for /f %%H in ('git rev-parse --short HEAD') do set "OLDHASH=%%H"
+for /f %%H in ('git rev-parse HEAD') do set "OLDFULL=%%H"
+if not defined OLDFULL (
+    echo [ERROR] Could not read the current commit - is this a git folder? Nothing was changed.
+    pause
+    exit /b 1
+)
 echo [INFO] Currently at %OLDHASH%.
 
 rem ---- 3. fetch and move to origin/main (works with diverged history) ----
@@ -93,12 +120,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [INFO] Updating packages...
-".venv\Scripts\python.exe" -m pip install -r requirements.txt
+echo [INFO] Updating packages ^(requirements-feeder.txt - only what the feeder needs^)...
+".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements-feeder.txt
 if errorlevel 1 (
-    echo [ERROR] pip install failed.
-    pause
-    exit /b 1
+    set "FAIL_REASON=pip could not install the packages in requirements-feeder.txt"
+    goto :rollback
 )
 
 rem ---- 4. confirm the feeder still imports (uses its own log file; touches no database) ----
@@ -106,17 +132,16 @@ echo [INFO] Checking feeder.py still loads...
 set "LOG_FILE=logs\import_check.log"
 ".venv\Scripts\python.exe" -c "import feeder" >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] feeder.py no longer imports after the update. The task was NOT restarted.
-    echo         To go back:  git checkout -B main %OLDHASH%
-    pause
-    exit /b 1
+    set "LOG_FILE="
+    set "FAIL_REASON=feeder.py no longer loads after the update"
+    goto :rollback
 )
 set "LOG_FILE="
 
 echo [INFO] Restarting the feeder task...
-schtasks /End /TN "%TASK_NAME%" >nul 2>&1
+call schtasks /End /TN "%TASK_NAME%" >nul 2>&1
 %SystemRoot%\System32\timeout.exe /t 3 /nobreak >nul
-schtasks /Run /TN "%TASK_NAME%"
+call schtasks /Run /TN "%TASK_NAME%"
 if errorlevel 1 (
     echo [ERROR] Could not start the "%TASK_NAME%" task. Was it registered? See FEEDER_SETUP.md, step 7.
     pause
@@ -127,4 +152,28 @@ set "NEWHASH="
 for /f %%H in ('git rev-parse --short HEAD') do set "NEWHASH=%%H"
 echo [OK] Feeder updated: %OLDHASH% -^> %NEWHASH% ^(now on origin/main^). Check logs\feeder.log.
 pause
-endlocal
+exit /b 0
+
+rem ---- any failure AFTER the code was moved lands here: put the previous commit back and keep the feeder running ----
+:rollback
+echo.
+echo [ROLLBACK] %FAIL_REASON%.
+echo [ROLLBACK] Putting the previous code back ^(%OLDHASH%^)...
+git checkout -q -B main %OLDFULL%
+if errorlevel 1 (
+    echo [CRITICAL] Could not put the previous code back automatically. Run this by hand:  git checkout -B main %OLDFULL%
+    pause
+    exit /b 3
+)
+echo [ROLLBACK] Restarting the feeder task so it keeps running the previous code...
+call schtasks /End /TN "%TASK_NAME%" >nul 2>&1
+%SystemRoot%\System32\timeout.exe /t 3 /nobreak >nul
+call schtasks /Run /TN "%TASK_NAME%"
+if errorlevel 1 (
+    echo [CRITICAL] The previous code is back, but the "%TASK_NAME%" task could not be started. Start it by hand:  schtasks /Run /TN "%TASK_NAME%"
+    pause
+    exit /b 3
+)
+echo [ROLLBACK] Done. Back on %OLDHASH%; the update was NOT applied. .env and data were not touched.
+pause
+exit /b 1

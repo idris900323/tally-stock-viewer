@@ -95,19 +95,21 @@ The Python version is **not pinned** in the repo: Render uses its default (3.14.
 
 ## 6. Updating the shop PC safely (with the role guard)
 
-**Never use `git pull` on the shop PC.** History on GitHub was rewritten once; `git pull` can create a merge mess, and an old copy of the code can bring the web app back. Use `update_feeder.bat` (it refuses unless `.env` has exactly one `MACHINE_ROLE=feeder` line, aborts if any tracked file was edited, moves to the latest `origin/main` without `git pull`, checks the feeder still loads, restarts the task, and prints old -> new commit).
+**Never use `git pull` on the shop PC.** History on GitHub was rewritten once; `git pull` can create a merge mess, and an old copy of the code can bring the web app back. Use `update_feeder.bat` (it refuses unless `.env` has exactly one `MACHINE_ROLE=feeder` line, aborts if any tracked file was edited, moves to the latest `origin/main` without `git pull`, installs only the packages the feeder needs from `requirements-feeder.txt`, checks the feeder still loads, restarts the task, and prints old -> new commit). **If the package install or the load check fails, it puts the previous commit back and restarts the task by itself** (exit code 1, message `[ROLLBACK] ...`), so a failed update never leaves the feeder stopped on half-new code.
+
+**Why `requirements-feeder.txt` and not `requirements.txt` on the shop PC:** `requirements.txt` is pinned to what Render installed on Python 3.14. The shop PC runs **Python 3.11**, and an exact pin that needs a newer Python (numpy 2.5.4 needs 3.12+) makes `pip` fail halfway, after git already moved the code. `requirements-feeder.txt` lists only what `feeder.py` imports, as loose ranges, so packages the PC already has are left alone. Checked on 2026-10-18 in a clean Python 3.11.9 environment: it installs, and the feeder mock-Tally + mock-intake test and the guard-refusal checks pass there. **Never run `pip install -r requirements.txt` on the shop PC.**
 
 **First-time switch of a PC that still has the OLD `update_feeder.bat`** (run in a normal Command Prompt in the feeder folder; placeholders in `<>`):
 
-1. Find the real names: `schtasks /Query /FO LIST | findstr /I "TaskName"` then `schtasks /Query /TN "<task>" /V /FO LIST | findstr /I "Task To Run, Start In, Status"`; `cd /d <that folder>`.
-2. Back up outside the folder: `mkdir C:\feeder_backup`, `copy .env C:\feeder_backup\.env`, `xcopy data C:\feeder_backup\data /E /I /Y`.
+1. Find the real folder and task name first; do not assume them. Folder: `dir C:\tally_stock\feeder.py` (also try `dir C:\tally_feeder\feeder.py`); the folder that has `feeder.py` and `.env` is the one. Task: `schtasks /Query /FO LIST | findstr /I "TaskName"` then `schtasks /Query /TN "<task>" /V /FO LIST | findstr /I "Task To Run, Start In, Status"` ("Start In" confirms the folder). Then `cd /d <that folder>`.
+2. Back up `.env` and `data` outside the folder before anything else: `mkdir C:\feeder_backup`, `copy .env C:\feeder_backup\.env`, `xcopy data C:\feeder_backup\data /E /I /Y`. **Never print `.env`** (it holds the sync token): no `type .env`, no `more .env`, no screenshots of it. To look at one line use `findstr /B /I MACHINE_ROLE .env`.
 3. Note where you are: `git log -1 --oneline` and `git status --short --untracked-files=no`. If it lists files, **look at them** (`git diff --stat`) before touching anything; `git stash push` sets changes aside safely.
 4. Stop the feeder: `schtasks /End /TN "<task>"`.
 5. Set the role (never print `.env`): `findstr /B /I MACHINE_ROLE .env`, then `echo.>> .env` and `echo MACHINE_ROLE=feeder>> .env`, then check again: exactly **one** line `MACHINE_ROLE=feeder`. If the task is not called `TallyFeeder`, add `FEEDER_TASK_NAME=<task>` the same way.
-6. `git fetch origin`. **If it asks for a login, stop.**
-7. `git checkout -B main origin/main`, then `git log -1 --oneline` and `dir machine_role.py`. **If `machine_role.py` is missing, stop. Do not run `serve.py`** (an old `serve.py` would start the web app).
-8. `.venv\Scripts\python.exe -m pip install -r requirements.txt`
-9. Prove the guard: `.venv\Scripts\python.exe serve.py` must print the "feeder-only" line and `echo %errorlevel%` must show `3`. Then `.venv\Scripts\python.exe -c "import feeder"` must print nothing.
+6. `git fetch origin`. **If it asks for a login (username/password or a browser sign-in), stop and close the window; do not type credentials.** Nothing has changed yet.
+7. `git checkout -B main origin/main`, then `git log -1 --oneline` (it must show the new commit, not the one from step 3) and `dir machine_role.py`. **If `machine_role.py` is missing, or `git log -1` still shows the old commit, stop. Do not run `serve.py`** (an old `serve.py` would start the web app).
+8. `.venv\Scripts\python.exe -m pip install -r requirements-feeder.txt`. **If this prints ERROR, put the old code back at once** (the feeder is still stopped from step 4): `git checkout -B main <hash from step 3>`, then `schtasks /Run /TN "<task>"`, and report the error text. Nothing else was changed.
+9. Only now (steps 6-8 done, `machine_role.py` present, `git log -1` shows the new commit) prove the guard: `.venv\Scripts\python.exe serve.py` must print the "feeder-only" line and `echo %errorlevel%` must show `3`. Then `.venv\Scripts\python.exe -c "import feeder"` must print nothing.
 10. `schtasks /Run /TN "<task>"`, wait 1-2 minutes, then `findstr /C:"machine role" /C:"push succeeded" logs\feeder.log`.
 
 **Undo:** delete or change the `MACHINE_ROLE` line (Notepad) to allow the web app again; to go back to old code: `schtasks /End`, `git checkout -B main <hash from step 3>`, `schtasks /Run`; restore `.env`/`data` from `C:\feeder_backup`. Later updates: double-click `update_feeder.bat`.
@@ -166,4 +168,4 @@ If a golden changes *on purpose*, run `python tests/check_all.py --update`, **re
 * **Do not delete photos in bulk from the site's photo folder** without looking at the backup guard first (the backup mirrors removals into the Drive Trash).
 * **Do not set `BACKUP_MAX_DELETIONS`** and forget it.
 * **Do not judge a restart by memory alone.** A fresh start uses about 120 MB; a busy site uses 240-330 MB. Compare with the same site's earlier readings.
-* **Do not change library versions casually** (`requirements.txt` is pinned on purpose). Change them deliberately, run the tests, deploy alone, and watch the logs.
+* **Do not change library versions casually** (`requirements.txt` is pinned on purpose for Render; the shop PC uses the separate, loose `requirements-feeder.txt`). Change them deliberately, run the tests, deploy alone, and watch the logs.

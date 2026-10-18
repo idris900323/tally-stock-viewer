@@ -1,0 +1,29 @@
+# Packages the SHOP-PC FEEDER needs (feeder.py), and nothing else. Used by update_feeder.bat and the
+# shop-PC steps in docs/RUNBOOK.md and FEEDER_SETUP.md.
+#
+# Why a separate file: requirements.txt is pinned to the exact versions Render installed on Python 3.14.
+# The shop PC runs Python 3.11, and a pin that needs a newer Python would make `pip install` fail in the
+# middle of an update. These are deliberately LOOSE ranges (the ones the shop PC was originally installed
+# with), so a PC that already has working versions is left exactly as it is - nothing is force-upgraded.
+#
+# Found by running the real feeder (full refresh + stock export + push) against a mock Tally and tracing
+# every module it imports (the feeder imports app.py, which imports Flask etc. at start-up):
+#   Flask (+ Werkzeug, Jinja2, itsdangerous, click, blinker, MarkupSafe)   imported by app.py
+#   requests (+ urllib3, certifi, idna, charset-normalizer)                talks to Tally and to the site
+#   Pillow, psutil, python-dotenv                                          imported by app.py / config.py
+#   pandas (+ numpy, python-dateutil, six), openpyxl (+ et-xmlfile)        local-mode Excel read/write
+#   xlrd                                                                   fallback reader for old .xls files
+# NOT needed on the shop PC: waitress, pystray, google-*, cryptography, protobuf, ...
+#
+# Proven: installs into a clean Python 3.11 environment and passes the feeder mock-Tally test there
+# (see docs/RUNBOOK.md).
+
+Flask>=3.0,<4.0
+requests>=2.31
+Pillow>=9.5
+psutil>=5.9
+pandas>=2.0
+openpyxl>=3.1
+xlrd>=2.0
+python-dotenv>=1.0
+itsdangerous>=2.1
