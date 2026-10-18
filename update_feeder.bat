@@ -14,21 +14,51 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 rem ---- 1. role check (plain batch: must work even on the OLD checkout) ----
+rem Never prints .env (it holds the sync token). Requires EXACTLY ONE line starting with
+rem MACHINE_ROLE, and that line must be MACHINE_ROLE=feeder (any case; trailing spaces ok).
+rem Anything else - missing, duplicate, commented out, indented, a BOM on that line - refuses.
 if not exist ".env" (
-    echo [ERROR] No .env here. This script only runs on a feeder machine ^(MACHINE_ROLE=feeder^).
+    echo [ERROR] No .env here. This script only runs on a feeder machine ^(MACHINE_ROLE=feeder^). Nothing was changed.
     pause
     exit /b 1
 )
-findstr /B /I /R /C:"MACHINE_ROLE[ ]*=[ ]*feeder[ ]*$" ".env" >nul 2>&1
+set "ROLE_LINES=0"
+for /f %%N in ('%SystemRoot%\System32\findstr.exe /B /I /C:"MACHINE_ROLE" ".env" ^| %SystemRoot%\System32\find.exe /c /v ""') do set "ROLE_LINES=%%N"
+if not "%ROLE_LINES%"=="1" (
+    echo [ERROR] .env must have exactly one MACHINE_ROLE line; found %ROLE_LINES%. Nothing was changed.
+    echo         Check with:  findstr /B /I MACHINE_ROLE .env
+    pause
+    exit /b 1
+)
+%SystemRoot%\System32\findstr.exe /B /I /R /C:"MACHINE_ROLE=feeder[ ]*$" ".env" >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] .env does not contain the line  MACHINE_ROLE=feeder
-    echo         Add it ^(see FEEDER_SETUP.md^) and run this again. Nothing was changed.
+    echo [ERROR] The MACHINE_ROLE line in .env is not exactly  MACHINE_ROLE=feeder  - nothing was changed.
+    echo         Check with:  findstr /B /I MACHINE_ROLE .env
     pause
     exit /b 1
 )
-findstr /B /I /C:"MACHINE_ROLE" ".env" | findstr /V /I /R /C:"MACHINE_ROLE[ ]*=[ ]*feeder[ ]*$" >nul 2>&1
-if not errorlevel 1 (
-    echo [ERROR] .env has another MACHINE_ROLE line that is not "feeder". Remove it. Nothing was changed.
+
+rem ---- 1b. names: this folder is wherever the .bat lives; the task name defaults to
+rem TallyFeeder and can be set with a line  FEEDER_TASK_NAME=<name>  in .env ----
+set "TASK_NAME=TallyFeeder"
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do if /i "%%A"=="FEEDER_TASK_NAME" set "TASK_NAME=%%B"
+set TASK_NAME | %SystemRoot%\System32\findstr.exe /R /C:"^TASK_NAME=[A-Za-z0-9_. -][A-Za-z0-9_. -]*$" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] FEEDER_TASK_NAME in .env has characters other than letters, digits, space, _ . - ; nothing was changed.
+    pause
+    exit /b 1
+)
+echo [INFO] Folder: %CD%   Task: %TASK_NAME%
+if not exist ".venv\Scripts\python.exe" (
+    echo [ERROR] .venv\Scripts\python.exe not found in %CD% - wrong folder? Nothing was changed.
+    pause
+    exit /b 1
+)
+schtasks /Query /TN "%TASK_NAME%" >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] No scheduled task named "%TASK_NAME%" was found, so it could not be restarted. Nothing was changed.
+    echo         Find the real name:  schtasks /Query /FO LIST ^| findstr /I "TaskName"
+    echo         then add a line  FEEDER_TASK_NAME=<that name>  to .env and run this again.
     pause
     exit /b 1
 )
@@ -84,11 +114,11 @@ if errorlevel 1 (
 set "LOG_FILE="
 
 echo [INFO] Restarting the feeder task...
-schtasks /End /TN TallyFeeder >nul 2>&1
-timeout /t 3 /nobreak >nul
-schtasks /Run /TN TallyFeeder
+schtasks /End /TN "%TASK_NAME%" >nul 2>&1
+%SystemRoot%\System32\timeout.exe /t 3 /nobreak >nul
+schtasks /Run /TN "%TASK_NAME%"
 if errorlevel 1 (
-    echo [ERROR] Could not start the TallyFeeder task. Was it registered? See FEEDER_SETUP.md, step 7.
+    echo [ERROR] Could not start the "%TASK_NAME%" task. Was it registered? See FEEDER_SETUP.md, step 7.
     pause
     exit /b 1
 )
