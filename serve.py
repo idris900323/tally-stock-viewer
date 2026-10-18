@@ -1,3 +1,7 @@
+# Refuse FIRST on a feeder-only machine: before any import, port, folder or database.
+import machine_role
+machine_role.refuse_if_not_full("serve.py")
+
 print("[DIAGNOSTIC] serve.py started, before any imports", flush=True)
 
 import os

@@ -60,6 +60,7 @@ Create a file called `.env` in `C:\tally_feeder` (Notepad is fine, save as "All 
 name it exactly `.env`) with just these lines:
 
 ```text
+MACHINE_ROLE=feeder
 TALLY_URL=http://localhost:9000
 CLOUD_SYNC_URL=https://<your-render-app>.onrender.com/admin/intake/sync_data
 CLOUD_SYNC_TOKEN=<the same value as INTAKE_SYNC_TOKEN on Render>
@@ -75,6 +76,13 @@ FEEDER_FULL_REFRESH_HOURS=6
 - `TALLY_EXPORT_INTERVAL` - seconds between stock updates
 - `FEEDER_FULL_REFRESH_HOURS` - how often the car list and hierarchy are re-read too
   (new cars / new items). Stock quantities always update at the shorter interval.
+
+`MACHINE_ROLE=feeder` marks this PC as feeder-only: `serve.py`, `launcher.pyw`,
+`relaunch_helper.py`, `python app.py` and `update_app.bat` / `first_time_setup.bat` all refuse to
+run (exit code 3, one clear line, nothing created, no port, no `mappings.db`), even if a
+`git pull` brings the web-app files back. `feeder.py` is unaffected and logs the role at startup.
+To run the web app on a machine anyway, set `MACHINE_ROLE=full` (or remove the line).
+Render never sets it and behaves as before.
 
 If `CLOUD_SYNC_URL` or `CLOUD_SYNC_TOKEN` is missing, the feeder logs why and exits.
 
@@ -128,8 +136,16 @@ Then restart the PC once and confirm `logs\feeder.log` starts filling in by itse
 
 ## Updating later
 
-Double-click `update_feeder.bat` (it pulls the latest code, updates packages and restarts
-the task). `update_app.bat` and `first_time_setup.bat` are for the old full-site PC only.
+Double-click `update_feeder.bat`. It refuses unless `.env` has `MACHINE_ROLE=feeder`, aborts
+(touching nothing) if any tracked file has local changes, then fetches and moves to
+`origin/main` with `git checkout -B main origin/main` - not `git pull`, so it works even when
+this clone's history diverged from GitHub's rewritten history. `.env`, `data\` and `logs\` are
+never touched. It then updates packages, checks `feeder.py` still imports, restarts the task
+and prints the old and new commit. `update_app.bat` and `first_time_setup.bat` are for the old
+full-site PC only and refuse to run on a feeder machine.
+
+Do not run `scripts\make_dormant.ps1` in a feeder checkout: it renames tracked files, so the
+update script (correctly) refuses to run there. The role guard makes that unnecessary.
 
 ## Troubleshooting
 
