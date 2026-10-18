@@ -26,6 +26,7 @@ single file operation succeeds, so an interrupted run never has to redo
 work it already finished.
 """
 import concurrent.futures
+import gc
 import hashlib
 import json
 import logging
@@ -33,6 +34,7 @@ import os
 import random
 import shutil
 import sqlite3
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, time as dt_time
@@ -612,7 +614,14 @@ def build_drive_service():
 
     if not credentials.valid:
         if credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())  # bounded (120s default), not an indefinite wait
+            refresh_request = Request()
+            try:
+                credentials.refresh(refresh_request)  # bounded (120s default), not an indefinite wait
+            finally:
+                try:
+                    refresh_request.session.close()   # google-auth's Request owns a requests.Session
+                except Exception:
+                    pass
             _save_credentials(credentials)
         else:
             raise NotAuthorizedError(
@@ -620,7 +629,7 @@ def build_drive_service():
                 "click 'Authorize Google Drive' again."
             )
 
-    return build("drive", "v3", credentials=credentials, cache_discovery=False)
+    return _register_service("main", build("drive", "v3", credentials=credentials, cache_discovery=False))
 
 
 # ---------------------------------------------------------------------------
@@ -1008,6 +1017,87 @@ LIST_CONCURRENCY = 15
 
 _thread_local = threading.local()
 
+# Every googleapiclient service built for a run: the main one (apply phase) and one per listing-pool
+# thread. Each service is a reference CYCLE that owns an open socket (httplib2 keeps the connection
+# alive), so letting it go out of scope does not close anything: the sockets stay open until a cyclic
+# GC pass happens to run. On Render (Python 3.14, incremental GC) every run left 16 more sockets open
+# (15 pool threads + the main service) and RSS grew ~70 MB per run. They are closed explicitly instead
+# -- see _close_services(), _list_drive_tree() and run_sync()'s finally.
+_services_lock = threading.Lock()
+_services = {"main": [], "pool": []}
+
+
+def _register_service(kind, service):
+    with _services_lock:
+        _services[kind].append(service)
+    return service
+
+
+def _close_services(kind=None):
+    """Closes (http.close()) and forgets the registered Drive clients. Never raises; returns how many
+    were closed."""
+    with _services_lock:
+        kinds = [kind] if kind else list(_services)
+        victims = [service for k in kinds for service in _services[k]]
+        for k in kinds:
+            _services[k] = []
+    closed = 0
+    for service in victims:
+        try:
+            close = getattr(service, "close", None)
+            if close:
+                close()
+                closed += 1
+        except Exception:
+            logger.debug("Cloud backup: closing a Drive client failed", exc_info=True)
+    return closed
+
+
+def _release_run_resources():
+    """Runs on EVERY exit path of run_sync (success, partial, held-back, stopped, failed, not
+    authorized): close all Drive clients, drop the thread-local reference, collect leftover cycles."""
+    try:
+        _close_services()
+        _thread_local.drive_service = None
+    except Exception:
+        logger.debug("Cloud backup: releasing run resources failed", exc_info=True)
+    gc.collect()
+
+
+def _resource_snapshot():
+    """Open file descriptors / sockets / RSS of this process, for the 'sync finished' line. Reuses the
+    /proc breakdown helper from app.py when it is loaded (Linux/Render); otherwise falls back to psutil.
+    Never raises."""
+    snap = {"fds": None, "sockets": None, "rss_mb": None}
+    try:
+        import psutil
+        proc = psutil.Process()
+        snap["rss_mb"] = round(proc.memory_info().rss / 1048576, 1)
+        snap["fds"] = proc.num_fds() if hasattr(proc, "num_fds") else proc.num_handles()
+        app_module = sys.modules.get("app")
+        helper = getattr(app_module, "_fd_breakdown", None)
+        breakdown = helper() if helper else None
+        if breakdown:
+            snap["sockets"] = breakdown.get("sockets")
+        else:
+            getter = getattr(proc, "net_connections", None) or proc.connections
+            snap["sockets"] = len(getter(kind="inet"))
+    except Exception:
+        pass
+    return snap
+
+
+def _log_run_resources(status, before, after):
+    logger.info(
+        "Cloud backup sync finished (%s): open fds %s -> %s, sockets %s -> %s, RSS %s -> %s MB (before -> after this run)",
+        status, before["fds"], after["fds"], before["sockets"], after["sockets"], before["rss_mb"], after["rss_mb"],
+    )
+    if before["sockets"] is not None and after["sockets"] is not None and after["sockets"] - before["sockets"] > 2:
+        logger.warning(
+            "Cloud backup: %s more sockets are open after this run than before it -- possible connection leak "
+            "(they should be back to the starting level)", after["sockets"] - before["sockets"],
+        )
+
 
 def _get_thread_local_drive_service():
     """A fresh googleapiclient service -- and therefore a fresh, unshared
@@ -1027,6 +1117,7 @@ def _get_thread_local_drive_service():
 
         credentials = _load_saved_credentials()
         service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+        _register_service("pool", service)
         _thread_local.drive_service = service
     return service
 
@@ -1102,20 +1193,25 @@ def _list_drive_tree(root_folder_id):
     pending = {(root_folder_id, "")}
     in_flight = {}
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=LIST_CONCURRENCY) as pool:
-        while pending or in_flight:
-            while pending and len(in_flight) < LIST_CONCURRENCY:
-                folder_id, relative_dir = pending.pop()
-                future = pool.submit(_list_one_folder_entries, folder_id, relative_dir)
-                in_flight[future] = (folder_id, relative_dir)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=LIST_CONCURRENCY) as pool:
+            while pending or in_flight:
+                while pending and len(in_flight) < LIST_CONCURRENCY:
+                    folder_id, relative_dir = pending.pop()
+                    future = pool.submit(_list_one_folder_entries, folder_id, relative_dir)
+                    in_flight[future] = (folder_id, relative_dir)
 
-            done, _pending = concurrent.futures.wait(in_flight.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
-            for future in done:
-                in_flight.pop(future)
-                file_entries, subfolders = future.result()
-                for relative_path, info in file_entries:
-                    entries.setdefault(relative_path, []).append(info)
-                pending.update(subfolders)
+                done, _pending = concurrent.futures.wait(in_flight.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
+                for future in done:
+                    in_flight.pop(future)
+                    file_entries, subfolders = future.result()
+                    for relative_path, info in file_entries:
+                        entries.setdefault(relative_path, []).append(info)
+                    pending.update(subfolders)
+    finally:
+        # The pool's threads are finished here (the with-block joins them), so every per-thread Drive
+        # client can be closed now -- success or error -- instead of waiting for the garbage collector.
+        _close_services("pool")
 
     return entries
 
@@ -1354,6 +1450,7 @@ def run_sync(triggered_by="schedule"):
         return {"configured": False}
 
     started_at = datetime.now().isoformat()
+    resources_before = _resource_snapshot()
     _cancel_event.clear()
     with _status_lock:
         _status["running"] = True
@@ -1593,6 +1690,7 @@ def run_sync(triggered_by="schedule"):
         )
     finally:
         _remove_snapshot()
+        _release_run_resources()
         with _status_lock:
             _status["running"] = False
             _status["last_run"] = summary
@@ -1602,6 +1700,7 @@ def run_sync(triggered_by="schedule"):
         _progress_stop()
         _cancel_event.clear()
 
+    _log_run_resources((summary or {}).get("status"), resources_before, _resource_snapshot())
     return {"configured": True, "running": False, "last_run": summary}
 
 

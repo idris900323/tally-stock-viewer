@@ -1,15 +1,57 @@
-Flask>=3.0,<4.0
-waitress>=3.0,<4.0
-requests>=2.31
-Pillow>=9.5
-psutil>=5.9
-pystray>=0.19
-pandas>=2.0
-openpyxl>=3.1
-xlrd>=2.0
-python-dotenv>=1.0
-itsdangerous>=2.1
-google-api-python-client>=2.100
-google-auth>=2.23
-google-auth-httplib2>=0.2
-google-auth-oauthlib>=1.2
+# Exact versions, copied from the "Successfully installed" line of Render's build on 2026-10-18
+# (Python 3.14.3 - Render's default; the Python version itself is NOT pinned anywhere in this repo).
+# Unpinned ">=" ranges let a fresh build silently pull new libraries (the Oct 17 build moved to
+# google-auth 2.62.0, Pillow 13.0.0, ...), so builds are now reproducible.
+#
+# numpy is deliberately NOT pinned: numpy 2.5.4 needs Python 3.12+, while the shop PC feeder runs
+# Python 3.11. pandas (below) pulls a compatible numpy: 2.5.4 on Render today, 2.4.x on Python 3.11.
+#
+# To update: change versions on purpose, run the checks, deploy, watch the logs.
+
+# --- direct dependencies ---
+Flask==3.1.3
+Pillow==13.0.0
+google-api-python-client==2.201.0
+google-auth==2.62.0
+google-auth-httplib2==0.4.4
+google-auth-oauthlib==1.5.0
+itsdangerous==2.2.0
+openpyxl==3.1.5
+pandas==3.0.6
+psutil==7.2.2
+pystray==0.19.5
+python-dotenv==1.2.4
+requests==2.34.2
+waitress==3.0.2
+xlrd==2.0.2
+
+# --- their dependencies, pinned too ---
+blinker==1.9.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cryptography==50.0.2
+et-xmlfile==2.0.0
+google-api-core==2.42.0
+googleapis-common-protos==1.75.5
+httplib2==0.32.0
+idna==3.20
+Jinja2==3.1.6
+MarkupSafe==3.0.4
+oauthlib==4.0.0
+opentelemetry-api==1.45.1
+proto-plus==1.29.0
+protobuf==7.36.2
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pycparser==3.11
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+python-xlib==0.33
+requests-oauthlib==2.0.0
+six==1.17.0
+typing-extensions==4.16.0
+uritemplate==4.2.0
+urllib3==2.8.0
+Werkzeug==3.1.9
