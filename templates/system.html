@@ -984,6 +984,12 @@ async function loadCloudBackupStatus() {
             }
         }
 
+        if (run.deletions_held_back > 0) {
+            // Mass-deletion guard fired: nothing was removed from Drive this run.
+            discrepancyEl.textContent = `${run.deletions_held_back} deletion${run.deletions_held_back === 1 ? "" : "s"} held back: local files missing. Nothing was removed from Drive. Check the image folder; if the files really were removed, set BACKUP_MAX_DELETIONS and sync again.`;
+            discrepancyEl.style.display = "block";
+        }
+
         const verification = run.verification;
         if (verification) {
             document.getElementById("cloudBackupTotals").textContent =

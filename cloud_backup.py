@@ -31,6 +31,8 @@ import json
 import logging
 import os
 import random
+import shutil
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, time as dt_time
@@ -54,6 +56,18 @@ INCLUDED_JSON_FILES = [
     "item stock list.auto.json",
 ]
 INCLUDED_DB_FILE = "mappings.db"
+# The live database is never uploaded directly (it is in WAL mode: recent
+# commits live in the -wal file and a raw copy can be torn mid-checkpoint).
+# Each run takes a consistent snapshot with SQLite's online backup API into
+# this scratch folder and uploads THAT; it is removed when the run ends.
+SNAPSHOT_DIR = os.path.join(DATA_DIR, ".cloud_backup_snapshot")
+
+# Mass-deletion guard: a run that would move more than
+# max(DELETION_GUARD_MIN, DELETION_GUARD_FRACTION * tracked files) files to
+# Drive Trash holds ALL of its deletions back. Config.BACKUP_MAX_DELETIONS
+# overrides the limit.
+DELETION_GUARD_MIN = 20
+DELETION_GUARD_FRACTION = 0.02
 
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -331,13 +345,56 @@ def _relative_path(full_path):
     return os.path.relpath(full_path, DATA_DIR).replace("\\", "/")
 
 
-def _iter_included_files():
+def _database_path():
+    return Config.DB_PATH if os.path.isabs(Config.DB_PATH) else os.path.join(BASE_DIR, Config.DB_PATH)
+
+
+def _snapshot_database(db_path):
+    """A consistent copy of the live database (SQLite online backup API: sees
+    committed WAL content, never a torn page), written to SNAPSHOT_DIR as a
+    plain rollback-journal file and integrity-checked before anything may
+    upload it. Raises on any problem, so a bad snapshot can never replace the
+    previous good copy on Drive."""
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    target = os.path.join(SNAPSHOT_DIR, INCLUDED_DB_FILE)
+    for stale in (target, target + "-wal", target + "-shm", target + "-journal"):
+        if os.path.exists(stale):
+            os.remove(stale)
+    source = sqlite3.connect(db_path, timeout=Config.DB_TIMEOUT)
+    try:
+        dest = sqlite3.connect(target)
+        try:
+            source.backup(dest)
+            dest.execute("PRAGMA journal_mode = DELETE")  # one self-contained file, nothing in a -wal
+            result = dest.execute("PRAGMA quick_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError(f"snapshot failed quick_check: {result[0] if result else 'no result'}")
+        finally:
+            dest.close()
+    finally:
+        source.close()
+    return target
+
+
+def _remove_snapshot():
+    shutil.rmtree(SNAPSHOT_DIR, ignore_errors=True)
+
+
+def _iter_included_files(db_snapshot_path=None, skip_db=False):
     """Yields (relative_path, absolute_path) for every file this backup
     includes. relative_path uses forward slashes and is relative to data/,
-    e.g. "mappings.db" or "S.S IMAGE/7'D MAT/0.jpg"."""
-    db_path = Config.DB_PATH if os.path.isabs(Config.DB_PATH) else os.path.join(BASE_DIR, Config.DB_PATH)
-    if os.path.isfile(db_path):
-        yield INCLUDED_DB_FILE, db_path
+    e.g. "mappings.db" or "S.S IMAGE/7'D MAT/0.jpg".
+
+    The database is yielded as db_snapshot_path (a run's consistent snapshot)
+    when given, never as the live file once run_sync takes snapshots; skip_db
+    leaves it out entirely (snapshot failed -- see run_sync, which also makes
+    sure that is never mistaken for 'the database was deleted')."""
+    db_path = _database_path()
+    if not skip_db:
+        if db_snapshot_path:
+            yield INCLUDED_DB_FILE, db_snapshot_path
+        elif os.path.isfile(db_path):
+            yield INCLUDED_DB_FILE, db_path
 
     for name in INCLUDED_JSON_FILES:
         full_path = os.path.join(DATA_DIR, name)
@@ -404,7 +461,15 @@ def save_manifest(manifest):
 # Change classification (Part 3)
 # ---------------------------------------------------------------------------
 
-def classify_changes(manifest, current_files):
+def _md5_of_file(full_path):
+    hasher = hashlib.md5()
+    with open(full_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def classify_changes(manifest, current_files, drive_md5_by_id=None):
     """current_files: dict of relative_path -> absolute_path (from
     _iter_included_files, materialized so it can be scanned twice).
 
@@ -420,7 +485,12 @@ def classify_changes(manifest, current_files):
     manifest) so the *same* touched-but-identical file doesn't get re-hashed
     on every future run forever. When it turns out genuinely changed, the
     hash is returned in computed_hashes so the upload step can persist it
-    without hashing the (possibly large) file a second time."""
+    without hashing the (possibly large) file a second time.
+
+    drive_md5_by_id (optional, from this run's Drive listing): lets a file
+    that has no stored hash -- most image entries -- be compared by MD5
+    against what Drive already holds when only its mtime differs (e.g. files
+    copied back after a restore). Equal => unchanged, no re-upload."""
     manifest_files = manifest.get("files", {})
     new_paths = []
     changed_paths = []
@@ -449,6 +519,13 @@ def classify_changes(manifest, current_files):
 
         # Ambiguous: same size, different mtime. Fall back to a real hash
         # instead of assuming either way.
+        if not entry.get("hash") and drive_md5_by_id:
+            drive_md5 = drive_md5_by_id.get(entry.get("drive_file_id"))
+            if drive_md5 and _md5_of_file(full_path) == drive_md5:
+                unchanged_count += 1
+                entry["mtime_ns"] = mtime_ns
+                continue
+
         current_hash = _content_hash(full_path)
         if entry.get("hash") == current_hash:
             unchanged_count += 1
@@ -880,6 +957,11 @@ def _upload_or_update_file(service, manifest, relative_path, full_path, content_
 
     size, mtime_ns = _file_stat_signature(full_path)
     new_entry = {"drive_file_id": drive_file_id, "size": size, "mtime_ns": mtime_ns}
+    if content_hash is None and relative_path == INCLUDED_DB_FILE:
+        # The snapshot is rebuilt every run, so its mtime always differs; a
+        # stored hash is what lets an unchanged database be recognised
+        # (instead of being re-uploaded every night).
+        content_hash = _content_hash(full_path)
     if content_hash is not None:
         # Only ever set for files that have hit the ambiguous same-size/
         # different-mtime path in classify_changes -- lets a future touch
@@ -891,12 +973,20 @@ def _upload_or_update_file(service, manifest, relative_path, full_path, content_
 
 
 def _delete_file(service, manifest, relative_path):
+    """Moves the Drive copy to Drive's Trash (recoverable for 30 days) --
+    never a permanent files().delete. Every listing in this module asks for
+    trashed = false, so a trashed file simply stops existing as far as
+    reconciliation, verification and change detection are concerned; if it
+    is restored from Trash later, reconciliation adopts it again whenever a
+    matching local file exists."""
     from googleapiclient.errors import HttpError
 
     entry = manifest["files"].get(relative_path)
     if entry and entry.get("drive_file_id"):
         try:
-            call_with_backoff(lambda: service.files().delete(fileId=entry["drive_file_id"]))
+            call_with_backoff(lambda: service.files().update(
+                fileId=entry["drive_file_id"], body={"trashed": True}, fields="id"
+            ))
         except HttpError as exc:
             if getattr(exc.resp, "status", None) != 404:
                 raise
@@ -1220,7 +1310,13 @@ def reset_manifest():
 # Sync run (Parts 3-5)
 # ---------------------------------------------------------------------------
 
-def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skipped=0, error=None, verification=None, phase_timing=None, reconciliation=None):
+def _max_deletions_allowed(tracked_count):
+    if Config.BACKUP_MAX_DELETIONS is not None:
+        return Config.BACKUP_MAX_DELETIONS
+    return max(DELETION_GUARD_MIN, int(tracked_count * DELETION_GUARD_FRACTION))
+
+
+def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skipped=0, error=None, verification=None, phase_timing=None, reconciliation=None, deletions_held_back=0):
     return {
         "started_at": started_at,
         "finished_at": datetime.now().isoformat(),
@@ -1233,6 +1329,7 @@ def _build_run_summary(started_at, status, added=0, updated=0, deleted=0, skippe
         "verification": verification,
         "phase_timing": phase_timing,
         "reconciliation": reconciliation,  # {dropped, adopted, duplicates: [...]} | None (listing failed/skipped)
+        "deletions_held_back": deletions_held_back,  # >0: the mass-deletion guard skipped every deletion this run
     }
 
 
@@ -1274,6 +1371,8 @@ def run_sync(triggered_by="schedule"):
     errors = []
     cancelled = False
     verification = None
+    deletions_held_back = 0
+    held_back_message = None
     try:
         logger.info("Cloud backup sync starting (triggered_by=%s)", triggered_by)
         service = build_drive_service()
@@ -1286,7 +1385,19 @@ def run_sync(triggered_by="schedule"):
         # detection is local disk I/O (stat every included file); apply is
         # real Drive API calls for only what actually changed. These can
         # have very different costs at real scale.
-        current_files = dict(_iter_included_files())
+        # Consistent database snapshot (never the live WAL-mode file). If it
+        # fails, the database is left out of this run AND protected from the
+        # deletion pass below, so the previous good Drive copy stays put.
+        snapshot_path = None
+        snapshot_failed = False
+        if os.path.isfile(_database_path()):
+            try:
+                snapshot_path = _snapshot_database(_database_path())
+            except Exception as exc:
+                snapshot_failed = True
+                logger.exception("Cloud backup: database snapshot failed -- keeping the previous Drive copy")
+                errors.append(f"database snapshot failed ({_short_error_text(exc)}); previous Drive copy kept")
+        current_files = dict(_iter_included_files(db_snapshot_path=snapshot_path, skip_db=snapshot_failed))
 
         phase_started = time.monotonic()
         reconciliation = None
@@ -1315,9 +1426,29 @@ def run_sync(triggered_by="schedule"):
             )
 
         phase_started = time.monotonic()
+        drive_md5_by_id = None
+        if drive_listing is not None:
+            canonical_listing, _dupes = _canonicalize_drive_listing(drive_listing)
+            drive_md5_by_id = {info["id"]: info["md5"] for info in canonical_listing.values() if info.get("md5")}
         new_paths, changed_paths, deleted_paths, unchanged_count, computed_hashes = classify_changes(
-            manifest, current_files
+            manifest, current_files, drive_md5_by_id
         )
+        if snapshot_failed:
+            deleted_paths = [p for p in deleted_paths if p != INCLUDED_DB_FILE]
+
+        # Mass-deletion guard: a run that would trash an unusually large number
+        # of files (empty/unmounted image folder, wrong data dir...) holds ALL
+        # deletions back. Uploads/updates proceed; the manifest keeps every
+        # held-back entry, so once the files return the next run is clean.
+        allowed_deletions = _max_deletions_allowed(len(manifest.get("files", {})))
+        if len(deleted_paths) > allowed_deletions:
+            deletions_held_back = len(deleted_paths)
+            held_back_message = (
+                f"{deletions_held_back} deletions held back: local files missing "
+                f"(limit {allowed_deletions} per run; set BACKUP_MAX_DELETIONS to allow)"
+            )
+            logger.warning("Cloud backup: %s", held_back_message)
+            deleted_paths = []
         # Persists any in-place mtime_ns/hash fixes classify_changes made
         # for ambiguous-but-actually-unchanged files, even if nothing below
         # ends up needing to run (e.g. every other file was also unchanged).
@@ -1405,7 +1536,7 @@ def run_sync(triggered_by="schedule"):
             if drive_listing is not None:
                 verification = _verify_from_listing(drive_listing, manifest, uploaded_ok, updated_ok, deleted_ok)
             verification_seconds = time.monotonic() - phase_started
-            if errors:
+            if errors or deletions_held_back:
                 status = "partial"
             elif verification is None:
                 # Listing failed up front -- honest about not actually
@@ -1431,7 +1562,8 @@ def run_sync(triggered_by="schedule"):
         summary = _build_run_summary(
             started_at, status,
             added=added, updated=updated, deleted=deleted_count, skipped=unchanged_count,
-            error="; ".join(errors) if errors else (f"Drive listing failed: {listing_error}" if listing_error else None),
+            error="; ".join(errors + ([held_back_message] if held_back_message else [])) if (errors or held_back_message) else (f"Drive listing failed: {listing_error}" if listing_error else None),
+            deletions_held_back=deletions_held_back,
             verification=verification,
             phase_timing={
                 "listing_seconds": round(listing_seconds, 2),
@@ -1460,6 +1592,7 @@ def run_sync(triggered_by="schedule"):
             error=str(exc),
         )
     finally:
+        _remove_snapshot()
         with _status_lock:
             _status["running"] = False
             _status["last_run"] = summary

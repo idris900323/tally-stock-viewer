@@ -74,6 +74,14 @@ class Config:
     # the normal schedule; CLOUD_BACKUP_INTERVAL below is only a fallback,
     # used if this is unset or not parseable as HH:MM.
     CLOUD_BACKUP_DAILY_TIME = os.environ.get("CLOUD_BACKUP_DAILY_TIME", "02:00").strip()
+    # Cloud backup mass-deletion guard: a run that would move more than this many
+    # files to Drive Trash holds ALL deletions back (see cloud_backup.run_sync).
+    # Unset = max(20, 2% of backed-up files). Set it (e.g. 1000) for a run where
+    # you really did remove that many local files, then unset it again.
+    try:
+        BACKUP_MAX_DELETIONS = int(os.environ["BACKUP_MAX_DELETIONS"]) if os.environ.get("BACKUP_MAX_DELETIONS", "").strip() else None
+    except ValueError:
+        BACKUP_MAX_DELETIONS = None
     CLOUD_BACKUP_INTERVAL = int(os.environ.get("CLOUD_BACKUP_INTERVAL", str(3 * 24 * 3600)))
 
     # Cloud deployment — a cloud-hosted instance can never reach Tally
