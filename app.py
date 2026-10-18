@@ -1744,6 +1744,48 @@ def get_resource_usage():
     }
 
 
+def _classify_fd_target(target):
+    """Category for one /proc/self/fd readlink target -- by TYPE and file
+    extension only, so no path or filename can ever reach the log."""
+    if target.startswith("socket:"):
+        return "sockets"
+    if target.endswith(" (deleted)"):
+        target = target[:-len(" (deleted)")]
+    lowered = target.lower()
+    if lowered.endswith((".db", ".db-wal", ".db-shm", ".db-journal", ".sqlite", ".sqlite3")):
+        return "database"
+    if lowered.endswith(".json") or lowered.endswith(".json.tmp"):
+        return "json"
+    if lowered.endswith(".log") or ".log." in lowered.rsplit("/", 1)[-1]:
+        return "log"
+    return "other"  # other regular files, pipes, anon inodes (epoll etc.)
+
+
+def _fd_breakdown(fd_dir="/proc/self/fd"):
+    """{"sockets", "database", "json", "log", "other"} counts of this
+    process's open descriptors, or None where /proc isn't available (Windows)
+    or anything goes wrong. Diagnostic only. os.scandir is used as a context
+    manager so the directory descriptor it opens is always closed, and the
+    scan's own descriptor (it shows up in its own listing) is not counted."""
+    try:
+        if not os.path.isdir(fd_dir):
+            return None
+        counts = {"sockets": 0, "database": 0, "json": 0, "log": 0, "other": 0}
+        own = f"/proc/{os.getpid()}/fd"
+        with os.scandir(fd_dir) as entries:
+            for entry in entries:
+                try:
+                    target = os.readlink(entry.path)
+                except OSError:
+                    continue  # closed between listing and readlink
+                if target in (own, "/proc/self/fd"):
+                    continue
+                counts[_classify_fd_target(target)] += 1
+        return counts
+    except Exception:
+        return None
+
+
 _resource_log_timer = None
 
 
@@ -1760,9 +1802,11 @@ def start_resource_monitor():
         global _resource_log_timer
         try:
             usage = get_resource_usage()
+            breakdown = _fd_breakdown()
             logger.info(
-                "Resource usage: RSS=%s MB (limit %s MB), %s=%s",
+                "Resource usage: RSS=%s MB (limit %s MB), %s=%s%s",
                 usage["rss_mb"], usage["memory_limit_mb"], usage["fd_label"], usage["open_fds"],
+                (" [" + ", ".join(f"{k}={v}" for k, v in breakdown.items()) + "]") if breakdown else "",
             )
         except Exception:
             logger.exception("Resource monitor logging failed")
