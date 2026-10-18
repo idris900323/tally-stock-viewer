@@ -19,13 +19,9 @@ launcher.pyw's watchdog is ALSO running it just sees the port already
 open and skips launching a second instance).
 """
 import os
-import sys
-
-import machine_role
-machine_role.refuse_if_not_full("relaunch_helper.py")
-
 import socket
 import subprocess
+import sys
 import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

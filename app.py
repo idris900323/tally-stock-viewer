@@ -1,13 +1,4 @@
 '''idris' special project'''
-# Machine-role guard: a feeder-only machine (MACHINE_ROLE=feeder) must never
-# import the web app. feeder.py is the one legitimate importer -- it sets
-# FEEDER_MODE=1 first (no database, nothing served). Runs before anything
-# below can create folders, open mappings.db or bind a port.
-import os as _os
-import machine_role as _machine_role
-if _os.environ.get("FEEDER_MODE") != "1":
-    _machine_role.refuse_if_not_full("app.py")
-
 from flask import Flask, jsonify, request, render_template, send_file, Response, session, redirect, url_for, g
 import hashlib
 import hmac

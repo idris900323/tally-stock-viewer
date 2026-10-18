@@ -2,16 +2,6 @@
 setlocal EnableExtensions
 
 set "SCRIPT_DIR=%~dp0"
-rem Refuse on a feeder-only machine (MACHINE_ROLE=feeder in .env): this script would revive the web app.
-if exist "%~dp0.env" (
-    findstr /B /I /R /C:"MACHINE_ROLE[ ]*=[ ]*feeder[ ]*$" "%~dp0.env" >nul 2>&1
-    if not errorlevel 1 (
-        echo [ERROR] This machine is set to feeder-only; set MACHINE_ROLE=full in .env to run the web app.
-        pause
-        exit /b 1
-    )
-)
-
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 set "TARGET_DIR=C:\tally_stock"
 set "VENV_DIR=%TARGET_DIR%\.venv"

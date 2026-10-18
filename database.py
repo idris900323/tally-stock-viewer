@@ -10,7 +10,6 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-import machine_role
 from config import Config
 from utils.normalize import normalize_lookup_key
 
@@ -224,7 +223,6 @@ def _normalize_legacy_absolute_image_paths(conn):
 
 
 def _connect():
-    machine_role.refuse_db_access_if_feeder()
     conn = sqlite3.connect(DB_PATH, timeout=Config.DB_TIMEOUT)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA synchronous = NORMAL")
@@ -259,7 +257,6 @@ def get_connection():
 
 
 def init_database():
-    machine_role.refuse_db_access_if_feeder()
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with get_connection() as conn:
         conn.execute("PRAGMA journal_mode = WAL")

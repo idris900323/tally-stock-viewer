@@ -1,11 +1,5 @@
 import os
 import sys
-
-# Refuse FIRST on a feeder-only machine: before any other import, folder, log
-# file or process (the tray launcher would otherwise start serve.py).
-import machine_role
-machine_role.refuse_if_not_full("launcher.pyw")
-
 import time
 import socket
 import threading

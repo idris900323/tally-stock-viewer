@@ -1,16 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem Refuse on a feeder-only machine (MACHINE_ROLE=feeder in .env): this script would revive the web app.
-if exist "C:\tally_stock\.env" (
-    findstr /B /I /R /C:"MACHINE_ROLE[ ]*=[ ]*feeder[ ]*$" "C:\tally_stock\.env" >nul 2>&1
-    if not errorlevel 1 (
-        echo [ERROR] This machine is set to feeder-only; set MACHINE_ROLE=full in .env to run the web app.
-        pause
-        exit /b 1
-    )
-)
-
 cd /d C:\tally_stock
 if errorlevel 1 (
     echo [ERROR] Could not find C:\tally_stock
