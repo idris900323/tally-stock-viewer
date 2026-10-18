@@ -1,0 +1,3426 @@
+{
+ "admin_locked GET /": {
+  "body": "7b45d5175d",
+  "cache": "",
+  "len": 191695,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_locked GET /admin/accounts": {
+  "body": "fbe945a12a",
+  "cache": "",
+  "len": 1544,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_locked GET /admin/banner": {
+  "body": "f6a39936e4",
+  "cache": "no-store",
+  "len": 52,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/categories/<string:name>/usage": {
+  "body": "8e7027d620",
+  "cache": "no-store",
+  "len": 38,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/categories/regen_status": {
+  "body": "d56b92d255",
+  "cache": "no-store",
+  "len": 79,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/get_all_customers": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/popup": {
+  "body": "9805e832af",
+  "cache": "no-store",
+  "len": 69,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system": {
+  "body": "d38e186243",
+  "cache": "",
+  "len": 7862,
+  "location": "",
+  "status": 403,
+  "type": "text/html"
+ },
+ "admin_locked GET /admin/system/authorize-device": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/autostart_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/categories": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/cloud_backup/auth_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/cloud_backup/status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/disk_usage": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/download_backup": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/env_summary": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/feeder_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/find_duplicate_images": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/logs": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/resource_usage": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/share_cache_files": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/tally_perf_test": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/tally_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/system/uptime": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/user_activity/<int:user_id>": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /admin/user_activity_stats": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/banner": {
+  "body": "851f62acdb",
+  "cache": "no-store",
+  "len": 16,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/categories": {
+  "body": "3bad794765",
+  "cache": "no-store",
+  "len": 534,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/customer_reports": {
+  "body": "83bf7ca0f4",
+  "cache": "no-store",
+  "len": 126,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/get_all_items_for_car": {
+  "body": "ec5f4825e3",
+  "cache": "no-store",
+  "len": 494,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/get_stock_items_for_car": {
+  "body": "e83401ab9d",
+  "cache": "no-store",
+  "len": 202,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/list_product_categories": {
+  "body": "3e273b822c",
+  "cache": "no-store",
+  "len": 99,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/needs_category_queue": {
+  "body": "ea365d4e61",
+  "cache": "no-store",
+  "len": 537,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/needs_image_matching_queue": {
+  "body": "dbc7c78082",
+  "cache": "no-store",
+  "len": 539,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/popup": {
+  "body": "e5c5ee9a6f",
+  "cache": "no-store",
+  "len": 15,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/resolve_car_from_folder": {
+  "body": "47d1f0fa6e",
+  "cache": "no-store",
+  "len": 13,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/search_all_stock_items": {
+  "body": "043d4ad153",
+  "cache": "no-store",
+  "len": 275,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/search_car_folders": {
+  "body": "7c03af94a4",
+  "cache": "no-store",
+  "len": 76,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /api/search_cars": {
+  "body": "7c03af94a4",
+  "cache": "no-store",
+  "len": 76,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /bulk_match": {
+  "body": "e4106d7200",
+  "cache": "",
+  "len": 25326,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_locked GET /cars": {
+  "body": "9dc4b0ee92",
+  "cache": "no-store",
+  "len": 17,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /change_password": {
+  "body": "f1b2585e20",
+  "cache": "",
+  "len": 1965,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_locked GET /designs": {
+  "body": "ec5f4825e3",
+  "cache": "no-store",
+  "len": 494,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /full_refresh_status": {
+  "body": "39461a71c5",
+  "cache": "no-store",
+  "len": 67,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /get_current_mapping_image": {
+  "body": "05f787bd09",
+  "cache": "no-store",
+  "len": 105,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /get_image/<int:image_id>": {
+  "body": "0d339f9228",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_locked GET /get_share_image/<int:image_id>": {
+  "body": "01c0bad54c",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_locked GET /get_share_image_badged/<int:image_id>": {
+  "body": "9f7acec409",
+  "cache": "no-cache, must-revalidate",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_locked GET /get_stock_image": {
+  "body": "0d339f9228",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_locked GET /get_unmapped_images": {
+  "body": "854dc6daf9",
+  "cache": "no-store",
+  "len": 352,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /health": {
+  "body": "ae15b929e7",
+  "cache": "no-store",
+  "len": 231,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /last_update": {
+  "body": "3e8cff99be",
+  "cache": "no-store",
+  "len": 124,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /login": {
+  "body": "ac7ad644ef",
+  "cache": "",
+  "len": 189,
+  "location": "/",
+  "status": 302,
+  "type": "text/html"
+ },
+ "admin_locked GET /logout": {
+  "body": "9247b3a15b",
+  "cache": "",
+  "len": 199,
+  "location": "/login",
+  "status": 302,
+  "type": "text/html"
+ },
+ "admin_locked GET /mapping_stats": {
+  "body": "2303fa2161",
+  "cache": "no-store",
+  "len": 199,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /popup_image/<int:version>": {
+  "body": "da39a3ee5e",
+  "cache": "",
+  "len": 0,
+  "location": "",
+  "status": 404,
+  "type": "text/html"
+ },
+ "admin_locked GET /refresh_status": {
+  "body": "bdf1594d7f",
+  "cache": "no-store",
+  "len": 63,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked GET /robots.txt": {
+  "body": "0dcf89399a",
+  "cache": "",
+  "len": 26,
+  "location": "",
+  "status": 200,
+  "type": "text/plain"
+ },
+ "admin_locked GET /static/<path:filename>": {
+  "body": "427555aaf7",
+  "cache": "no-cache",
+  "len": 6401,
+  "location": "",
+  "status": 200,
+  "type": "text/css"
+ },
+ "admin_locked GET /suggest_match/<int:image_id>": {
+  "body": "b12cc36665",
+  "cache": "no-store",
+  "len": 46,
+  "location": "",
+  "status": 410,
+  "type": "application/json"
+ },
+ "admin_locked GET /train": {
+  "body": "a607167e55",
+  "cache": "",
+  "len": 82911,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_locked GET /train_images": {
+  "body": "09ddb39e45",
+  "cache": "no-store",
+  "len": 337,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/accounts/change_password": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/accounts/unlock": {
+  "body": "c837dc271a",
+  "cache": "",
+  "len": 1797,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "admin_locked POST /admin/assign_category": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/banner": {
+  "body": "6f50f7af91",
+  "cache": "no-store",
+  "len": 54,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/banner/clear": {
+  "body": "de9d8da7c7",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/bulk_confirm_mapping": {
+  "body": "9eec235af6",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/categories/add": {
+  "body": "3c9fdba4fa",
+  "cache": "no-store",
+  "len": 38,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/categories/delete": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/categories/merge": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/categories/rename": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/create_user": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/customer_reports/<int:report_id>/resolve": {
+  "body": "484b303261",
+  "cache": "no-store",
+  "len": 17,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/delete_user/<int:user_id>": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/intake/sync_data": {
+  "body": "5309f0d050",
+  "cache": "no-store",
+  "len": 45,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/popup": {
+  "body": "23dfe36ccb",
+  "cache": "no-store",
+  "len": 58,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/popup/clear": {
+  "body": "1ecb9f5e8c",
+  "cache": "no-store",
+  "len": 32,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/remove_missing_images": {
+  "body": "608989bd85",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/reset_customer_access_code/<int:user_id>": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/set_all_customer_status": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/categories/abbreviation": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/categories/move": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/clear_badge_cache": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/cloud_backup/authorize": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/cloud_backup/reset_manifest": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/cloud_backup/stop": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/cloud_backup/sync_now": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/pull_and_restart": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/restart_app_only": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/system/trigger_rescan": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/toggle_user_status/<int:user_id>": {
+  "body": "a23be3c6ea",
+  "cache": "no-store",
+  "len": 74,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /admin/upload_image": {
+  "body": "e9d6a800be",
+  "cache": "no-store",
+  "len": 51,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /api/activity": {
+  "body": "da39a3ee5e",
+  "cache": "",
+  "len": 0,
+  "location": "",
+  "status": 204,
+  "type": "text/html"
+ },
+ "admin_locked POST /api/report_item": {
+  "body": "8716e8c715",
+  "cache": "no-store",
+  "len": 45,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /change_password": {
+  "body": "a55e87f023",
+  "cache": "",
+  "len": 2237,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "admin_locked POST /confirm_mapping": {
+  "body": "9eec235af6",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /export_images": {
+  "body": "608989bd85",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /full_refresh": {
+  "body": "4ede059644",
+  "cache": "no-store",
+  "len": 157,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_locked POST /login": {
+  "body": "0855ee494d",
+  "cache": "",
+  "len": 6376,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "admin_locked POST /refresh_item_stock": {
+  "body": "c2752ad66d",
+  "cache": "no-store",
+  "len": 262,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /refresh_stock": {
+  "body": "88589f1db7",
+  "cache": "no-store",
+  "len": 258,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /reload": {
+  "body": "f1402ff512",
+  "cache": "no-store",
+  "len": 22,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /remove_mapping": {
+  "body": "9eec235af6",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_locked POST /scan_images": {
+  "body": "63f0703bee",
+  "cache": "no-store",
+  "len": 340,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_locked POST /update_stock": {
+  "body": "88589f1db7",
+  "cache": "no-store",
+  "len": 258,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /": {
+  "body": "7b45d5175d",
+  "cache": "",
+  "len": 191695,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /admin/accounts": {
+  "body": "1967bfe28b",
+  "cache": "",
+  "len": 32841,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /admin/banner": {
+  "body": "f6a39936e4",
+  "cache": "no-store",
+  "len": 52,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/categories/<string:name>/usage": {
+  "body": "8e7027d620",
+  "cache": "no-store",
+  "len": 38,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/categories/regen_status": {
+  "body": "d56b92d255",
+  "cache": "no-store",
+  "len": 79,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/get_all_customers": {
+  "body": "e2f2b29661",
+  "cache": "no-store",
+  "len": 320,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/popup": {
+  "body": "9805e832af",
+  "cache": "no-store",
+  "len": 69,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system": {
+  "body": "80e2b03e99",
+  "cache": "",
+  "len": 52130,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /admin/system/authorize-device": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/autostart_status": {
+  "body": "3fc245774c",
+  "cache": "no-store",
+  "len": 53,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/categories": {
+  "body": "2b6a8d8f17",
+  "cache": "no-store",
+  "len": 269,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/cloud_backup/auth_status": {
+  "body": "4147301434",
+  "cache": "no-store",
+  "len": 85,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/cloud_backup/status": {
+  "body": "e4be71e227",
+  "cache": "no-store",
+  "len": 393,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/disk_usage": {
+  "body": "71677d9570",
+  "cache": "no-store",
+  "len": 159,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/download_backup": {
+  "body": "ff47b7b8d6",
+  "cache": "no-cache",
+  "len": 19,
+  "location": "",
+  "status": 200,
+  "type": "application/zip"
+ },
+ "admin_unlocked GET /admin/system/env_summary": {
+  "body": "da2bf2f0c0",
+  "cache": "no-store",
+  "len": 145,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/feeder_status": {
+  "body": "f13a298dcb",
+  "cache": "no-store",
+  "len": 114,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/find_duplicate_images": {
+  "body": "a4aa2ac425",
+  "cache": "no-store",
+  "len": 67,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/logs": {
+  "body": "707443de19",
+  "cache": "",
+  "len": 851,
+  "location": "",
+  "status": 200,
+  "type": "text/plain"
+ },
+ "admin_unlocked GET /admin/system/resource_usage": {
+  "body": "4acb7bdbba",
+  "cache": "no-store",
+  "len": 89,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/share_cache_files": {
+  "body": "e19a507e97",
+  "cache": "no-store",
+  "len": 87,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/status": {
+  "body": "ff2aba9ad4",
+  "cache": "no-store",
+  "len": 131,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/tally_perf_test": {
+  "body": "9eb79f2ca0",
+  "cache": "",
+  "len": 265,
+  "location": "",
+  "status": 500,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /admin/system/tally_status": {
+  "body": "709baa9527",
+  "cache": "no-store",
+  "len": 100,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/system/uptime": {
+  "body": "b6fb151636",
+  "cache": "no-store",
+  "len": 52,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/user_activity/<int:user_id>": {
+  "body": "2e055b7ee0",
+  "cache": "no-store",
+  "len": 58,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /admin/user_activity_stats": {
+  "body": "d8d6bcf2c5",
+  "cache": "no-store",
+  "len": 903,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/banner": {
+  "body": "851f62acdb",
+  "cache": "no-store",
+  "len": 16,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/categories": {
+  "body": "3bad794765",
+  "cache": "no-store",
+  "len": 534,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/customer_reports": {
+  "body": "83bf7ca0f4",
+  "cache": "no-store",
+  "len": 126,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/get_all_items_for_car": {
+  "body": "ec5f4825e3",
+  "cache": "no-store",
+  "len": 494,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/get_stock_items_for_car": {
+  "body": "e83401ab9d",
+  "cache": "no-store",
+  "len": 202,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/list_product_categories": {
+  "body": "3e273b822c",
+  "cache": "no-store",
+  "len": 99,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/needs_category_queue": {
+  "body": "ea365d4e61",
+  "cache": "no-store",
+  "len": 537,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/needs_image_matching_queue": {
+  "body": "dbc7c78082",
+  "cache": "no-store",
+  "len": 539,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/popup": {
+  "body": "e5c5ee9a6f",
+  "cache": "no-store",
+  "len": 15,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/resolve_car_from_folder": {
+  "body": "47d1f0fa6e",
+  "cache": "no-store",
+  "len": 13,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/search_all_stock_items": {
+  "body": "043d4ad153",
+  "cache": "no-store",
+  "len": 275,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/search_car_folders": {
+  "body": "7c03af94a4",
+  "cache": "no-store",
+  "len": 76,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /api/search_cars": {
+  "body": "7c03af94a4",
+  "cache": "no-store",
+  "len": 76,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /bulk_match": {
+  "body": "e4106d7200",
+  "cache": "",
+  "len": 25326,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /cars": {
+  "body": "9dc4b0ee92",
+  "cache": "no-store",
+  "len": 17,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /change_password": {
+  "body": "f1b2585e20",
+  "cache": "",
+  "len": 1965,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /designs": {
+  "body": "ec5f4825e3",
+  "cache": "no-store",
+  "len": 494,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /full_refresh_status": {
+  "body": "39461a71c5",
+  "cache": "no-store",
+  "len": 67,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /get_current_mapping_image": {
+  "body": "05f787bd09",
+  "cache": "no-store",
+  "len": 105,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /get_image/<int:image_id>": {
+  "body": "0d339f9228",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_unlocked GET /get_share_image/<int:image_id>": {
+  "body": "01c0bad54c",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_unlocked GET /get_share_image_badged/<int:image_id>": {
+  "body": "9f7acec409",
+  "cache": "no-cache, must-revalidate",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_unlocked GET /get_stock_image": {
+  "body": "0d339f9228",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "admin_unlocked GET /get_unmapped_images": {
+  "body": "854dc6daf9",
+  "cache": "no-store",
+  "len": 352,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /health": {
+  "body": "ae15b929e7",
+  "cache": "no-store",
+  "len": 231,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /last_update": {
+  "body": "3e8cff99be",
+  "cache": "no-store",
+  "len": 124,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /login": {
+  "body": "ac7ad644ef",
+  "cache": "",
+  "len": 189,
+  "location": "/",
+  "status": 302,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /logout": {
+  "body": "9247b3a15b",
+  "cache": "",
+  "len": 199,
+  "location": "/login",
+  "status": 302,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /mapping_stats": {
+  "body": "2303fa2161",
+  "cache": "no-store",
+  "len": 199,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /popup_image/<int:version>": {
+  "body": "da39a3ee5e",
+  "cache": "",
+  "len": 0,
+  "location": "",
+  "status": 404,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /refresh_status": {
+  "body": "bdf1594d7f",
+  "cache": "no-store",
+  "len": 63,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /robots.txt": {
+  "body": "0dcf89399a",
+  "cache": "",
+  "len": 26,
+  "location": "",
+  "status": 200,
+  "type": "text/plain"
+ },
+ "admin_unlocked GET /static/<path:filename>": {
+  "body": "427555aaf7",
+  "cache": "no-cache",
+  "len": 6401,
+  "location": "",
+  "status": 200,
+  "type": "text/css"
+ },
+ "admin_unlocked GET /suggest_match/<int:image_id>": {
+  "body": "b12cc36665",
+  "cache": "no-store",
+  "len": 46,
+  "location": "",
+  "status": 410,
+  "type": "application/json"
+ },
+ "admin_unlocked GET /train": {
+  "body": "a607167e55",
+  "cache": "",
+  "len": 82911,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "admin_unlocked GET /train_images": {
+  "body": "09ddb39e45",
+  "cache": "no-store",
+  "len": 337,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/accounts/change_password": {
+  "body": "b9076d0661",
+  "cache": "no-store",
+  "len": 61,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/accounts/unlock": {
+  "body": "c837dc271a",
+  "cache": "",
+  "len": 1797,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "admin_unlocked POST /admin/assign_category": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/banner": {
+  "body": "6f50f7af91",
+  "cache": "no-store",
+  "len": 54,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/banner/clear": {
+  "body": "de9d8da7c7",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/bulk_confirm_mapping": {
+  "body": "9eec235af6",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/categories/add": {
+  "body": "3c9fdba4fa",
+  "cache": "no-store",
+  "len": 38,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/categories/delete": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/categories/merge": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/categories/rename": {
+  "body": "8d680808c7",
+  "cache": "no-store",
+  "len": 39,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/create_user": {
+  "body": "eeed1a63a0",
+  "cache": "no-store",
+  "len": 51,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/customer_reports/<int:report_id>/resolve": {
+  "body": "484b303261",
+  "cache": "no-store",
+  "len": 17,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/delete_user/<int:user_id>": {
+  "body": "4b6c4b7984",
+  "cache": "no-store",
+  "len": 81,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/intake/sync_data": {
+  "body": "5309f0d050",
+  "cache": "no-store",
+  "len": 45,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/popup": {
+  "body": "23dfe36ccb",
+  "cache": "no-store",
+  "len": 58,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/popup/clear": {
+  "body": "1ecb9f5e8c",
+  "cache": "no-store",
+  "len": 32,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/remove_missing_images": {
+  "body": "608989bd85",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/reset_customer_access_code/<int:user_id>": {
+  "body": "60eebef3f2",
+  "cache": "no-store",
+  "len": 59,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/set_all_customer_status": {
+  "body": "d9f4e08c26",
+  "cache": "no-store",
+  "len": 89,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/categories/abbreviation": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/categories/move": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 404,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/clear_badge_cache": {
+  "body": "53f1a356d9",
+  "cache": "no-store",
+  "len": 47,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/cloud_backup/authorize": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/cloud_backup/reset_manifest": {
+  "body": "9463df0cbf",
+  "cache": "no-store",
+  "len": 12,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/cloud_backup/stop": {
+  "body": "93288c556a",
+  "cache": "no-store",
+  "len": 37,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/cloud_backup/sync_now": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/pull_and_restart": {
+  "body": "eb81edcc71",
+  "cache": "no-store",
+  "len": 57,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/restart_app_only": {
+  "body": "b4ba756e11",
+  "cache": "no-store",
+  "len": 36,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/system/trigger_rescan": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/toggle_user_status/<int:user_id>": {
+  "body": "8af49795a7",
+  "cache": "no-store",
+  "len": 87,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /admin/upload_image": {
+  "body": "e9d6a800be",
+  "cache": "no-store",
+  "len": 51,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /api/activity": {
+  "body": "da39a3ee5e",
+  "cache": "",
+  "len": 0,
+  "location": "",
+  "status": 204,
+  "type": "text/html"
+ },
+ "admin_unlocked POST /api/report_item": {
+  "body": "8716e8c715",
+  "cache": "no-store",
+  "len": 45,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /change_password": {
+  "body": "a55e87f023",
+  "cache": "",
+  "len": 2237,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "admin_unlocked POST /confirm_mapping": {
+  "body": "9eec235af6",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /export_images": {
+  "body": "608989bd85",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /full_refresh": {
+  "body": "4ede059644",
+  "cache": "no-store",
+  "len": 157,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /login": {
+  "body": "0855ee494d",
+  "cache": "",
+  "len": 6376,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "admin_unlocked POST /refresh_item_stock": {
+  "body": "c2752ad66d",
+  "cache": "no-store",
+  "len": 262,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /refresh_stock": {
+  "body": "88589f1db7",
+  "cache": "no-store",
+  "len": 258,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /reload": {
+  "body": "f1402ff512",
+  "cache": "no-store",
+  "len": 22,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /remove_mapping": {
+  "body": "9eec235af6",
+  "cache": "no-store",
+  "len": 33,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /scan_images": {
+  "body": "63f0703bee",
+  "cache": "no-store",
+  "len": 340,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "admin_unlocked POST /update_stock": {
+  "body": "88589f1db7",
+  "cache": "no-store",
+  "len": 258,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "anonymous GET /": {
+  "body": "d85cfee739",
+  "cache": "",
+  "len": 6121,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/accounts": {
+  "body": "eface8fb8e",
+  "cache": "",
+  "len": 6135,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/banner": {
+  "body": "d3f40901da",
+  "cache": "",
+  "len": 6133,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/categories/<string:name>/usage": {
+  "body": "ecbc17de65",
+  "cache": "",
+  "len": 6149,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/categories/regen_status": {
+  "body": "b86ea8bfab",
+  "cache": "",
+  "len": 6150,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/get_all_customers": {
+  "body": "c78834c258",
+  "cache": "",
+  "len": 6144,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/popup": {
+  "body": "8d3ff4f90d",
+  "cache": "",
+  "len": 6132,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system": {
+  "body": "f9a71c5971",
+  "cache": "",
+  "len": 6133,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/authorize-device": {
+  "body": "4cb867604d",
+  "cache": "",
+  "len": 6150,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/autostart_status": {
+  "body": "64373a0126",
+  "cache": "",
+  "len": 6150,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/categories": {
+  "body": "dfed53e43d",
+  "cache": "",
+  "len": 6144,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/cloud_backup/auth_status": {
+  "body": "130718eaff",
+  "cache": "",
+  "len": 6158,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/cloud_backup/status": {
+  "body": "471bc5d4cb",
+  "cache": "",
+  "len": 6153,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/disk_usage": {
+  "body": "cebbc2026b",
+  "cache": "",
+  "len": 6144,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/download_backup": {
+  "body": "65db8cf42c",
+  "cache": "",
+  "len": 6149,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/env_summary": {
+  "body": "591760ed12",
+  "cache": "",
+  "len": 6145,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/feeder_status": {
+  "body": "98e08a36eb",
+  "cache": "",
+  "len": 6147,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/find_duplicate_images": {
+  "body": "6f0b084d61",
+  "cache": "",
+  "len": 6155,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/logs": {
+  "body": "1d46619aeb",
+  "cache": "",
+  "len": 6138,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/resource_usage": {
+  "body": "681a2d5f21",
+  "cache": "",
+  "len": 6148,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/share_cache_files": {
+  "body": "844f4e1095",
+  "cache": "",
+  "len": 6151,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/status": {
+  "body": "a9be5ad029",
+  "cache": "",
+  "len": 6140,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/tally_perf_test": {
+  "body": "719fc38d88",
+  "cache": "",
+  "len": 6149,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/tally_status": {
+  "body": "dfe433b50f",
+  "cache": "",
+  "len": 6146,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/system/uptime": {
+  "body": "e16570bf47",
+  "cache": "",
+  "len": 6140,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/user_activity/<int:user_id>": {
+  "body": "0774ba4aa8",
+  "cache": "",
+  "len": 6142,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /admin/user_activity_stats": {
+  "body": "f9eec748a8",
+  "cache": "",
+  "len": 6146,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/banner": {
+  "body": "3b99e78402",
+  "cache": "",
+  "len": 6131,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/categories": {
+  "body": "fdb14b5697",
+  "cache": "",
+  "len": 6135,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/customer_reports": {
+  "body": "3cd894f280",
+  "cache": "",
+  "len": 6141,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/get_all_items_for_car": {
+  "body": "851d9c1d91",
+  "cache": "",
+  "len": 6146,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/get_stock_items_for_car": {
+  "body": "b9fcfa39c1",
+  "cache": "",
+  "len": 6148,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/list_product_categories": {
+  "body": "d02b03e844",
+  "cache": "",
+  "len": 6148,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/needs_category_queue": {
+  "body": "4d7fdeea6b",
+  "cache": "",
+  "len": 6145,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/needs_image_matching_queue": {
+  "body": "ef8867b59e",
+  "cache": "",
+  "len": 6151,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/popup": {
+  "body": "e7d47b70a8",
+  "cache": "",
+  "len": 6130,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/resolve_car_from_folder": {
+  "body": "9165a0509b",
+  "cache": "",
+  "len": 6148,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/search_all_stock_items": {
+  "body": "b44bb55645",
+  "cache": "",
+  "len": 6147,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/search_car_folders": {
+  "body": "767aba9635",
+  "cache": "",
+  "len": 6143,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /api/search_cars": {
+  "body": "10758b94ab",
+  "cache": "",
+  "len": 6136,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /bulk_match": {
+  "body": "1b4e985954",
+  "cache": "",
+  "len": 6131,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /cars": {
+  "body": "31ae740431",
+  "cache": "",
+  "len": 6125,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /change_password": {
+  "body": "c304babf23",
+  "cache": "",
+  "len": 6136,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /designs": {
+  "body": "b83aad7218",
+  "cache": "",
+  "len": 6128,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /full_refresh_status": {
+  "body": "39461a71c5",
+  "cache": "no-store",
+  "len": 67,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "anonymous GET /get_current_mapping_image": {
+  "body": "90e8edd441",
+  "cache": "",
+  "len": 6146,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /get_image/<int:image_id>": {
+  "body": "15f739d5b9",
+  "cache": "",
+  "len": 6132,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /get_share_image/<int:image_id>": {
+  "body": "edd051431b",
+  "cache": "",
+  "len": 6138,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /get_share_image_badged/<int:image_id>": {
+  "body": "d7b5f1149f",
+  "cache": "",
+  "len": 6145,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /get_stock_image": {
+  "body": "4cdc74f0de",
+  "cache": "",
+  "len": 6136,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /get_unmapped_images": {
+  "body": "ae95ec75a3",
+  "cache": "",
+  "len": 6140,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /health": {
+  "body": "ae15b929e7",
+  "cache": "no-store",
+  "len": 231,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "anonymous GET /last_update": {
+  "body": "0d5d296d7e",
+  "cache": "",
+  "len": 6132,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /login": {
+  "body": "d85cfee739",
+  "cache": "",
+  "len": 6121,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "anonymous GET /logout": {
+  "body": "9247b3a15b",
+  "cache": "",
+  "len": 199,
+  "location": "/login",
+  "status": 302,
+  "type": "text/html"
+ },
+ "anonymous GET /mapping_stats": {
+  "body": "3e11802088",
+  "cache": "",
+  "len": 6134,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /popup_image/<int:version>": {
+  "body": "d4997cbf8e",
+  "cache": "",
+  "len": 6134,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /refresh_status": {
+  "body": "91ff857c62",
+  "cache": "",
+  "len": 6135,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /robots.txt": {
+  "body": "0dcf89399a",
+  "cache": "",
+  "len": 26,
+  "location": "",
+  "status": 200,
+  "type": "text/plain"
+ },
+ "anonymous GET /static/<path:filename>": {
+  "body": "427555aaf7",
+  "cache": "no-cache",
+  "len": 6401,
+  "location": "",
+  "status": 200,
+  "type": "text/css"
+ },
+ "anonymous GET /suggest_match/<int:image_id>": {
+  "body": "09822a2292",
+  "cache": "",
+  "len": 6136,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /train": {
+  "body": "9b6d1537d9",
+  "cache": "",
+  "len": 6126,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous GET /train_images": {
+  "body": "2e1c88e2c9",
+  "cache": "",
+  "len": 6133,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous POST /admin/accounts/change_password": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/accounts/unlock": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/assign_category": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/banner": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/banner/clear": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/bulk_confirm_mapping": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/categories/add": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/categories/delete": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/categories/merge": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/categories/rename": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/create_user": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/customer_reports/<int:report_id>/resolve": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/delete_user/<int:user_id>": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/intake/sync_data": {
+  "body": "5309f0d050",
+  "cache": "no-store",
+  "len": 45,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/popup": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/popup/clear": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/remove_missing_images": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/reset_customer_access_code/<int:user_id>": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/set_all_customer_status": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/categories/abbreviation": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/categories/move": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/clear_badge_cache": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/cloud_backup/authorize": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/cloud_backup/reset_manifest": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/cloud_backup/stop": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/cloud_backup/sync_now": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/pull_and_restart": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/restart_app_only": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/system/trigger_rescan": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/toggle_user_status/<int:user_id>": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /admin/upload_image": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /api/activity": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /api/report_item": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /change_password": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /confirm_mapping": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /export_images": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /full_refresh": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /login": {
+  "body": "0855ee494d",
+  "cache": "",
+  "len": 6376,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "anonymous POST /refresh_item_stock": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /refresh_stock": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /reload": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /remove_mapping": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /scan_images": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "anonymous POST /update_stock": {
+  "body": "ee2876c01a",
+  "cache": "no-store",
+  "len": 27,
+  "location": "",
+  "status": 401,
+  "type": "application/json"
+ },
+ "dealer GET /": {
+  "body": "e996ba2e2e",
+  "cache": "",
+  "len": 180204,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "dealer GET /admin/accounts": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/banner": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/categories/<string:name>/usage": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/categories/regen_status": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/get_all_customers": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/popup": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/authorize-device": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/autostart_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/categories": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/cloud_backup/auth_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/cloud_backup/status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/disk_usage": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/download_backup": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/env_summary": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/feeder_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/find_duplicate_images": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/logs": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/resource_usage": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/share_cache_files": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/tally_perf_test": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/tally_status": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/system/uptime": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/user_activity/<int:user_id>": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /admin/user_activity_stats": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/banner": {
+  "body": "f6a39936e4",
+  "cache": "no-store",
+  "len": 52,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /api/categories": {
+  "body": "3bad794765",
+  "cache": "no-store",
+  "len": 534,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /api/customer_reports": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/get_all_items_for_car": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/get_stock_items_for_car": {
+  "body": "e83401ab9d",
+  "cache": "no-store",
+  "len": 202,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /api/list_product_categories": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/needs_category_queue": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/needs_image_matching_queue": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/popup": {
+  "body": "9805e832af",
+  "cache": "no-store",
+  "len": 69,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /api/resolve_car_from_folder": {
+  "body": "47d1f0fa6e",
+  "cache": "no-store",
+  "len": 13,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /api/search_all_stock_items": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /api/search_car_folders": {
+  "body": "7c03af94a4",
+  "cache": "no-store",
+  "len": 76,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /api/search_cars": {
+  "body": "7c03af94a4",
+  "cache": "no-store",
+  "len": 76,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /bulk_match": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer GET /cars": {
+  "body": "9dc4b0ee92",
+  "cache": "no-store",
+  "len": 17,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /change_password": {
+  "body": "f1b2585e20",
+  "cache": "",
+  "len": 1965,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "dealer GET /designs": {
+  "body": "ec5f4825e3",
+  "cache": "no-store",
+  "len": 494,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /full_refresh_status": {
+  "body": "39461a71c5",
+  "cache": "no-store",
+  "len": 67,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /get_current_mapping_image": {
+  "body": "05f787bd09",
+  "cache": "no-store",
+  "len": 105,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /get_image/<int:image_id>": {
+  "body": "0d339f9228",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "dealer GET /get_share_image/<int:image_id>": {
+  "body": "01c0bad54c",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "dealer GET /get_share_image_badged/<int:image_id>": {
+  "body": "9f7acec409",
+  "cache": "no-cache, must-revalidate",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "dealer GET /get_stock_image": {
+  "body": "0d339f9228",
+  "cache": "no-cache",
+  "len": 18,
+  "location": "",
+  "status": 200,
+  "type": "image/jpeg"
+ },
+ "dealer GET /get_unmapped_images": {
+  "body": "854dc6daf9",
+  "cache": "no-store",
+  "len": 352,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /health": {
+  "body": "ae15b929e7",
+  "cache": "no-store",
+  "len": 231,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /last_update": {
+  "body": "9cd0cb69f5",
+  "cache": "no-store",
+  "len": 98,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /login": {
+  "body": "ac7ad644ef",
+  "cache": "",
+  "len": 189,
+  "location": "/",
+  "status": 302,
+  "type": "text/html"
+ },
+ "dealer GET /logout": {
+  "body": "9247b3a15b",
+  "cache": "",
+  "len": 199,
+  "location": "/login",
+  "status": 302,
+  "type": "text/html"
+ },
+ "dealer GET /mapping_stats": {
+  "body": "a05b2debdf",
+  "cache": "no-store",
+  "len": 88,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /popup_image/<int:version>": {
+  "body": "da39a3ee5e",
+  "cache": "",
+  "len": 0,
+  "location": "",
+  "status": 404,
+  "type": "text/html"
+ },
+ "dealer GET /refresh_status": {
+  "body": "bdf1594d7f",
+  "cache": "no-store",
+  "len": 63,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer GET /robots.txt": {
+  "body": "0dcf89399a",
+  "cache": "",
+  "len": 26,
+  "location": "",
+  "status": 200,
+  "type": "text/plain"
+ },
+ "dealer GET /static/<path:filename>": {
+  "body": "427555aaf7",
+  "cache": "no-cache",
+  "len": 6401,
+  "location": "",
+  "status": 200,
+  "type": "text/css"
+ },
+ "dealer GET /suggest_match/<int:image_id>": {
+  "body": "b12cc36665",
+  "cache": "no-store",
+  "len": 46,
+  "location": "",
+  "status": 410,
+  "type": "application/json"
+ },
+ "dealer GET /train": {
+  "body": "01dd54afa2",
+  "cache": "",
+  "len": 76979,
+  "location": "",
+  "status": 200,
+  "type": "text/html"
+ },
+ "dealer GET /train_images": {
+  "body": "09ddb39e45",
+  "cache": "no-store",
+  "len": 337,
+  "location": "",
+  "status": 200,
+  "type": "application/json"
+ },
+ "dealer POST /admin/accounts/change_password": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/accounts/unlock": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/assign_category": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/banner": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/banner/clear": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/bulk_confirm_mapping": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/categories/add": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/categories/delete": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/categories/merge": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/categories/rename": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/create_user": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/customer_reports/<int:report_id>/resolve": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/delete_user/<int:user_id>": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/intake/sync_data": {
+  "body": "5309f0d050",
+  "cache": "no-store",
+  "len": 45,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/popup": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/popup/clear": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/remove_missing_images": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/reset_customer_access_code/<int:user_id>": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/set_all_customer_status": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/categories/abbreviation": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/categories/move": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/clear_badge_cache": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/cloud_backup/authorize": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/cloud_backup/reset_manifest": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/cloud_backup/stop": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/cloud_backup/sync_now": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/pull_and_restart": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/restart_app_only": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/system/trigger_rescan": {
+  "body": "d9f3b7324c",
+  "cache": "no-store",
+  "len": 18,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/toggle_user_status/<int:user_id>": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /admin/upload_image": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /api/activity": {
+  "body": "da39a3ee5e",
+  "cache": "",
+  "len": 0,
+  "location": "",
+  "status": 204,
+  "type": "text/html"
+ },
+ "dealer POST /api/report_item": {
+  "body": "26613814f5",
+  "cache": "no-store",
+  "len": 46,
+  "location": "",
+  "status": 400,
+  "type": "application/json"
+ },
+ "dealer POST /change_password": {
+  "body": "a55e87f023",
+  "cache": "",
+  "len": 2237,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "dealer POST /confirm_mapping": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /export_images": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /full_refresh": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /login": {
+  "body": "0855ee494d",
+  "cache": "",
+  "len": 6376,
+  "location": "",
+  "status": 401,
+  "type": "text/html"
+ },
+ "dealer POST /refresh_item_stock": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /refresh_stock": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /reload": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /remove_mapping": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /scan_images": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ },
+ "dealer POST /update_stock": {
+  "body": "9d21e23c8b",
+  "cache": "no-store",
+  "len": 34,
+  "location": "",
+  "status": 403,
+  "type": "application/json"
+ }
+}
