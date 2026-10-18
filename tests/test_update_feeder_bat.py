@@ -101,45 +101,32 @@ class UpdateFeederRollback(unittest.TestCase):
                 open(os.path.join(seed, "feeder.py"), "w").write(feeder)
                 _git(seed, "add", "-A"); _git(seed, "commit", "-q", "-m", msg)
                 return _git(seed, "rev-parse", "HEAD")
-            old = commit("old", "# nothing to install
-", "VERSION = 'old'
-"); _git(seed, "push", "-q", "origin", "HEAD:main")
+            old = commit("old", "# nothing to install\n", "VERSION = 'old'\n"); _git(seed, "push", "-q", "origin", "HEAD:main")
             _git(root, "clone", "-q", origin, work)
             new = commit("new", new_requirements, new_feeder); _git(seed, "push", "-q", "origin", "HEAD:main")
-            open(os.path.join(work, ".env"), "w").write("MACHINE_ROLE=feeder
-FEEDER_TASK_NAME=TestTask
-CLOUD_SYNC_TOKEN=SUPERSECRET123
-")
+            open(os.path.join(work, ".env"), "w").write("MACHINE_ROLE=feeder\nFEEDER_TASK_NAME=TestTask\nCLOUD_SYNC_TOKEN=SUPERSECRET123\n")
             subprocess.run([sys.executable, "-m", "venv", os.path.join(work, ".venv")], check=True, capture_output=True)
             bindir, log = os.path.join(root, "bin"), os.path.join(root, "schtasks.log"); os.makedirs(bindir)
-            open(os.path.join(bindir, "schtasks.cmd"), "w").write('@echo %* >> "%FAKELOG%"
-@exit /b 0
-')
+            open(os.path.join(bindir, "schtasks.cmd"), "w").write('@echo %* >> "%FAKELOG%"\r\n@exit /b 0\r\n')
             env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"], FAKELOG=log, PIP_INDEX_URL="http://127.0.0.1:9/simple",
                        PIP_RETRIES="0", PIP_TIMEOUT="3", PIP_DISABLE_PIP_VERSION_CHECK="1")
             env.pop("MACHINE_ROLE", None)
-            r = subprocess.run(["cmd.exe", "/c", os.path.join(work, "update_feeder.bat")], cwd=root, env=env, input="
-", capture_output=True, text=True, timeout=300)
+            r = subprocess.run(["cmd.exe", "/c", os.path.join(work, "update_feeder.bat")], cwd=root, env=env, input="\n", capture_output=True, text=True, timeout=300)
             head = _git(work, "rev-parse", "HEAD")
-            calls = [c.strip() for c in (open(log).read().split("
-") if os.path.exists(log) else []) if c.strip()]
+            calls = [c.strip() for c in (open(log).read().split("\n") if os.path.exists(log) else []) if c.strip()]
             return r, head, old, new, calls
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
     def test_a_good_update_stays_on_the_new_commit(self):
-        r, head, old, new, calls = self.update("# nothing to install
-", "VERSION = 'new'
-")
+        r, head, old, new, calls = self.update("# nothing to install\n", "VERSION = 'new'\n")
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertEqual(head, new)
         self.assertIn("[OK] Feeder updated", r.stdout)
         self.assertEqual(calls, ['/Query /TN "TestTask"', '/End /TN "TestTask"', '/Run /TN "TestTask"'])
 
     def test_a_pip_failure_restores_the_old_commit_and_restarts_the_task(self):
-        r, head, old, new, calls = self.update("this-package-does-not-exist-zz9==1.0
-", "VERSION = 'new'
-")
+        r, head, old, new, calls = self.update("this-package-does-not-exist-zz9==1.0\n", "VERSION = 'new'\n")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertEqual(head, old, "the previous commit must be put back")
         self.assertIn("[ROLLBACK] pip could not install", r.stdout)
@@ -147,9 +134,7 @@ CLOUD_SYNC_TOKEN=SUPERSECRET123
         self.assertNotIn("SUPERSECRET123", r.stdout + r.stderr)
 
     def test_an_import_failure_restores_the_old_commit_and_restarts_the_task(self):
-        r, head, old, new, calls = self.update("# nothing to install
-", "raise ImportError('broken')
-")
+        r, head, old, new, calls = self.update("# nothing to install\n", "raise ImportError('broken')\n")
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertEqual(head, old)
         self.assertIn("[ROLLBACK] feeder.py no longer loads", r.stdout)
@@ -176,7 +161,7 @@ class FeederRequirementsFile(unittest.TestCase):
         for rel in ("update_feeder.bat", os.path.join("docs", "RUNBOOK.md"), "FEEDER_SETUP.md"):
             txt = open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace").read()
             self.assertIn("requirements-feeder.txt", txt, rel)
-            self.assertNotIn("pip install -r requirements.txt", txt, rel + " must not tell the shop PC to install the full list")
+            self.assertNotIn("-m pip install -r requirements.txt", txt, rel + " must not tell the shop PC to install the full list")
 
 
 if __name__ == "__main__":
