@@ -77,6 +77,8 @@ def main():
         )
         return 2
 
+    import machine_role
+    logger.info("Feeder starting: machine role=%s", machine_role.get_role())
     logger.info(
         "Feeder started: Tally=%s, cloud=%s, stock every %ss, full refresh every %ss",
         Config.TALLY_URL, Config.CLOUD_SYNC_URL, site.ITEM_EXPORT_INTERVAL, FULL_REFRESH_INTERVAL_SECONDS,
