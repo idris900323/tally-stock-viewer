@@ -1,0 +1,149 @@
+{
+ "static/data_sync.js": {
+  "ajax": [],
+  "fetch": [
+   "/last_update"
+  ],
+  "fetch_with_variable_url": 0,
+  "url_for": []
+ },
+ "static/shared.js": {
+  "ajax": [],
+  "fetch": [],
+  "fetch_with_variable_url": 0,
+  "url_for": []
+ },
+ "static/sw.js": {
+  "ajax": [],
+  "fetch": [],
+  "fetch_with_variable_url": 4,
+  "url_for": []
+ },
+ "templates/accounts.html": {
+  "ajax": [],
+  "fetch": [
+   "/admin/accounts/change_password",
+   "/admin/create_user",
+   "/admin/delete_user/{}",
+   "/admin/get_all_customers",
+   "/admin/reset_customer_access_code/{}",
+   "/admin/set_all_customer_status",
+   "/admin/toggle_user_status/{}",
+   "/admin/user_activity/{}"
+  ],
+  "fetch_with_variable_url": 1,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/accounts_unlock.html": {
+  "ajax": [],
+  "fetch": [],
+  "fetch_with_variable_url": 0,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/bulk_match.html": {
+  "ajax": [
+   "/api/search_car_folders"
+  ],
+  "fetch": [
+   "/admin/bulk_confirm_mapping",
+   "/api/list_product_categories",
+   "/api/search_all_stock_items",
+   "/train_images"
+  ],
+  "fetch_with_variable_url": 0,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/change_password.html": {
+  "ajax": [],
+  "fetch": [],
+  "fetch_with_variable_url": 0,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/index.html": {
+  "ajax": [
+   "/api/search_cars"
+  ],
+  "fetch": [
+   "/admin/assign_category",
+   "/admin/banner",
+   "/admin/banner/clear",
+   "/admin/categories/add",
+   "/admin/categories/delete",
+   "/admin/categories/merge",
+   "/admin/categories/regen_status",
+   "/admin/categories/rename",
+   "/admin/categories/{}/usage",
+   "/admin/customer_reports/{}/resolve",
+   "/admin/popup",
+   "/admin/popup/clear",
+   "/api/activity",
+   "/api/banner",
+   "/api/categories",
+   "/api/customer_reports",
+   "/api/get_all_items_for_car",
+   "/api/popup",
+   "/api/report_item",
+   "/designs",
+   "/full_refresh",
+   "/full_refresh_status",
+   "/last_update",
+   "/refresh_status",
+   "/update_stock"
+  ],
+  "fetch_with_variable_url": 3,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/login.html": {
+  "ajax": [],
+  "fetch": [],
+  "fetch_with_variable_url": 0,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/system.html": {
+  "ajax": [],
+  "fetch": [
+   "/admin/categories/regen_status",
+   "/admin/system/logs"
+  ],
+  "fetch_with_variable_url": 1,
+  "url_for": [
+   "static"
+  ]
+ },
+ "templates/train.html": {
+  "ajax": [
+   "/api/needs_category_queue",
+   "/api/needs_image_matching_queue",
+   "/api/search_car_folders",
+   "/api/search_cars"
+  ],
+  "fetch": [
+   "/admin/remove_missing_images",
+   "/admin/upload_image",
+   "/api/categories",
+   "/api/get_stock_items_for_car",
+   "/api/search_car_folders",
+   "/confirm_mapping",
+   "/get_current_mapping_image",
+   "/mapping_stats",
+   "/remove_mapping",
+   "/scan_images"
+  ],
+  "fetch_with_variable_url": 3,
+  "url_for": [
+   "static"
+  ]
+ }
+}

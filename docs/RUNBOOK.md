@@ -1,0 +1,169 @@
+# Super Seatings stock viewer: operations runbook
+
+Plain-language guide for running, checking, deploying and recovering the site. Written 2026-10-18.
+If something here disagrees with what you see, trust what you see and fix this file.
+
+---
+
+## 1. The big picture (three parts)
+
+| Part | What it is | Where it lives |
+|---|---|---|
+| **The site** | The web app dealers and admins use (stock, photos, categories, accounts). One small Python program (`serve.py`). | **Render** (service `tally-stock-viewer`, 512 MB, Singapore). It has a 4 GB disk mounted at `data/` that holds the database `mappings.db`, the photos (`data/S.S IMAGE/`) and the stock caches. |
+| **The feeder** | A tiny program (`feeder.py`) that reads stock out of **Tally** every few minutes and sends it to the site. No website, no database. | The **shop PC**, as a Windows Scheduled Task. |
+| **The backup** | Every night at **02:00 IST** the site copies its database, caches and photos to **Google Drive**. | Runs inside the site (`cloud_backup.py`). |
+
+How stock gets to dealers: Tally -> feeder (shop PC) -> site (Render) -> dealers' phones.
+The site never talks to Tally directly. If the feeder stops, the site keeps showing the last stock it received (the "Last updated" time turns red and the System panel's Feeder heartbeat shows stale).
+
+**Auto-deploy:** every push to the `main` branch on GitHub automatically rebuilds and restarts the site. There is no "undo" button for a push other than rolling back (section 7).
+
+---
+
+## 2. Settings (environment variables)
+
+Set on **Render** (Environment tab) for the site, or in the `.env` file on a PC. **Never commit `.env`, never paste tokens into chat or documents.**
+
+| Setting | What it does | Normal value |
+|---|---|---|
+| `DISABLE_TALLY_SCHEDULING` | `1` = cloud mode: no Tally contact, data arrives from the feeder. | `1` on Render |
+| `INTAKE_SYNC_TOKEN` | Secret the feeder must send to push stock. Empty = pushes refused. | secret |
+| `CLOUD_SYNC_URL` / `CLOUD_SYNC_TOKEN` | **Shop PC only:** where the feeder pushes, and the secret (same value as `INTAKE_SYNC_TOKEN`). | secret |
+| `MACHINE_ROLE` | **Shop PC only:** `feeder` = this PC may only run the feeder; every web-app entry point refuses to start. Unset or `full` = normal (Render never sets it). Anything unclear is refused. | `feeder` on the shop PC |
+| `FEEDER_TASK_NAME` | Shop PC: name of the Windows task, if it is not `TallyFeeder`. Used by `update_feeder.bat`. | optional |
+| `TALLY_URL`, `TALLY_TIMEOUT`, `TALLY_RETRY_ATTEMPTS`, `TALLY_EXPORT_INTERVAL`, `FEEDER_FULL_REFRESH_HOURS` | Shop PC: how to reach Tally and how often to read it (default every 180 s; full re-read every 6 h). | defaults |
+| `FLASK_SECRET_KEY` | Signs login cookies. Changing it logs everyone out. | secret |
+| `SESSION_COOKIE_SECURE` | `1` = cookies only over HTTPS. | `1` on Render |
+| `SESSION_TIMEOUT_HOURS` | Admin login lifetime (dealers get 90 days). | 8 |
+| `SYSTEM_ACCESS_TOKEN` | Secret that pairs a device to the System panel. Empty = panel disabled. | secret |
+| `ACCOUNTS_ACCESS_PASSWORD` | First password for the Manage Accounts page (changeable later). | secret |
+| `RESCAN_TRIGGER_TOKEN` | Secret allowing a remote "rescan photos" request. Empty = disabled. | secret |
+| `GDRIVE_OAUTH_CLIENT_SECRETS_PATH`, `GDRIVE_OAUTH_TOKEN_PATH`, `GDRIVE_BACKUP_FOLDER_ID` | Google Drive backup login and target folder. All three needed, otherwise the backup is off. | set |
+| `CLOUD_BACKUP_DAILY_TIME` | When the nightly backup runs (IST). | `02:00` |
+| `BACKUP_MAX_DELETIONS` | Overrides the backup's "too many deletions" limit (section 8). Leave unset normally. | unset |
+| `DB_PATH`, `DB_TIMEOUT`, `SQLITE_CACHE_KB` | Database file and tuning. | defaults |
+| `IMAGE_SCAN_ROOT`, `INITIAL_IMAGE_SCAN`, `MAX_IMAGE_SIZE`, `MAX_IMAGE_RESPONSE_LIMIT` | Photo folder and limits. **Note:** the backup always reads `data/S.S IMAGE`, so do not point `IMAGE_SCAN_ROOT` elsewhere on Render. | defaults |
+| `LOG_DIR`, `LOG_FILE`, `LOG_LEVEL`, `RESOURCE_LOG_INTERVAL_SECONDS`, `MEMORY_LIMIT_MB` | Logging, and how often the "Resource usage" line is written (300 s). | defaults |
+| `PORT`, `WAITRESS_THREADS` | Web server port (Render sets `PORT`) and worker threads (8). | Render sets |
+
+The Python version is **not pinned** in the repo: Render uses its default (3.14.3 on 2026-10-18). Library versions **are** pinned in `requirements.txt`.
+
+---
+
+## 3. Daily health check (2 minutes)
+
+1. Open the site; log in; open a car. If it works, the basics are fine.
+2. Render dashboard -> your service -> **Logs**. Search for `Resource usage`. Each line looks like:
+
+   `Resource usage: RSS=128.6 MB (limit 512 MB), open file descriptors=9 [sockets=1, database=0, json=0, log=1, other=6]`
+
+   | Number | Meaning | Normal | Worry when |
+   |---|---|---|---|
+   | **RSS** | Memory the site uses. The server limit is 512 MB. | A fresh start is about **115-130 MB**. A busy, warmed-up site is **240-330 MB**. | Above **450 MB**, or climbing night after night. |
+   | **open file descriptors** | Open "handles" (connections, files). | **9** when quiet; about **25-45** when many people are connected. | Above **100**, or going up after each backup. |
+   | **sockets** | The part of the above that is network connections. Rises and falls with visitors. | 1 when quiet. | Staying high with nobody online. |
+
+   These two numbers change with traffic and how long the site has been up. A fresh restart looks "better" than a busy site, and that is normal. Compare a reading with **the same site's earlier readings**, not with the fresh values.
+3. After the nightly backup (shortly after 02:00 IST) find the line:
+
+   `Cloud backup sync finished (success): open fds 9 -> 9, sockets 1 -> 1, RSS 128.6 -> 131.0 MB (before -> after this run)`
+
+   The "after" numbers should be **back near the "before"** numbers. If sockets are higher after than before, the site also writes a plain warning: *"N more sockets are open after this run than before it -- possible connection leak"*. That means the connection leak (fixed 2026-10-18) is back: tell whoever maintains the site.
+4. Other backup lines: `Cloud backup: next scheduled run at <tomorrow> 02:00 IST` (appears after every start; proves the schedule is armed) and `Cloud backup: N new, N changed, N deleted, N unchanged`. In the System panel the Cloud Backup box should say **OK**. **Partial** with a red notice "N deletions held back" is the safety guard (section 8).
+5. In the System panel, **Feeder heartbeat** should be fresh (under 15 minutes during shop hours).
+
+---
+
+## 4. Deploy rules (read before pushing anything to `main`)
+
+* **Never push between 01:55 and 02:10 IST.** The nightly backup runs then and a restart would interrupt it.
+* **Avoid Monday-Saturday 10:00-19:30 IST** (shop open). **Every deploy takes the site down for about 90 seconds** (dealers see an error page), because the site has an attached disk and cannot do a zero-downtime swap. Sundays and nights are best.
+* **One change at a time.** Leave **20 minutes** between pushes. Watch the logs for **15 minutes** after each (section 3). 
+* Before pushing: run `python tests/check_all.py` (section 10). Only fast-forward `main` (never force-push; the history was rewritten once already and that caused trouble on the shop PC).
+* **Roll back immediately** if: the health page fails 3 times, new `ERROR`/`Traceback` lines appear that were not there before, the site restarts in a loop or is killed for memory, RSS is above 450 MB, or descriptors are above 100.
+
+---
+
+## 5. After a deploy: how to tell it is healthy
+
+1. Wait until Render shows **Live** (about a minute). A few 502 errors during the swap are normal.
+2. `https://<site>/static/shared.css` returns 200 (this is Render's own health check) and the login page loads.
+3. Logs show `Starting waitress` **once** (more than once = restart loop), `Cloud backup: next scheduled run at ... 02:00 IST`, and no `ERROR`/`Traceback`.
+4. Watch the next three `Resource usage` lines (15 minutes).
+
+---
+
+## 6. Updating the shop PC safely (with the role guard)
+
+**Never use `git pull` on the shop PC.** History on GitHub was rewritten once; `git pull` can create a merge mess, and an old copy of the code can bring the web app back. Use `update_feeder.bat` (it refuses unless `.env` has exactly one `MACHINE_ROLE=feeder` line, aborts if any tracked file was edited, moves to the latest `origin/main` without `git pull`, checks the feeder still loads, restarts the task, and prints old -> new commit).
+
+**First-time switch of a PC that still has the OLD `update_feeder.bat`** (run in a normal Command Prompt in the feeder folder; placeholders in `<>`):
+
+1. Find the real names: `schtasks /Query /FO LIST | findstr /I "TaskName"` then `schtasks /Query /TN "<task>" /V /FO LIST | findstr /I "Task To Run, Start In, Status"`; `cd /d <that folder>`.
+2. Back up outside the folder: `mkdir C:\feeder_backup`, `copy .env C:\feeder_backup\.env`, `xcopy data C:\feeder_backup\data /E /I /Y`.
+3. Note where you are: `git log -1 --oneline` and `git status --short --untracked-files=no`. If it lists files, **look at them** (`git diff --stat`) before touching anything; `git stash push` sets changes aside safely.
+4. Stop the feeder: `schtasks /End /TN "<task>"`.
+5. Set the role (never print `.env`): `findstr /B /I MACHINE_ROLE .env`, then `echo.>> .env` and `echo MACHINE_ROLE=feeder>> .env`, then check again: exactly **one** line `MACHINE_ROLE=feeder`. If the task is not called `TallyFeeder`, add `FEEDER_TASK_NAME=<task>` the same way.
+6. `git fetch origin`. **If it asks for a login, stop.**
+7. `git checkout -B main origin/main`, then `git log -1 --oneline` and `dir machine_role.py`. **If `machine_role.py` is missing, stop. Do not run `serve.py`** (an old `serve.py` would start the web app).
+8. `.venv\Scripts\python.exe -m pip install -r requirements.txt`
+9. Prove the guard: `.venv\Scripts\python.exe serve.py` must print the "feeder-only" line and `echo %errorlevel%` must show `3`. Then `.venv\Scripts\python.exe -c "import feeder"` must print nothing.
+10. `schtasks /Run /TN "<task>"`, wait 1-2 minutes, then `findstr /C:"machine role" /C:"push succeeded" logs\feeder.log`.
+
+**Undo:** delete or change the `MACHINE_ROLE` line (Notepad) to allow the web app again; to go back to old code: `schtasks /End`, `git checkout -B main <hash from step 3>`, `schtasks /Run`; restore `.env`/`data` from `C:\feeder_backup`. Later updates: double-click `update_feeder.bat`.
+
+---
+
+## 7. Rolling back
+
+* **Fastest (no git):** Render dashboard -> the service -> **Events/Deploys** -> choose the previous good deploy -> **Rollback**. Note: the next push to `main` deploys again from git, so also fix `main` (below).
+* **Git way:** `git revert <bad commit>` (this adds a new "undo" commit), then `git push origin main`. Never `git push --force`, never delete branches. Then watch the logs (section 5).
+* There is a tag `pre-finish-2026-10-18` marking the code as it was before the October 2026 clean-up.
+
+---
+
+## 8. How the backup works
+
+* Every night at **02:00 IST** (and when an admin presses *Sync now*), the site compares its files with its record of what is on Google Drive and sends only what is new or changed.
+* **Database safety:** the database is first copied to a consistent snapshot (not a raw copy of the live file, which could miss recent changes), checked for corruption, and the snapshot is uploaded. If the snapshot fails, the previous good copy on Drive is kept.
+* **Nothing is permanently deleted:** a file removed from the site is moved to the **Drive Trash**, where Google keeps it **30 days**. You can restore it from the Trash in Google Drive.
+* **Mass-deletion guard:** if one run would trash more than **20 files or 2% of all files (whichever is larger)**, it trashes **nothing** that night, still uploads new files, and finishes as **Partial** with the notice "N deletions held back: local files missing". This protects against an empty or unmounted photo folder wiping the backup. Look at the photo folder. If the files really were removed on purpose, set `BACKUP_MAX_DELETIONS` (for example `1000`) on Render, run *Sync now*, then **remove the setting again**.
+* The connection fix (2026-10-18): each run now closes every Drive connection when it finishes. The "sync finished" log line shows open descriptors/sockets/RSS before -> after so a regression is visible the same night.
+* Not backed up: popup images (`data/notice_images`, re-uploadable), the share-image cache, logs, and Excel exports.
+
+---
+
+## 9. Restoring from the Drive backup
+
+Drive folder layout mirrors the site: `mappings.db` and the three small `*.json` files at the top, photos under `S.S IMAGE/<car folder>/`.
+
+* **A deleted/changed photo:** open Google Drive -> Trash (or the file's *Version history*) and restore it; the next backup run adopts it.
+* **The database:** download `mappings.db` from Drive. Before using it, check it: `sqlite3 mappings.db "PRAGMA integrity_check;"` must say `ok`. Compare row counts (`users`, `images`, `mappings`, `categories`) with what you expect. To put it on the site, suspend the service in Render, copy the file into `data/` over SSH, resume, and check the site. **Do this with help, and keep a copy of the current file first.**
+* A restored copy can be a few hours behind the live site (it is as of the last backup).
+
+---
+
+## 10. Adding photos in bulk
+
+Use the push tool (`tools/push_images/`, double-click `push_images.bat`). Read `tools/push_images/SETUP_GUIDE.md` for the one-time setup (SSH key). It: compares first and uploads **nothing** on its first run; never deletes anything on the site; never replaces an existing photo (unless its size differs and you add a flag); refuses more than 200 uploads at once unless you add a flag; keeps its settings in `%LOCALAPPDATA%\SuperSeatings\push_images\` (outside the git folder). Dealers see new photos after the site's next scan.
+
+---
+
+## 11. Checking that nothing broke (tests)
+
+`python tests/check_all.py` runs everything in a **scratch copy** (never your real `data/`, database or `.env`), uses fake Drive/Tally, and ends with `CHECK_ALL: PASS` or `FAIL`. It covers: every route as visitor / dealer / locked admin / unlocked admin (compared with saved "golden" answers), the list of URLs the pages call, stock intake and the "stock updated" version number, activity tracking, the backup (snapshot, Trash, deletion guard, scheduling, connection leak), the role guard, a Render-like start-up, the feeder against a fake Tally, the push tool and `update_feeder.bat`.
+If a golden changes *on purpose*, run `python tests/check_all.py --update`, **read `git diff tests/golden`**, and explain each difference in the commit message.
+**Not covered:** a real browser/phone, real Google Drive, real Tally, real Render SSH, the installed app (PWA), pixel appearance, production-sized data timing.
+
+---
+
+## 12. What NOT to do
+
+* **Do not push to `main` during 01:55-02:10 IST**, or during shop hours without a reason (every push = ~90 s outage).
+* **Do not run the web app, or `git pull`, on the shop PC.** It only runs the feeder.
+* **Do not commit `.env`, `data/`, `mappings.db`, logs, tokens or keys.** Do not paste tokens into chat or documents.
+* **Do not force-push, rewrite history, or delete branches.**
+* **Do not delete photos in bulk from the site's photo folder** without looking at the backup guard first (the backup mirrors removals into the Drive Trash).
+* **Do not set `BACKUP_MAX_DELETIONS`** and forget it.
+* **Do not judge a restart by memory alone.** A fresh start uses about 120 MB; a busy site uses 240-330 MB. Compare with the same site's earlier readings.
+* **Do not change library versions casually** (`requirements.txt` is pinned on purpose). Change them deliberately, run the tests, deploy alone, and watch the logs.
