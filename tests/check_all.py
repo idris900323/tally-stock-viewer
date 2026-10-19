@@ -23,7 +23,7 @@ import tempfile
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import scratch_guard  # noqa: E402
+import copy_guard  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXCLUDE_DIRS = {".git", "data", "logs", "__pycache__", ".venv", "venv", ".state_snapshot", "node_modules", "brag-output", "ai_tryon_test", "archived_unneeded"}
@@ -67,21 +67,21 @@ def main():
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), _raise_interrupt)
 
-    scratch = tempfile.mkdtemp(prefix=scratch_guard.PREFIX)
+    scratch = tempfile.mkdtemp(prefix=copy_guard.PREFIX)
     nonce = uuid.uuid4().hex
     child = None
     print(f"Working in a temporary copy: {scratch}\n(your data/, logs/ and .env are not copied)\n", flush=True)
     try:
         copy_code(scratch)
-        with open(os.path.join(scratch, scratch_guard.MARKER), "w", encoding="utf-8") as fh:
+        with open(os.path.join(scratch, copy_guard.MARKER), "w", encoding="utf-8") as fh:
             json.dump({"nonce": nonce, "source": ROOT}, fh)
         # Judge the environment as the user gave it (before anything is stripped): a data path that points
         # into the real data/ folder is a reason to stop, not something to quietly override.
-        problems = scratch_guard.unsafe_data_paths(ROOT, scratch, os.environ)
+        problems = copy_guard.unsafe_data_paths(ROOT, scratch, os.environ)
         env = {k: v for k, v in os.environ.items() if k.upper() not in ("MACHINE_ROLE", "BACKUP_MAX_DELETIONS", "IMAGE_SCAN_ROOT", "FEEDER_MODE")
                and not k.startswith(("GDRIVE", "CLOUD_SYNC", "CHECK_ALL_"))}
         env.update(CHECK_ALL_NONCE=nonce, PYTHONUNBUFFERED="1", PYTHONWARNINGS="ignore::ResourceWarning")
-        problems += scratch_guard.scratch_problems(scratch, env)
+        problems += copy_guard.scratch_problems(scratch, env)
         if problems:
             print("CHECK_ALL: REFUSED TO START -- nothing was run:\n  - " + "\n  - ".join(problems), file=sys.stderr)
             return 2
@@ -116,7 +116,7 @@ def main():
                 child.wait()
         if args.keep:
             print(f"(temporary copy kept at {scratch})")
-        elif scratch_guard.safe_to_delete(scratch, nonce):
+        elif copy_guard.safe_to_delete(scratch, nonce):
             shutil.rmtree(scratch, ignore_errors=True)
         else:
             print(f"(not deleting {scratch}: it does not look like this run's own temporary folder)", file=sys.stderr)

@@ -12,7 +12,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scratch_guard import require_scratch   # noqa: E402
+from copy_guard import require_scratch   # noqa: E402
 require_scratch(ROOT)   # exits unless this really is the temporary copy built by tests/check_all.py
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)

@@ -15,12 +15,12 @@ import time
 import unittest
 
 from tests.support import ROOT
-import scratch_guard
+import copy_guard
 
 DUMMY_TEST = '''import os, sys, time, unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scratch_guard import require_scratch
+from copy_guard import require_scratch
 class T(unittest.TestCase):
     def test_it(self):
         require_scratch(ROOT)
@@ -55,7 +55,7 @@ class CheckAllGuard(unittest.TestCase):
         self.proj = os.path.join(self.base, "proj")
         os.makedirs(os.path.join(self.proj, "tests"))
         os.makedirs(os.path.join(self.proj, "data"))
-        for name in ("check_all.py", "scratch_guard.py", "support.py"):
+        for name in ("check_all.py", "copy_guard.py", "support.py"):
             shutil.copy2(os.path.join(ROOT, "tests", name), os.path.join(self.proj, "tests", name))
         open(os.path.join(self.proj, "tests", "__init__.py"), "w").close()
         with open(os.path.join(self.proj, "tests", "test_dummy.py"), "w") as fh:
@@ -108,29 +108,29 @@ class CheckAllGuard(unittest.TestCase):
         self.assertEqual(tree_hash(os.path.join(self.proj, "data")), self.data_before)
 
     def test_a_forged_marker_is_not_enough(self):
-        with open(os.path.join(self.proj, scratch_guard.MARKER), "w") as fh:
+        with open(os.path.join(self.proj, copy_guard.MARKER), "w") as fh:
             json.dump({"nonce": "abc", "source": self.proj}, fh)
-        self.assertTrue(scratch_guard.scratch_problems(self.proj, {"CHECK_ALL_NONCE": "abc"}), "a project folder outside check_all_* must be refused")
-        self.assertTrue(scratch_guard.scratch_problems(self.proj, {}), "no nonce from the runner: refused")
+        self.assertTrue(copy_guard.scratch_problems(self.proj, {"CHECK_ALL_NONCE": "abc"}), "a project folder outside check_all_* must be refused")
+        self.assertTrue(copy_guard.scratch_problems(self.proj, {}), "no nonce from the runner: refused")
 
     def test_cleanup_only_ever_deletes_its_own_folder(self):
-        mine = tempfile.mkdtemp(prefix=scratch_guard.PREFIX)
-        decoy = tempfile.mkdtemp(prefix=scratch_guard.PREFIX)
+        mine = tempfile.mkdtemp(prefix=copy_guard.PREFIX)
+        decoy = tempfile.mkdtemp(prefix=copy_guard.PREFIX)
         try:
-            with open(os.path.join(mine, scratch_guard.MARKER), "w") as fh:
+            with open(os.path.join(mine, copy_guard.MARKER), "w") as fh:
                 json.dump({"nonce": "n1", "source": self.proj}, fh)
-            self.assertTrue(scratch_guard.safe_to_delete(mine, "n1"))
-            self.assertFalse(scratch_guard.safe_to_delete(mine, "other-nonce"))
-            self.assertFalse(scratch_guard.safe_to_delete(decoy, "n1"), "a folder without our marker is never deleted")
-            self.assertFalse(scratch_guard.safe_to_delete(tempfile.gettempdir(), "n1"))
-            self.assertFalse(scratch_guard.safe_to_delete(self.proj, "n1"))
+            self.assertTrue(copy_guard.safe_to_delete(mine, "n1"))
+            self.assertFalse(copy_guard.safe_to_delete(mine, "other-nonce"))
+            self.assertFalse(copy_guard.safe_to_delete(decoy, "n1"), "a folder without our marker is never deleted")
+            self.assertFalse(copy_guard.safe_to_delete(tempfile.gettempdir(), "n1"))
+            self.assertFalse(copy_guard.safe_to_delete(self.proj, "n1"))
         finally:
             shutil.rmtree(mine, ignore_errors=True)
             shutil.rmtree(decoy, ignore_errors=True)
 
     def test_an_interrupted_run_removes_only_its_own_temporary_folder(self):
         before = scratch_dirs()
-        decoy = tempfile.mkdtemp(prefix=scratch_guard.PREFIX)          # someone else's folder with the same prefix
+        decoy = tempfile.mkdtemp(prefix=copy_guard.PREFIX)          # someone else's folder with the same prefix
         with open(os.path.join(decoy, "keep.txt"), "w") as fh:
             fh.write("not yours")
         flag = os.path.join(self.base, "started.flag")
