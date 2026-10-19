@@ -11,8 +11,9 @@ import shutil
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if os.environ.get("CHECK_ALL_SCRATCH") != "1":
-    sys.exit("Run the tests with:  python tests/check_all.py   (it works in a scratch copy, so data/ and .env are never touched).")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from scratch_guard import require_scratch   # noqa: E402
+require_scratch(ROOT)   # exits unless this really is the temporary copy built by tests/check_all.py
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
@@ -209,12 +210,41 @@ def _shape(value):
     return "<str>"
 
 
+def normalize_activity_stats(data, now_utc=None):
+    """/admin/user_activity_stats reports IST calendar days ending today and per-hour-of-day counts, so its raw
+    body changes every day and every hour. Keep everything that does not depend on the clock (field names, the
+    number of days, counts, users, cars, searches) and replace the clock-dependent parts: each date becomes its
+    distance from today ("today-6" ... "today+0"), the 24 hourly counts become {slots, sum}, and the peak hour
+    is masked."""
+    import copy
+    from datetime import date, datetime, timedelta, timezone
+    if not isinstance(data, dict):
+        return data
+    now_utc = now_utc or datetime.now(timezone.utc)
+    today = (now_utc.replace(tzinfo=None) + timedelta(hours=5, minutes=30)).date()
+    data = copy.deepcopy(data)
+    for row in data.get("daily") or []:
+        try:
+            row["date"] = "today%+d" % (date.fromisoformat(row["date"]) - today).days
+        except (KeyError, TypeError, ValueError):
+            pass
+    hourly = data.get("hourly")
+    if isinstance(hourly, list) and all(isinstance(n, int) for n in hourly):
+        data["hourly"] = {"slots": len(hourly), "sum": sum(hourly)}
+    summary = data.get("summary")
+    if isinstance(summary, dict) and summary.get("peak_hour_ist") is not None:
+        summary["peak_hour_ist"] = "<hour>"
+    return data
+
+
 def normalize_response(response, path):
     body = response.get_data()
     mimetype = response.mimetype
     if mimetype == "application/json":
         try:
             data = json.loads(body)
+            if path.split("?")[0] == "/admin/user_activity_stats":
+                data = normalize_activity_stats(data)
             text = json.dumps(_shape(data) if path.startswith(SHAPE_ONLY_PREFIXES) else data, sort_keys=True, ensure_ascii=False)
         except ValueError:
             text = body.decode("utf-8", "replace")

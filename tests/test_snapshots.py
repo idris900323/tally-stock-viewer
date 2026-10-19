@@ -6,6 +6,7 @@
 Update the goldens deliberately with:  python tests/check_all.py --update
 """
 import glob
+import json
 import os
 import re
 import unittest
@@ -134,6 +135,39 @@ class RouteSnapshot(unittest.TestCase):
             support.restore_state(snapshot)
         self.assertGreater(len(results), 400)
         support.compare_golden(self, "routes.json", results)
+
+
+class ActivityStatsNormalizer(unittest.TestCase):
+    """/admin/user_activity_stats depends on today's date and the current hour; the snapshot must not."""
+
+    @staticmethod
+    def payload(today, hour, actions=3):
+        from datetime import date, timedelta
+        days = [(date.fromisoformat(today) - timedelta(days=6 - i)).isoformat() for i in range(7)]
+        hourly = [0] * 24
+        hourly[hour] = actions
+        return {"days": 7, "user_id": None, "summary": {"total_actions": actions, "active_users": 1, "total_users": 2, "visits": 1, "peak_hour_ist": hour},
+                "daily": [{"date": d, "active_users": int(d == today), "actions": actions if d == today else 0, "visits": int(d == today)} for d in days],
+                "hourly": hourly, "per_user": [{"user_id": 1, "username": "admin", "total": actions, "by_action": {"login": actions}}],
+                "top_cars": [{"name": "ALTO", "count": 1}], "top_searches": []}
+
+    def normalized(self, today, hour, now_hour_utc, actions=3):
+        from datetime import datetime, timezone
+        y, m, d = (int(x) for x in today.split("-"))
+        now = datetime(y, m, d, now_hour_utc, 0, tzinfo=timezone.utc)
+        return json.dumps(support.normalize_activity_stats(self.payload(today, hour, actions), now_utc=now), sort_keys=True)
+
+    def test_other_days_and_hours_give_the_same_snapshot(self):
+        self.assertEqual(self.normalized("2026-10-18", 17, 11), self.normalized("2026-10-19", 9, 3))
+        self.assertEqual(self.normalized("2026-12-31", 23, 12), self.normalized("2027-01-01", 0, 6))   # across a year end
+
+    def test_values_that_do_not_depend_on_today_are_still_compared(self):
+        self.assertNotEqual(self.normalized("2026-10-19", 9, 3, actions=3), self.normalized("2026-10-19", 9, 3, actions=4))
+        shifted = self.payload("2026-10-19", 9)
+        shifted["daily"][0]["date"] = "2026-01-01"     # a date that is not "today minus N" must show up as a change
+        from datetime import datetime, timezone
+        now = datetime(2026, 10, 19, 3, 0, tzinfo=timezone.utc)
+        self.assertNotEqual(json.dumps(support.normalize_activity_stats(shifted, now_utc=now), sort_keys=True), self.normalized("2026-10-19", 9, 3))
 
 
 if __name__ == "__main__":

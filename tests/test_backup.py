@@ -5,9 +5,9 @@ of the code, so the real data/ folder and .env are never touched)."""
 import os, sys, shutil, sqlite3, tempfile, random, logging, threading, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if os.environ.get("CHECK_ALL_SCRATCH") != "1":
-    sys.exit("Run this through tests/check_all.py (it uses a scratch copy so data/ and .env are never touched).")
 sys.path.insert(0, ROOT); sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from scratch_guard import require_scratch   # noqa: E402
+require_scratch(ROOT)   # exits unless this really is the temporary copy built by tests/check_all.py
 import cloud_backup as cb
 from config import Config
 from fakedrive import FakeDrive

@@ -154,7 +154,9 @@ Use the push tool (`tools/push_images/`, double-click `push_images.bat`). Read `
 ## 11. Checking that nothing broke (tests)
 
 `python tests/check_all.py` runs everything in a **scratch copy** (never your real `data/`, database or `.env`), uses fake Drive/Tally, and ends with `CHECK_ALL: PASS` or `FAIL`. It covers: every route as visitor / dealer / locked admin / unlocked admin (compared with saved "golden" answers), the list of URLs the pages call, stock intake and the "stock updated" version number, activity tracking, the backup (snapshot, Trash, deletion guard, scheduling, connection leak), the role guard, a Render-like start-up, the feeder against a fake Tally, the push tool and `update_feeder.bat`.
-If a golden changes *on purpose*, run `python tests/check_all.py --update`, **read `git diff tests/golden`**, and explain each difference in the commit message.
+If a golden changes *on purpose*, run `python tests/check_all.py --update`. It changes nothing in the project: it prints a temporary folder with the new golden files. Compare with `git diff --no-index tests/golden <that folder>`, copy only the files you intend to keep into `tests/golden`, and explain each difference in the commit message.
+
+`check_all` has no override switch: it always works in a fresh temporary copy, refuses to start (exit code 2) if any data path (`DB_PATH`, `LOG_FILE`, ...) points into the real `data/` folder, never copies files back into the project, and when interrupted removes only its own temporary folder. **Never run the test files directly** (`python -m unittest ...`): they refuse outside that copy.
 **Not covered:** a real browser/phone, real Google Drive, real Tally, real Render SSH, the installed app (PWA), pixel appearance, production-sized data timing.
 
 ---
