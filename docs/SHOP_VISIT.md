@@ -11,7 +11,7 @@ The updater is a short text file. You paste it into Notepad, save it in the feed
    *(No internet on the shop PC? Open the same link on your phone or laptop, copy it, and send the text to yourself in an email or WhatsApp message. Then copy it again on the shop PC.)*
 2. **Paste it into Notepad.** Open **Notepad**, press **Ctrl+V**. The first line should start with `rem SHOP_UPDATE.bat  version 2026-10-21`. Press **Ctrl+End**: the very last line must be `rem END-OF-SHOP-UPDATE`.
 3. **Save it in the feeder folder.** File, **Save As**. Open the folder that contains `feeder.py` and `.env` (probably `C:\tally_stock`). Set **Save as type** to **All files**, **File name** to `SHOP_UPDATE.bat` (exactly), and click Save. If Notepad shows an **Encoding** box, choose **UTF-8** or **ANSI**.
-4. **Double-click `SHOP_UPDATE.bat`.** A black window opens and shows 6 steps. It takes 2 to 6 minutes. **Do not close it and do not click inside it.** If it says **"The file looks cut off. Copy it again and paste the whole thing."**, go back to step 1 (nothing was changed).
+4. **Open Tally with the company loaded first, then double-click `SHOP_UPDATE.bat`.** (If Tally is closed the window says so and waits; press a key to go on anyway, or close the window to stop.) A black window opens and shows 6 steps. It takes 2 to 6 minutes. **Do not close it and do not click inside it.** If it says **"The file looks cut off. Copy it again and paste the whole thing."**, go back to step 1 (nothing was changed).
 5. **Read the result and press a key.** The window stays open until you do.
 
 ## What you will see

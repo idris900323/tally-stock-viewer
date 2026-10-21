@@ -33,7 +33,9 @@ folder = st["folder"]
 if args[0] == "/Query":
     if "/TN" in args:
         sys.exit(0 if st["exists"] and args[args.index("/TN") + 1].lstrip("\\") == st["task"] else 1)
-    rows = ['"PC","\\OtherTask","N/A","Ready","x","N/A","0","u","C:\\elsewhere\\run.exe","C:\\elsewhere","x"']
+    rows = ['"PC","\\OtherTask","N/A","Ready","x","N/A","0","u","C:\\elsewhere\\run.exe","C:\\elsewhere","x"',
+            '"PC","\\Old Tally Task","N/A","Ready","x","N/A","0","u","C:\\elsewhere\\t.exe SECRETARG","C:\\elsewhere","x"',
+            '"PC","\\Nightly","N/A","Ready","x","N/A","0","u","C:\\other\\feeder.bat SECRETARG","C:\\other","x"']
     if st["listed"]:
         rows.append('"PC","\\%s","N/A","Ready","x","N/A","0","u","%s\\.venv\\Scripts\\python.exe feeder.py","%s","x"' % (st["task"], folder, folder))
     print("\n".join(rows)); sys.exit(0)
@@ -83,7 +85,7 @@ class ShopUpdateBat(unittest.TestCase):
 
     # ---- scenario plumbing -------------------------------------------------------------------------------------
     def build(self, sabotage=None, env_lines=("MACHINE_ROLE=feeder",), env=True, listed=True, task="TallyFeeder", env_task=None,
-              end_noop=False, silent=False, intake=200, remote=None, git_dir=True, keep_origin=True, feeder_file=True):
+              end_noop=False, silent=False, intake=200, remote=None, git_dir=True, keep_origin=True, feeder_file=True, bigdata=False, tally_down=False):
         root = tempfile.mkdtemp(prefix="shopupd_"); self.addCleanup(self.cleanup, root)
         seed, origin, shop = (os.path.join(root, n) for n in ("seed", "origin.git", "shop"))
         os.makedirs(seed); git(root, "init", "-q", "--bare", "-b", "main", origin); git(seed, "init", "-q", "-b", "main")
@@ -102,11 +104,20 @@ class ShopUpdateBat(unittest.TestCase):
         git(seed, "push", "-q", origin, "main")
         git(root, "clone", "-q", origin, shop); git(shop, "reset", "-q", "--hard", old)
         rig = Rig(); self.addCleanup(rig.stop); rig.intake_status = intake
-        lines = list(env_lines) + [f"TALLY_URL=http://127.0.0.1:{rig.tally_port}", f"CLOUD_SYNC_URL=http://127.0.0.1:{rig.intake_port}/admin/intake/sync_data",
+        lines = list(env_lines) + [f"TALLY_URL=http://127.0.0.1:{free_port() if tally_down else rig.tally_port}", f"CLOUD_SYNC_URL=http://127.0.0.1:{rig.intake_port}/admin/intake/sync_data",
                                    f"CLOUD_SYNC_TOKEN={TOKEN}", "TALLY_RETRY_ATTEMPTS=1", "TALLY_EXPORT_INTERVAL=3"] + ([f"FEEDER_TASK_NAME={env_task}"] if env_task else [])
         if env:
             open(os.path.join(shop, ".env"), "wb").write(("\r\n".join(lines) + "\r\n").encode())
         os.makedirs(os.path.join(shop, "data")); open(os.path.join(shop, "data", "cache.json"), "w").write('{"k": 1}')
+        for name in ("b.db", "c.flag", "skip.xlsx"):
+            open(os.path.join(shop, "data", name), "w").write("x")
+        if bigdata:                                   # like data\S.S IMAGE: thousands of files plus a very large one
+            images = os.path.join(shop, "data", "S.S IMAGE", "CAR")
+            os.makedirs(images)
+            for i in range(3000):
+                open(os.path.join(images, f"{i}.jpg"), "wb").write(b"x" * 100)
+            with open(os.path.join(images, "huge.bin"), "wb") as big:
+                big.seek(400 * 1024 * 1024 - 1); big.write(b"\0")
         subprocess.run(["cmd", "/c", "mklink", "/J", os.path.join(shop, ".venv"), sys.prefix], capture_output=True, check=True)
         if not feeder_file:
             os.remove(os.path.join(shop, "feeder.py"))
@@ -180,9 +191,11 @@ class ShopUpdateBat(unittest.TestCase):
         return open(p, "rb").read() if os.path.exists(p) else None
 
     # ---- the scenarios -----------------------------------------------------------------------------------------
-    def check_good(self, form, env_lines):
-        s = self.build(env_lines=env_lines); self.start_old_feeder(s)
-        code, out = self.run_bat(s, form)
+    def check_good(self, form, env_lines, **opts):
+        s = self.build(env_lines=env_lines, **opts); self.start_old_feeder(s)
+        started = time.time(); code, out = self.run_bat(s, form)
+        if opts.get("bigdata"):
+            self.assertLess(time.time() - started, 150, "a 400 MB subfolder in data must not slow the update")
         self.assertEqual(code, 0, out[-1500:]); self.assertIn("PASS", out)
         self.assertEqual(git(s["shop"], "rev-parse", "HEAD"), s["new"])
         env = self.env_bytes(s).decode().splitlines()
@@ -190,6 +203,12 @@ class ShopUpdateBat(unittest.TestCase):
         bk = [d for d in os.listdir(s["shop"]) if d.startswith("SHOP_UPDATE_BACKUP_")]
         self.assertEqual(len(bk), 1); self.assertTrue(os.path.exists(os.path.join(s["shop"], bk[0], ".env")))
         self.assertTrue(os.path.exists(os.path.join(s["shop"], bk[0], "data", "cache.json")))
+        self.assertEqual(sorted(os.listdir(os.path.join(s["shop"], bk[0], "data"))), ["b.db", "c.flag", "cache.json"], "only *.json, *.db, *.flag at the top of data")
+        self.assertRegex(out, r"4 files, about \d+ KB"); self.assertIn("never touched", out)
+        images = os.path.join(s["shop"], "data", "S.S IMAGE", "CAR")
+        if os.path.isdir(images):
+            self.assertEqual(len(os.listdir(images)), 3001); self.assertEqual(os.path.getsize(os.path.join(images, "huge.bin")), 400 * 1024 * 1024)
+            self.assertLess(sum(os.path.getsize(os.path.join(d, f)) for d, _x, fs in os.walk(os.path.join(s["shop"], bk[0])) for f in fs), 1024 * 1024)
         log = self.read(s, "logs", "feeder.log")
         for text in ("machine role=feeder", "reason=startup", "Cloud sync push succeeded"):
             self.assertIn(text, log)
@@ -225,6 +244,11 @@ class ShopUpdateBat(unittest.TestCase):
         for form in self.FORMS + ("bom",):
             with self.subTest(form):
                 self.check_good(form, env_lines=())
+
+    def test_big_data_subfolder_is_skipped_and_untouched(self):
+        for form in self.FORMS:
+            with self.subTest(form):
+                self.check_good(form, env_lines=("MACHINE_ROLE=feeder",), bigdata=True)
 
     def test_good_update_with_the_role_already_there(self):
         for form in self.FORMS:
@@ -275,6 +299,53 @@ class ShopUpdateBat(unittest.TestCase):
             for label, opts, why in cases:
                 with self.subTest(f"{form}: {label}"):
                     self.check_nothing_changed(form, why, **opts)
+
+    def tally_down_run(self, form, press_key):
+        """Run with Tally closed, stdin open: the update must stop and wait; nothing may change until a key is pressed."""
+        s = self.build(tally_down=True); before = self.env_bytes(s)
+        data = self.bat.replace(b"\n", b"\r\n") if form == "crlf" else self.bat
+        open(os.path.join(s["shop"], "SHOP_UPDATE.bat"), "wb").write(data)
+        proc = subprocess.Popen(["cmd.exe", "/c", os.path.join(s["shop"], "SHOP_UPDATE.bat")], cwd=s["shop"], env=dict(s["env"], SHOP_UPDATE_WAIT_SECONDS="10"),
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        chunks = []
+        threading.Thread(target=lambda: [chunks.append(c) for c in iter(lambda: proc.stdout.read(1), b"")], daemon=True).start()
+        text = lambda: b"".join(chunks).decode("cp437", "replace")
+        end = time.time() + 60
+        while time.time() < end and "continue anyway" not in text():
+            time.sleep(0.2)
+        self.assertIn("Tally does not seem to be open. Open Tally with the company loaded, then press any key to continue anyway, or close this window.", text())
+        time.sleep(4)                                    # still waiting: nothing may have happened
+        self.assertNotIn("Step 3 of 6", text())
+        self.assertFalse([d for d in os.listdir(s["shop"]) if d.startswith("SHOP_UPDATE_BACKUP_")])
+        self.assertEqual(git(s["shop"], "rev-parse", "HEAD"), s["old"]); self.assertEqual(self.env_bytes(s), before)
+        self.assertNotIn("/End", self.calls(s)); self.assertNotIn("/Run", self.calls(s))
+        if press_key:
+            proc.stdin.write(b"\r\n"); proc.stdin.flush()
+            end = time.time() + 120
+            while time.time() < end and proc.poll() is None and "FAIL" not in text():
+                time.sleep(0.3)
+            self.assertIn("Step 3 of 6", text())         # it carried on only after the key
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)   # "close this window"
+        return s
+
+    def test_tally_not_open_waits_for_a_key_and_changes_nothing(self):
+        for form in self.FORMS:
+            with self.subTest(f"{form}: close the window"):
+                s = self.tally_down_run(form, press_key=False)
+                self.assertEqual(git(s["shop"], "rev-parse", "HEAD"), s["old"])
+                self.assertFalse([d for d in os.listdir(s["shop"]) if d.startswith("SHOP_UPDATE_BACKUP_")])
+            with self.subTest(f"{form}: press a key"):
+                self.tally_down_run(form, press_key=True)
+
+    def test_task_not_found_lists_only_task_names(self):
+        for form in self.FORMS:
+            with self.subTest(form):
+                s = self.build(listed=False); code, out = self.run_bat(s, form)
+                self.assertEqual(code, 1); self.assertIn("Could not find a scheduled task", out)
+                self.assertIn("Scheduled tasks that mention feeder or tally:", out); self.assertIn("Old Tally Task", out); self.assertIn("Nightly", out)
+                self.assertNotIn("OtherTask", out); self.assertIn("Take a photo and send it to Idris.", out)
+                for leak in ("SECRETARG", "elsewhere", "feeder.bat", "t.exe"):
+                    self.assertNotIn(leak, out, "names only: no paths or arguments")
 
     def test_git_not_installed(self):
         for form in self.FORMS:
