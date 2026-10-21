@@ -82,3 +82,6 @@ ai_tryon_test/
 
 # brag skill output (generated launch video, not part of the app)
 brag-output/
+
+# Feeder "refresh now" request (see refresh_feeder_now.bat)
+refresh_now.flag

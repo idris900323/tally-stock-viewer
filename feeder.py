@@ -18,6 +18,16 @@ stock) on startup, then a stock export every TALLY_EXPORT_INTERVAL seconds
 admin clicks Full Refresh; nobody can click that here, so this also repeats it
 every FEEDER_FULL_REFRESH_HOURS (default 6) so new cars/items reach the cloud.
 
+New items: the stock export silently drops in-stock items that are not in the
+hierarchy yet. When one shows up (a name that was not already unmatched after the
+last refresh) the feeder runs a full refresh right away, at most once per
+FEEDER_NEW_ITEM_MIN_MINUTES (default 10), doubling that gap (max 1 hour) after a
+failed or slow refresh (FEEDER_SLOW_REFRESH_SECONDS, default 120). The shop can
+also force one: a file called refresh_now.flag in this folder (double-click
+refresh_feeder_now.bat) is noticed within a couple of seconds and removed after a
+successful refresh. Every full refresh logs its reason (startup, timer, new item,
+manual) and how long Tally took.
+
 Every cycle is wrapped in try/except, so an unreachable Tally or a failed push
 just logs and retries next cycle. Run it forever under Windows Task Scheduler
 (see FEEDER_SETUP.md), which restarts it if the process ever dies.
@@ -43,6 +53,11 @@ import logging  # noqa: E402
 logger = logging.getLogger("feeder")
 
 FULL_REFRESH_INTERVAL_SECONDS = int(float(os.environ.get("FEEDER_FULL_REFRESH_HOURS", "6")) * 3600)
+NEW_ITEM_MIN_SECONDS = int(float(os.environ.get("FEEDER_NEW_ITEM_MIN_MINUTES", "10")) * 60)
+NEW_ITEM_MAX_GAP_SECONDS = 3600
+SLOW_REFRESH_SECONDS = float(os.environ.get("FEEDER_SLOW_REFRESH_SECONDS", "120"))
+REFRESH_FLAG = os.path.join(BASE_DIR, "refresh_now.flag")
+FLAG_POLL_SECONDS = 2
 
 
 def push_to_cloud():
@@ -50,23 +65,107 @@ def push_to_cloud():
     site._push_data_to_cloud()
 
 
-def run_full_refresh():
+def run_full_refresh(reason="timer"):
     """Car master + hierarchy + stock from Tally, saved locally, then pushed.
     Same steps and order as the site's run_full_refresh_job(), minus the
-    in-memory reload the website itself needs."""
-    car_names = site.fetch_car_master_from_tally()
-    site.save_car_master_to_file(car_names)
-    flat_rows = site.fetch_main_hierarchy_from_tally()
-    site.save_main_hierarchy_to_file(flat_rows)
-    site.fetch_item_stock_flat()
-    logger.info("Full refresh from Tally completed")
+    in-memory reload the website itself needs. Logs why it ran and how long
+    each Tally export took; returns the total Tally seconds."""
+    logger.info("Full refresh starting: reason=%s", reason)
+    started = time.perf_counter()
+    try:
+        t0 = time.perf_counter()
+        car_names = site.fetch_car_master_from_tally()
+        site.save_car_master_to_file(car_names)
+        t_cars = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        flat_rows = site.fetch_main_hierarchy_from_tally()
+        site.save_main_hierarchy_to_file(flat_rows)
+        t_hier = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        site.fetch_item_stock_flat()
+        t_stock = time.perf_counter() - t0
+    except Exception:
+        logger.warning("Full refresh FAILED: reason=%s, after %.1fs of Tally work", reason, time.perf_counter() - started)
+        raise
+    tally_seconds = time.perf_counter() - started
+    logger.info(
+        "Full refresh from Tally completed: reason=%s, Tally export %.1fs (car master %.1fs, hierarchy %.1fs, stock %.1fs)",
+        reason, tally_seconds, t_cars, t_hier, t_stock,
+    )
     push_to_cloud()
+    return tally_seconds
 
 
-def run_stock_export():
-    """Item stock only (the site's recurring export), then pushed."""
-    site.fetch_item_stock_flat()
-    push_to_cloud()
+def _flag_mtime():
+    try:
+        return os.stat(REFRESH_FLAG).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _clear_flag(seen_mtime):
+    """Remove the manual flag, unless the shop asked again while we were refreshing."""
+    if seen_mtime is not None and _flag_mtime() == seen_mtime:
+        try:
+            os.remove(REFRESH_FLAG)
+            logger.info("Manual refresh flag cleared")
+        except OSError as exc:
+            logger.warning("Could not remove %s: %s", REFRESH_FLAG, exc)
+
+
+def _wait(seconds, handled_flag_mtime):
+    """Sleep up to `seconds`, but wake early for a NEW manual flag (a flag we already
+    tried and failed on does not cut the wait short, so a broken Tally is not hammered)."""
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(FLAG_POLL_SECONDS, remaining))
+        mtime = _flag_mtime()
+        if mtime is not None and mtime != handled_flag_mtime:
+            return
+
+
+class NewItemWatch:
+    """Decides when an in-stock item missing from the hierarchy justifies a full refresh.
+    Names still unmatched after a refresh are 'known' (e.g. stock outside any car
+    group) and never trigger again, so only genuinely new names cause a refresh."""
+
+    def __init__(self):
+        self.known = frozenset()
+        self.last_attempt = None
+        self.gap = NEW_ITEM_MIN_SECONDS
+        self._logged = None
+
+    def after_full_refresh(self):
+        self.known = frozenset(site.last_item_export_unmatched)
+
+    def wanted(self):
+        """True if the stock export just fetched has new unmatched names and the throttle allows a refresh."""
+        new = frozenset(site.last_item_export_unmatched) - self.known
+        if not new:
+            return False
+        wait = 0 if self.last_attempt is None else self.last_attempt + self.gap - time.monotonic()
+        if wait > 0:
+            if self._logged != new:
+                logger.info("%d new item name(s) not in the hierarchy (e.g. %s); refresh throttled, allowed in %.0fs",
+                            len(new), sorted(new)[0], wait)
+                self._logged = new
+            return False
+        logger.info("%d new item name(s) not in the hierarchy (e.g. %s)", len(new), sorted(new)[0])
+        return True
+
+    def attempt_started(self):
+        self.last_attempt = time.monotonic()
+
+    def attempt_finished(self, ok, tally_seconds):
+        if ok and tally_seconds <= SLOW_REFRESH_SECONDS:
+            self.gap = NEW_ITEM_MIN_SECONDS
+            return
+        self.gap = min(self.gap * 2, NEW_ITEM_MAX_GAP_SECONDS)
+        logger.warning("New-item refresh %s; next one allowed in %ss",
+                       ("was slow (%.1fs)" % tally_seconds) if ok else "failed", self.gap)
 
 
 def main():
@@ -85,24 +184,44 @@ def main():
     )
 
     last_full_refresh_ok = None
+    watch = NewItemWatch()
     while True:
-        need_full = (
-            last_full_refresh_ok is None
-            or time.monotonic() - last_full_refresh_ok >= FULL_REFRESH_INTERVAL_SECONDS
-        )
+        flag = _flag_mtime()
+        if last_full_refresh_ok is None:
+            reason = "startup"
+        elif time.monotonic() - last_full_refresh_ok >= FULL_REFRESH_INTERVAL_SECONDS:
+            reason = "timer"
+        elif flag is not None:
+            reason = "manual"
+        else:
+            reason = None
         try:
-            if need_full:
-                logger.info("Running full refresh")
-                run_full_refresh()
+            if reason:
+                run_full_refresh(reason)
                 last_full_refresh_ok = time.monotonic()
+                watch.after_full_refresh()
+                _clear_flag(flag)
             else:
-                run_stock_export()
+                site.fetch_item_stock_flat()
+                if watch.wanted():
+                    watch.attempt_started()
+                    try:
+                        seconds = run_full_refresh("new item")
+                    except Exception as exc:
+                        logger.exception("New-item refresh failed: %s", exc)
+                        watch.attempt_finished(False, 0)
+                        push_to_cloud()   # still send this cycle's normal stock
+                    else:
+                        watch.after_full_refresh()   # the 6-hour timer is left as it was
+                        watch.attempt_finished(True, seconds)
+                else:
+                    push_to_cloud()
         except Exception as exc:  # one bad cycle must never end the process
             logger.exception(
                 "%s failed (will retry in %ss): %s",
-                "Full refresh" if need_full else "Stock export", site.ITEM_EXPORT_INTERVAL, exc,
+                ("Full refresh (%s)" % reason) if reason else "Stock export", site.ITEM_EXPORT_INTERVAL, exc,
             )
-        time.sleep(site.ITEM_EXPORT_INTERVAL)
+        _wait(site.ITEM_EXPORT_INTERVAL, flag)
 
 
 if __name__ == "__main__":

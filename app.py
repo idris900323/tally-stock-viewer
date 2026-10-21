@@ -2025,6 +2025,9 @@ def _save_item_stock_data(deduped):
         threading.Thread(target=_write_stock_excel, args=(deduped,), daemon=True).start()
 
 
+last_item_export_unmatched = frozenset()
+
+
 def fetch_item_stock_flat():
     """Export item stock from Tally and save as clean Excel.
 
@@ -2110,10 +2113,16 @@ def fetch_item_stock_flat():
         main_name_set = _load_main_name_set()
 
         # Optional strict alignment with main hierarchy names, when available.
+        unmatched = set()
         if main_name_set:
             aligned_rows = [r for r in rows if _norm(r["item_name"]) in main_name_set]
             if aligned_rows:
+                unmatched = {_norm(r["item_name"]) for r in rows} - main_name_set
                 rows = aligned_rows
+        # Read-only note for feeder.py: in-stock items Tally has that the hierarchy
+        # does not (they are dropped just above, so they never reach the cloud).
+        global last_item_export_unmatched
+        last_item_export_unmatched = frozenset(unmatched)
 
         if not rows:
             raise Exception("No stock rows parsed from Tally item collection")

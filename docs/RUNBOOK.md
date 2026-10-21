@@ -32,6 +32,8 @@ Set on **Render** (Environment tab) for the site, or in the `.env` file on a PC.
 | `MACHINE_ROLE` | **Shop PC only:** `feeder` = this PC may only run the feeder; every web-app entry point refuses to start. Unset or `full` = normal (Render never sets it). Anything unclear is refused. | `feeder` on the shop PC |
 | `FEEDER_TASK_NAME` | Shop PC: name of the Windows task, if it is not `TallyFeeder`. Used by `update_feeder.bat`. | optional |
 | `TALLY_URL`, `TALLY_TIMEOUT`, `TALLY_RETRY_ATTEMPTS`, `TALLY_EXPORT_INTERVAL`, `FEEDER_FULL_REFRESH_HOURS` | Shop PC: how to reach Tally and how often to read it (default every 180 s; full re-read every 6 h). | defaults |
+| `FEEDER_NEW_ITEM_MIN_MINUTES`, `FEEDER_SLOW_REFRESH_SECONDS` | Shop PC: a new in-stock item missing from the hierarchy triggers a full refresh, at most once per this many minutes (default 10; gap doubles up to 1 h after a failed or slow refresh; slow = over 120 s). | defaults |
+| `refresh_now.flag` (file, not a setting) | Shop PC: double-click `refresh_feeder_now.bat` to create it; the feeder runs a full refresh within seconds and deletes it. Every refresh is logged in `logseeder.log` as `Full refresh starting: reason=startup/timer/new item/manual` with the Tally export time. | - |
 | `FLASK_SECRET_KEY` | Signs login cookies. Changing it logs everyone out. | secret |
 | `SESSION_COOKIE_SECURE` | `1` = cookies only over HTTPS. | `1` on Render |
 | `SESSION_TIMEOUT_HOURS` | Admin login lifetime (dealers get 90 days). | 8 |
