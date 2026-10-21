@@ -22,7 +22,7 @@ New items: the stock export silently drops in-stock items that are not in the
 hierarchy yet. When one shows up (a name that was not already unmatched after the
 last refresh) the feeder runs a full refresh right away, at most once per
 FEEDER_NEW_ITEM_MIN_MINUTES (default 10), doubling that gap (max 1 hour) after a
-failed or slow refresh (FEEDER_SLOW_REFRESH_SECONDS, default 120). The shop can
+failed or slow refresh (FEEDER_SLOW_REFRESH_SECONDS, default 300; a normal one takes ~30 s). The shop can
 also force one: a file called refresh_now.flag in this folder (double-click
 refresh_feeder_now.bat) is noticed within a couple of seconds and removed after a
 successful refresh. Every full refresh logs its reason (startup, timer, new item,
@@ -55,7 +55,7 @@ logger = logging.getLogger("feeder")
 FULL_REFRESH_INTERVAL_SECONDS = int(float(os.environ.get("FEEDER_FULL_REFRESH_HOURS", "6")) * 3600)
 NEW_ITEM_MIN_SECONDS = int(float(os.environ.get("FEEDER_NEW_ITEM_MIN_MINUTES", "10")) * 60)
 NEW_ITEM_MAX_GAP_SECONDS = 3600
-SLOW_REFRESH_SECONDS = float(os.environ.get("FEEDER_SLOW_REFRESH_SECONDS", "120"))
+SLOW_REFRESH_SECONDS = float(os.environ.get("FEEDER_SLOW_REFRESH_SECONDS", "300"))
 REFRESH_FLAG = os.path.join(BASE_DIR, "refresh_now.flag")
 FLAG_POLL_SECONDS = 2
 

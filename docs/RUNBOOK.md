@@ -32,7 +32,7 @@ Set on **Render** (Environment tab) for the site, or in the `.env` file on a PC.
 | `MACHINE_ROLE` | **Shop PC only:** `feeder` = this PC may only run the feeder; every web-app entry point refuses to start. Unset or `full` = normal (Render never sets it). Anything unclear is refused. | `feeder` on the shop PC |
 | `FEEDER_TASK_NAME` | Shop PC: name of the Windows task, if it is not `TallyFeeder`. Used by `update_feeder.bat`. | optional |
 | `TALLY_URL`, `TALLY_TIMEOUT`, `TALLY_RETRY_ATTEMPTS`, `TALLY_EXPORT_INTERVAL`, `FEEDER_FULL_REFRESH_HOURS` | Shop PC: how to reach Tally and how often to read it (default every 180 s; full re-read every 6 h). | defaults |
-| `FEEDER_NEW_ITEM_MIN_MINUTES`, `FEEDER_SLOW_REFRESH_SECONDS` | Shop PC: a new in-stock item missing from the hierarchy triggers a full refresh, at most once per this many minutes (default 10; gap doubles up to 1 h after a failed or slow refresh; slow = over 120 s). | defaults |
+| `FEEDER_NEW_ITEM_MIN_MINUTES`, `FEEDER_SLOW_REFRESH_SECONDS` | Shop PC: a new in-stock item missing from the hierarchy triggers a full refresh, at most once per this many minutes (default 10; gap doubles up to 1 h after a failed or slow refresh; slow = over 300 s; a normal refresh takes ~30 s). | defaults |
 | `refresh_now.flag` (file, not a setting) | Shop PC: double-click `refresh_feeder_now.bat` to create it; the feeder runs a full refresh within seconds and deletes it. Every refresh is logged in `logseeder.log` as `Full refresh starting: reason=startup/timer/new item/manual` with the Tally export time. | - |
 | `FLASK_SECRET_KEY` | Signs login cookies. Changing it logs everyone out. | secret |
 | `SESSION_COOKIE_SECURE` | `1` = cookies only over HTTPS. | `1` on Render |
@@ -96,6 +96,8 @@ The Python version is **not pinned** in the repo: Render uses its default (3.14.
 ---
 
 ## 6. Updating the shop PC safely (with the role guard)
+
+**Easiest (2026-10-21 onwards): `tools/shop/SHOP_UPDATE.bat`.** It is one self-contained text file that is pasted into Notepad on the shop PC and saved in the feeder folder (steps for a non-technical person: `docs/SHOP_VISIT.md`). It does everything below by itself (checks, backup of `.env` and `data`, finds the task, updates, proves the guard, waits for a successful push, rolls back on any failure) and shows a big PASS or FAIL. The manual steps below remain as the fallback.
 
 **Never use `git pull` on the shop PC.** History on GitHub was rewritten once; `git pull` can create a merge mess, and an old copy of the code can bring the web app back. Use `update_feeder.bat` (it refuses unless `.env` has exactly one `MACHINE_ROLE=feeder` line, aborts if any tracked file was edited, moves to the latest `origin/main` without `git pull`, installs only the packages the feeder needs from `requirements-feeder.txt`, checks the feeder still loads, restarts the task, and prints old -> new commit). **If the package install or the load check fails, it puts the previous commit back and restarts the task by itself** (exit code 1, message `[ROLLBACK] ...`), so a failed update never leaves the feeder stopped on half-new code.
 

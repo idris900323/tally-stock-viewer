@@ -1064,9 +1064,9 @@
   "type": "application/json"
  },
  "admin_unlocked GET /admin/user_activity_stats": {
-  "body": "d8d6bcf2c5",
+  "body": "d1c1ad6e10",
   "cache": "no-store",
-  "len": 903,
+  "len": 868,
   "location": "",
   "status": 200,
   "type": "application/json"

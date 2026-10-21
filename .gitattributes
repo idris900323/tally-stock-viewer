@@ -1,2 +1,4 @@
 # cmd.exe needs CRLF in batch files (labels / goto break with LF-only endings), whatever core.autocrlf says on the PC
 *.bat text eol=crlf
+# SHOP_UPDATE.bat is downloaded as a raw file from GitHub, so the stored blob must already be CRLF
+tools/shop/SHOP_UPDATE.bat -text

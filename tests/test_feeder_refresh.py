@@ -26,6 +26,7 @@ class Rig:
         self.orphans = []            # in stock in Tally but never in the hierarchy
         self.fail_all = False        # Tally answers every request with an error
         self.fail_hierarchy = False  # ... only the master/hierarchy requests (stock still works)
+        self.intake_status = 200     # what the mock intake answers to a push
         self.requests = []           # (time, kind)
         self.pushes = []             # (time, body)
         rig = self
@@ -40,10 +41,11 @@ class Rig:
         class Intake(BaseHTTPRequestHandler):
             def do_POST(self):
                 rig.pushes.append((time.time(), json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))))
-                out = b'{"ok": true}'; self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
+                out = b'{"ok": true}'; self.send_response(rig.intake_status); self.send_header("Content-Length", str(len(out))); self.end_headers(); self.wfile.write(out)
             def log_message(self, *a): pass
 
         tp, ip = free_port(), free_port()
+        self.tally_port, self.intake_port = tp, ip
         self.servers = [HTTPServer(("127.0.0.1", tp), Tally), HTTPServer(("127.0.0.1", ip), Intake)]
         for s in self.servers:
             threading.Thread(target=s.serve_forever, daemon=True).start()
@@ -175,6 +177,34 @@ class FeederRefreshTriggers(unittest.TestCase):
         self.assertGreaterEqual(r.log().count("Full refresh FAILED: reason=manual"), failures)
         self.assertTrue(r.wait(lambda: "ALTO FAILING ITEM" in r.pushed_names(), 30))
         self.assertIsNone(r.proc.poll())
+
+
+class BackoffByDuration(unittest.TestCase):
+    """NewItemWatch gap after refreshes of 30 s (normal, ~what production takes), 150 s and 600 s, and after failures."""
+
+    def test_gap_after_simulated_durations(self):
+        d = make_copy("backoff_"); self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        code = "\n".join([
+            "import os",
+            "os.environ.update(CLOUD_SYNC_URL='http://127.0.0.1:9/x', CLOUD_SYNC_TOKEN='t')",
+            "import feeder",
+            "w = feeder.NewItemWatch(); base = w.gap; out = []",
+            "def step(label, ok, secs):",
+            "    w.attempt_finished(ok, secs); out.append((label, w.gap // 60))",
+            "step('30s', True, 30); step('30s', True, 30)",
+            "step('150s', True, 150)",
+            "step('600s', True, 600); step('600s', True, 600); step('failed', False, 0)",
+            "for i in range(5): step('failed', False, 0)",
+            "step('30s again', True, 30)",
+            "print('BASE', base // 60); print('OUT', out)",
+        ])
+        r = subprocess.run([sys.executable, "-c", code], cwd=d, env=clean_env(), capture_output=True, text=True, timeout=120)
+        self.assertIn("BASE 10", r.stdout, r.stderr[-500:])
+        got = eval(r.stdout.split("OUT ")[1])
+        self.assertEqual(got[:3], [("30s", 10), ("30s", 10), ("150s", 10)], "a normal refresh must never double the gap")
+        self.assertEqual(got[3:6], [("600s", 20), ("600s", 40), ("failed", 60)], "slow/failed refreshes double it, capped at 60 min")
+        self.assertEqual(got[-2], ("failed", 60))
+        self.assertEqual(got[-1], ("30s again", 10), "one normal-duration success resets the back-off")
 
 
 if __name__ == "__main__":

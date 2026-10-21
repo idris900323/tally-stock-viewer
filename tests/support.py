@@ -184,6 +184,7 @@ _MASKS = [
     (re.compile(r"\b[0-9a-f]{12}\b"), "<ver>"),
     (re.compile(r"[0-9a-f]{20,}"), "<hex>"),
     (re.compile(r"\b\d{10,}\b"), "<epoch>"),
+    (re.compile(r'"date": "\d{4}-\d\d-\d\d"'), '"date": "<day>"'),   # the activity chart lists the last N calendar days
 ]
 SHAPE_ONLY_PREFIXES = ("/admin/system/",)   # live numbers / log lines: snapshot only the structure
 
