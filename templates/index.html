@@ -2680,7 +2680,8 @@ const LONG_PRESS_MOVE_THRESHOLD = 10;
 // This is not a timing issue and does not vary with connection speed, so
 // selections above this size are split into sequential share() batches
 // (see shareBatchesSequentially()) rather than just warned about.
-const SHARE_BATCH_SIZE = 10;
+// (SHARE_BATCH_SIZE = 10 is defined in the SHARE-ORDER block further down, next to the code that
+// names and batches the files.)
 
 // Plain (no-action) notices auto-dismiss a few seconds after they're shown,
 // like a toast, instead of sitting there until the next call overwrites
@@ -4449,12 +4450,31 @@ function getShareBlobCache(mode) {
     return mode === "plain" ? selectedPlainImageBlobCache : selectedImageBlobCache;
 }
 
+// Background prefetch (Select All on a 250-design car) goes through the same small concurrency
+// limit as the click-time fetch, so a long selection doesn't hammer the server with hundreds of
+// simultaneous requests. Order never depends on it: results are keyed by id / stored by slot.
+let shareFetchActive = 0;
+const shareFetchWaiting = [];
+function limitedShareFetch(start) {
+    return new Promise((resolve, reject) => {
+        const run = () => {
+            shareFetchActive += 1;
+            start().then(resolve, reject).finally(() => {
+                shareFetchActive -= 1;
+                const next = shareFetchWaiting.shift();
+                if (next) next();
+            });
+        };
+        if (shareFetchActive < SHARE_FETCH_CONCURRENCY) run(); else shareFetchWaiting.push(run);
+    });
+}
+
 function prefetchImageBlob(imageId, mode) {
     const cache = getShareBlobCache(mode);
     if (cache.has(imageId)) {
         return cache.get(imageId);
     }
-    const promise = fetch(getShareImageSource(imageId, mode)).then(response => {
+    const promise = limitedShareFetch(() => fetch(getShareImageSource(imageId, mode))).then(response => {
         if (!response.ok) {
             throw new Error(`Image fetch failed (HTTP ${response.status})`);
         }
@@ -4507,15 +4527,56 @@ async function fetchImageForShare(imageId, mode) {
     }
 }
 
-function downloadImagesAsFiles(imageIds, mode) {
-    imageIds.forEach((imageId, i) => {
-        const link = document.createElement("a");
-        link.href = getShareImageSource(imageId, mode);
-        link.download = `image_${i + 1}`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-    });
+// ==== SHARE-ORDER-BEGIN ==== pure ordering/naming code, no DOM: tests/test_share_order.py runs exactly
+// this block under node (tests/share_order_harness.js), so keep it free of page globals.
+//
+// ONE rule for every share path (admin Share with Badge / Share (No Badge) / Share Images, customer
+// long-press Share, Select All): the intended order is the order the cards are on screen
+// (server-sorted by category rank, then source order -- see _build_design_payload() in app.py). Every
+// image keeps its SLOT = its 0-based position in that order for the whole share, and:
+//   * the file name comes from the slot, never from the position inside a batch, so names are unique and
+//     sort (as plain strings) in intended order across ALL batches;
+//   * the pad width comes from the total number of images (at least 3 digits), never from a constant;
+//   * fetches run with a concurrency limit but each result is stored by slot, never by completion order;
+//   * a failed image keeps its slot (a visible gap in the numbering), it never shifts the others.
+const SHARE_BATCH_SIZE = 10;
+const SHARE_FETCH_CONCURRENCY = 6;
+const SHARE_MIN_PAD_WIDTH = 3;
+
+function shareIndexWidth(total) {
+    return Math.max(SHARE_MIN_PAD_WIDTH, String(total).length);
+}
+
+function shareFileName(slot, total, mime) {
+    const type = mime || "image/jpeg";
+    const extension = (type.split("/")[1] || "jpg").toLowerCase();
+    return `image_${String(slot + 1).padStart(shareIndexWidth(total), "0")}.${extension}`;
+}
+
+// Runs fetchOne(id) for every id with at most `limit` in flight and returns
+// [{id, slot, blob}] in SLOT order. blob is null when fetchOne rejected or resolved falsy.
+async function fetchInIntendedOrder(ids, fetchOne, limit, onSettled) {
+    const results = new Array(ids.length);
+    let nextSlot = 0;
+    let settled = 0;
+    async function worker() {
+        while (nextSlot < ids.length) {
+            const slot = nextSlot;
+            nextSlot += 1;
+            let blob = null;
+            try {
+                blob = (await fetchOne(ids[slot])) || null;
+            } catch (error) {
+                blob = null;
+            }
+            results[slot] = { id: ids[slot], slot, blob };
+            settled += 1;
+            if (onSettled) onSettled(settled, ids.length);
+        }
+    }
+    const workers = Math.max(1, Math.min(limit || 1, ids.length));
+    await Promise.all(Array.from({ length: workers }, worker));
+    return results;
 }
 
 function chunkArray(items, size) {
@@ -4526,25 +4587,33 @@ function chunkArray(items, size) {
     return chunks;
 }
 
-// Zero-padded so filenames sort lexicographically in the same order this
-// array puts them in (image_01, image_02, ..., image_10) -- unpadded names
-// (image_1, image_2, ..., image_10) sort as image_1, image_10, image_2, ...,
-// image_9 under a plain string sort, which is what at least some Web Share
-// receiving apps (chat apps, gallery pickers) display multi-file shares in
-// instead of respecting the File[] array order navigator.share() was given.
-// That reorders the 10th file to right after the 1st in exactly those
-// apps -- invisible for selections under 10 images (no two-digit index to
-// collide) and invisible for receivers that honor array order, which is why
-// it only ever showed up "sometimes." Padding width matches SHARE_BATCH_SIZE
-// (batches never exceed it) rather than this batch's own length, so it's
-// wide enough even for a shorter final batch.
-function buildShareFiles(batch) {
-    const padWidth = String(SHARE_BATCH_SIZE).length;
-    return batch.map((r, i) => {
+// Batches are consecutive ranges of the intended order (failed slots simply absent).
+function planShareBatches(results, batchSize) {
+    return chunkArray(results.filter(r => r.blob), batchSize);
+}
+
+function buildShareFiles(batch, total) {
+    return batch.map(r => {
         const mime = r.blob.type || "image/jpeg";
-        const extension = (mime.split("/")[1] || "jpg").toLowerCase();
-        const index = String(i + 1).padStart(padWidth, "0");
-        return new File([r.blob], `image_${index}.${extension}`, { type: mime });
+        return new File([r.blob], shareFileName(r.slot, total, mime), { type: mime });
+    });
+}
+
+// "image_004, image_017" -- the slots that could not be fetched, for the user.
+function describeMissingSlots(results, total) {
+    const names = results.filter(r => !r.blob).map(r => `image_${String(r.slot + 1).padStart(shareIndexWidth(total), "0")}`);
+    return names.length > 6 ? `${names.slice(0, 6).join(", ")} and ${names.length - 6} more` : names.join(", ");
+}
+// ==== SHARE-ORDER-END ====
+
+function downloadImagesAsFiles(entries, mode, total) {
+    entries.forEach(entry => {
+        const link = document.createElement("a");
+        link.href = getShareImageSource(entry.id, mode);
+        link.download = shareFileName(entry.slot, total, entry.blob && entry.blob.type);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
     });
 }
 
@@ -4562,13 +4631,15 @@ function buildShareFiles(batch) {
 // sequence (only affects the download-fallback URL; the actual blobs in
 // `succeeded` were already fetched by copySelectedImages() using the right
 // endpoint). The batch-continue sticky bar never re-asks mid-sequence.
-async function shareBatchesSequentially(succeeded, skippedNote, mode) {
+async function shareBatchesSequentially(results, skippedNote, mode) {
+    const slotTotal = results.length;
+    const succeeded = results.filter(r => r.blob);
     const total = succeeded.length;
-    const batches = chunkArray(succeeded, SHARE_BATCH_SIZE);
+    const batches = planShareBatches(results, SHARE_BATCH_SIZE);
     let sharedCount = 0;
 
-    if (!(navigator.share && navigator.canShare && navigator.canShare({ files: buildShareFiles(batches[0]) }))) {
-        downloadImagesAsFiles(succeeded.map(r => r.id), mode);
+    if (!(navigator.share && navigator.canShare && navigator.canShare({ files: buildShareFiles(batches[0], slotTotal) }))) {
+        downloadImagesAsFiles(succeeded, mode, slotTotal);
         showInfo(`Share not supported on this browser. Downloaded ${total} image${total === 1 ? "" : "s"} instead.${skippedNote}`);
         return;
     }
@@ -4576,16 +4647,15 @@ async function shareBatchesSequentially(succeeded, skippedNote, mode) {
     for (let i = 0; i < batches.length; i += 1) {
         const batch = batches[i];
         const isLast = i === batches.length - 1;
-        const rangeStart = i * SHARE_BATCH_SIZE + 1;
-        const rangeEnd = rangeStart + batch.length - 1;
-        const rangeLabel = batches.length > 1 ? ` (images ${rangeStart}-${rangeEnd} of ${total})` : "";
+        const rangeEnd = (i * SHARE_BATCH_SIZE) + batch.length;
+        const rangeLabel = batches.length > 1 ? ` (images ${batch[0].slot + 1}-${batch[batch.length - 1].slot + 1} of ${slotTotal})` : "";
         const remaining = total - rangeEnd;
 
         let failed = false;
         let canceled = false;
         let error = null;
         try {
-            await navigator.share({ files: buildShareFiles(batch), title: "Stock Images" });
+            await navigator.share({ files: buildShareFiles(batch, slotTotal), title: "Stock Images" });
         } catch (e) {
             error = e;
             if (e && e.name === "AbortError") {
@@ -4606,7 +4676,7 @@ async function shareBatchesSequentially(succeeded, skippedNote, mode) {
                     `${baseMsg}${rangeLabel} You can still download these ${batch.length} image${batch.length === 1 ? "" : "s"}.`,
                     "Download images",
                     () => {
-                        downloadImagesAsFiles(batch.map(r => r.id), mode);
+                        downloadImagesAsFiles(batch, mode, slotTotal);
                         showInfo(`Downloaded ${batch.length} image${batch.length === 1 ? "" : "s"}.`);
                     }
                 );
@@ -4620,7 +4690,7 @@ async function shareBatchesSequentially(succeeded, skippedNote, mode) {
             const action = await waitForBatchContinuation(
                 `Batch ${i + 1} of ${batches.length} failed — ${batch.length} image${batch.length === 1 ? "" : "s"} ready to download`,
                 `Download & Share Next ${nextBatch.length}`,
-                () => downloadImagesAsFiles(batch.map(r => r.id), mode)
+                () => downloadImagesAsFiles(batch, mode, slotTotal)
             );
             if (action === "cancel") {
                 showInfo(`Sharing stopped. Shared ${sharedCount} of ${total} images.${skippedNote}`);
@@ -4727,28 +4797,28 @@ async function copySelectedImages(mode) {
         // large selection on a slow connection shows visible movement
         // instead of looking frozen.
         const total = imageIds.length;
-        let completed = 0;
         showInfo(`Preparing images... 0 of ${total}`);
-        const results = await Promise.all(imageIds.map(async (id) => {
-            const blob = await fetchImageForShare(id, mode);
-            completed += 1;
-            showInfo(`Preparing images... ${completed} of ${total}`);
-            return { id, blob };
-        }));
+        // At most SHARE_FETCH_CONCURRENCY in flight, but results are stored by slot (position in the
+        // on-screen order), never by completion order -- see the SHARE-ORDER block above.
+        const results = await fetchInIntendedOrder(
+            imageIds,
+            id => fetchImageForShare(id, mode),
+            SHARE_FETCH_CONCURRENCY,
+            completed => showInfo(`Preparing images... ${completed} of ${total}`)
+        );
 
-        const succeeded = results.filter(r => r.blob);
-        const failedCount = results.length - succeeded.length;
+        const failedCount = results.filter(r => !r.blob).length;
 
-        if (!succeeded.length) {
+        if (failedCount === results.length) {
             showError("Couldn't prepare any of the selected images — check your connection and try again.");
             return;
         }
 
         const skippedNote = failedCount
-            ? ` (${failedCount} image${failedCount === 1 ? "" : "s"} couldn't be included.)`
+            ? ` (${failedCount} image${failedCount === 1 ? "" : "s"} couldn't be included: ${describeMissingSlots(results, total)} — those numbers are left out of the file names.)`
             : "";
 
-        await shareBatchesSequentially(succeeded, skippedNote, mode);
+        await shareBatchesSequentially(results, skippedNote, mode);
         exitSelectMode();
     } catch (error) {
         showError((error && error.message) || "Sharing failed.");

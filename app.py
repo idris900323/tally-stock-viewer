@@ -1193,18 +1193,22 @@ def _build_design_payload(designs):
         enriched_item["category"] = category_lookup.get(lookup_key)
         payload.append(enriched_item)
 
-    # Group by category in Pearl/Pearl Designer/Pearl Deluxe/Saka/Ruby/Napa
-    # Deluxe/Napa Designer/uncategorized-last order (Part 5), for both admin
-    # and customer views alike since both go through this one function --
-    # sorted() is stable, so within each category group items keep whatever
-    # order `designs` already handed in (the existing qty-scan/hierarchy
-    # order), no secondary sort key needed. Sharing (see copySelectedImages()
-    # in index.html, which reads cards in DOM/render order, not click order)
-    # automatically follows this same grouping as a result, with no separate
-    # client-side reordering required.
+    # Group by category in the admin-defined display order (Part 5/6), for
+    # both admin and customer views alike since both go through this one
+    # function. Sort key = (category rank, position in `designs`): within a
+    # category group items keep the order `designs` already handed in (the
+    # qty-scan/hierarchy order), now an explicit key instead of leaning on
+    # sort stability. Designs with no category -- or a category name that is
+    # no longer in the table -- share the last rank and keep that same order.
+    # Sharing (see copySelectedImages()/the SHARE-ORDER block in index.html,
+    # which reads cards in DOM/render order, not click order) names its files
+    # by position in this order, so display, share and filenames all agree.
     rank_map, uncategorized_rank = _category_sort_rank_map()
-    payload.sort(key=lambda item: rank_map.get(item.get("category"), uncategorized_rank))
-    return payload
+    ranked = sorted(
+        enumerate(payload),
+        key=lambda pair: (rank_map.get(pair[1].get("category"), uncategorized_rank), pair[0]),
+    )
+    return [item for _position, item in ranked]
 
 
 def _compute_car_completion_stats():
